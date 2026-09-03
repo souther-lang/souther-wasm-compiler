@@ -15,7 +15,10 @@ public enum AbortReason {
     OUT_OF_MEMORY(1),
 
     /** A reset was handed a mark the arena never issued. {@code aux0} is it, {@code aux1} the top. */
-    BAD_MARK(2);
+    BAD_MARK(2),
+
+    /** What was handed in is not one JSON document. {@code aux0} is where the reading stopped. */
+    MALFORMED_JSON(3);
 
     private final int code;
 

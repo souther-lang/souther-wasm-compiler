@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
@@ -78,6 +79,31 @@ public final class Running {
     /** Calls an export taking a pointer and a length and answering a pointer and a length. */
     public long[] callWithString(String export, int pointer, int length) {
         return instance.export(export).apply(pointer, length);
+    }
+
+    /** Calls an export taking two numbers and answering one. */
+    public int call(String export, int first, int second) {
+        return (int) instance.export(export).apply(first, second)[0];
+    }
+
+    /** Calls an export answering a pointer and a length packed into one number. */
+    public long callPacked(String export, long... arguments) {
+        return instance.export(export).apply(arguments)[0];
+    }
+
+    /** Stages text in the arena and answers where it went. */
+    public int staged(String text) {
+        byte[] utf8 = text.getBytes(StandardCharsets.UTF_8);
+        int address = call(RuntimeAbi.ALLOC, utf8.length);
+        write(address, utf8);
+        return address;
+    }
+
+    /** The text a packed answer points at. */
+    public String textOf(long packed) {
+        return new String(
+                read(RuntimeAbi.pointerOf(packed), RuntimeAbi.lengthOf(packed)),
+                StandardCharsets.UTF_8);
     }
 
     /** Writes bytes into the module's memory. */

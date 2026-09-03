@@ -105,11 +105,51 @@ public final class RuntimeAbi {
     /** {@code i32}: where the runtime's own data ends. */
     public static final String DATA_END = "__data_end";
 
+    /** {@code (i32 ptr, i32 len) -> i32}: parses a document into the cell it is. */
+    public static final String JSON_PARSE = "__souther_json_parse";
+
+    /** {@code (i32 cell) -> i32}: what kind of value a cell is, from {@link JsonTag}. */
+    public static final String JSON_TAG = "__souther_json_tag";
+
+    /** {@code (i32 cell) -> i32}: bytes for a string or a number, entries for a container. */
+    public static final String JSON_LENGTH = "__souther_json_length";
+
+    /** {@code (i32 cell) -> i32}: where a string's or a number's bytes start. */
+    public static final String JSON_BYTES = "__souther_json_bytes";
+
+    /** {@code (i32 cell, i32 index) -> i32}: an array's element. */
+    public static final String JSON_ELEMENT = "__souther_json_element";
+
+    /** {@code (i32 cell, i32 index) -> i32}: an object entry's key, which is a string cell. */
+    public static final String JSON_KEY = "__souther_json_key";
+
+    /** {@code (i32 cell, i32 index) -> i32}: an object entry's value. */
+    public static final String JSON_VALUE = "__souther_json_value";
+
+    /** {@code (i64 value) -> i64}: a whole number as text, answered packed. */
+    public static final String JSON_WRITE_INT = "__souther_json_write_int";
+
+    /** {@code (i32 value) -> i64}: a boolean as text, answered packed. */
+    public static final String JSON_WRITE_BOOL = "__souther_json_write_bool";
+
+    /** {@code (i32 ptr, i32 len) -> i64}: a string quoted and escaped, answered packed. */
+    public static final String JSON_WRITE_STRING = "__souther_json_write_string";
+
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */
     public static final String START_THUNK = "__souther_start";
 
     /** The failure record's width in bytes. */
     public static final int FAILURE_BYTES = 28;
+
+    /** The pointer half of a packed {@code (pointer, length)} answer. */
+    public static int pointerOf(long packed) {
+        return (int) packed;
+    }
+
+    /** The length half of a packed {@code (pointer, length)} answer. */
+    public static int lengthOf(long packed) {
+        return (int) (packed >>> 32);
+    }
 
     /** Offset of the generation counter in the failure record. */
     public static final int FAILURE_OFF_GENERATION = 0;

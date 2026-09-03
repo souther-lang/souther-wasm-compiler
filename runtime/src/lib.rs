@@ -24,6 +24,8 @@
 
 #![no_std]
 
+mod json;
+
 use core::panic::PanicInfo;
 
 /// A wasm page, in bytes.
@@ -194,6 +196,20 @@ const OFF_AUX1: usize = 20;
 pub const REASON_OUT_OF_MEMORY: u32 = 1;
 /// A reset was handed a mark the arena never issued. `aux0` is the mark, `aux1` the top.
 pub const REASON_BAD_MARK: u32 = 2;
+/// What was handed in is not one JSON document. `aux0` is where the reading stopped.
+pub const REASON_MALFORMED_JSON: u32 = 3;
+
+/// The arena, for this crate's own modules. The exported name is the host's; this is the one a
+/// caller inside the module writes, so that what a host contract is called and what the code says
+/// stay one thing rather than two spellings of it.
+pub(crate) unsafe fn alloc(size: u32) -> u32 {
+    __ronto_alloc(size)
+}
+
+/// Ending the call, for this crate's own modules.
+pub(crate) unsafe fn abort(reason: u32, descriptor: u32, aux0: u64, aux1: u64) -> ! {
+    __souther_abort(reason, descriptor, aux0, aux1)
+}
 
 fn align_up(n: usize) -> usize {
     (n + ALIGN - 1) & !(ALIGN - 1)
