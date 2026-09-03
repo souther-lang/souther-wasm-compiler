@@ -13,6 +13,10 @@ import souther.wasm.emit.WasmWriter;
 final class BodyWriter {
 
     private static final int OPCODE_END = 0x0b;
+    private static final int OPCODE_IF = 0x04;
+    private static final int OPCODE_ELSE = 0x05;
+    private static final int OPCODE_I32_EQZ = 0x45;
+    private static final int BLOCK_TYPE_EMPTY = 0x40;
     private static final int OPCODE_CALL = 0x10;
     private static final int OPCODE_LOCAL_GET = 0x20;
     private static final int OPCODE_LOCAL_SET = 0x21;
@@ -73,6 +77,30 @@ final class BodyWriter {
     BodyWriter shiftRight(long places) {
         constant(places);
         writer.write((byte) OPCODE_I64_SHR_U);
+        return this;
+    }
+
+    /** Runs what follows only when the number on the stack is zero. Closed by {@link #end}. */
+    BodyWriter ifZero() {
+        writer.write((byte) OPCODE_I32_EQZ).write((byte) OPCODE_IF).write((byte) BLOCK_TYPE_EMPTY);
+        return this;
+    }
+
+    /** Runs what follows only when the number on the stack is not zero. Closed by {@link #end}. */
+    BodyWriter ifNotZero() {
+        writer.write((byte) OPCODE_IF).write((byte) BLOCK_TYPE_EMPTY);
+        return this;
+    }
+
+    /** The other way of the condition just opened. */
+    BodyWriter otherwise() {
+        writer.write((byte) OPCODE_ELSE);
+        return this;
+    }
+
+    /** Closes a condition. */
+    BodyWriter end() {
+        writer.write((byte) OPCODE_END);
         return this;
     }
 

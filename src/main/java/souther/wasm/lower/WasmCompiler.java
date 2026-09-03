@@ -28,6 +28,11 @@ import souther.wasm.link.WasmFragment;
  * order the behavior declares its parameters, and answers a pointer and a length at which its
  * answer is written. What reclaims those is the caller, on the runtime's contract.
  *
+ * <p>The answer is either the value, under {@code value}, or what the decoder found wrong with the
+ * input, under {@code issues}. Bad input is an expected outcome rather than a fault, so it comes
+ * back as an answer and not as a trap; a call that ends without answering at all is a Souther
+ * abort, which the failure record describes.
+ *
  * <p>What this writes today is a body that is a literal or a read of a parameter, over the scalar
  * types. Everything else a checked program can hold is met by name, in {@link NotLowered}, rather
  * than by emitting something that would run and answer the wrong thing.
@@ -140,33 +145,50 @@ public final class WasmCompiler {
             BodyWriter out = new BodyWriter(1 + arity, 1);
             int packed = LOCAL_FIRST_PARAMETER + arity;
 
-            out.localGet(LOCAL_INPUT_POINTER)
+            out.call(calls.of(RuntimeAbi.ISSUES_BEGIN))
+                    .localGet(LOCAL_INPUT_POINTER)
                     .localGet(LOCAL_INPUT_LENGTH)
                     .call(calls.of(RuntimeAbi.JSON_PARSE))
-                    .localSet(LOCAL_DOCUMENT);
+                    .localSet(LOCAL_DOCUMENT)
+                    .localGet(LOCAL_DOCUMENT)
+                    .constant(arity)
+                    .call(calls.of(RuntimeAbi.CHECK_ARGUMENTS));
 
+            // Only where the arguments are there at all: a place that is not in the document has
+            // nowhere to be read from, and reading it would be reading past what the caller wrote.
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifZero();
             var takes = behavior.signature().takes();
             for (int i = 0; i < arity; i++) {
                 int local = LOCAL_FIRST_PARAMETER + i;
                 locals.put(parameters.get(i).binding(), local);
+                byte[] path = ("/" + i).getBytes(StandardCharsets.UTF_8);
                 out.localGet(LOCAL_DOCUMENT)
                         .constant(i)
-                        .constant(arity)
                         .call(calls.of(RuntimeAbi.ARGUMENT))
+                        .constant(fragment.place(path))
+                        .constant(path.length)
                         .call(calls.of(readerFor(takes.get(i))))
                         .localSet(local);
             }
+            out.end();
 
+            // A body runs on what was read, and only where everything was. A refused place leaves
+            // nothing behind, and nothing is not a value to run a behavior on.
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifNotZero()
+                    .call(calls.of(RuntimeAbi.ISSUES_WRITTEN))
+                    .localSet(packed)
+                    .otherwise();
             value(out, body);
-
             out.call(calls.of(RuntimeAbi.WRITE))
                     .localSet(packed)
-                    .localGet(packed)
+                    .end();
+
+            return out.localGet(packed)
                     .wrap()
                     .localGet(packed)
                     .shiftRight(32)
-                    .wrap();
-            return out.body();
+                    .wrap()
+                    .body();
         }
 
         /** Leaves the value of an expression on the stack, as the cell it is. */

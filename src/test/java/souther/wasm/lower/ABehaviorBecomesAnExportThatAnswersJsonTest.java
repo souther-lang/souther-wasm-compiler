@@ -31,7 +31,7 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let hello = "ごきげんよう"
                 """);
 
-        assertThat(answerOf(module, "greeting.hello")).isEqualTo("\"ごきげんよう\"");
+        assertThat(answerOf(module, "greeting.hello")).isEqualTo("{\"value\":\"ごきげんよう\"}");
     }
 
     @Test
@@ -44,7 +44,7 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let answer = 42
                 """);
 
-        assertThat(answerOf(module, "counting.answer")).isEqualTo("42");
+        assertThat(answerOf(module, "counting.answer")).isEqualTo("{\"value\":42}");
     }
 
     @Test
@@ -57,7 +57,7 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let yes = true
                 """);
 
-        assertThat(answerOf(module, "deciding.yes")).isEqualTo("true");
+        assertThat(answerOf(module, "deciding.yes")).isEqualTo("{\"value\":true}");
     }
 
     @Test
@@ -70,7 +70,7 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let quoted = "she said \\"no\\""
                 """);
 
-        assertThat(answerOf(module, "quoting.quoted")).isEqualTo("\"she said \\\"no\\\"\"");
+        assertThat(answerOf(module, "quoting.quoted")).isEqualTo("{\"value\":\"she said \\\"no\\\"\"}");
     }
 
     @Test
@@ -93,9 +93,9 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let three = 3
                 """);
 
-        assertThat(answerOf(module, "first.one")).isEqualTo("1");
-        assertThat(answerOf(module, "first.two")).isEqualTo("2");
-        assertThat(answerOf(module, "second.three")).isEqualTo("3");
+        assertThat(answerOf(module, "first.one")).isEqualTo("{\"value\":1}");
+        assertThat(answerOf(module, "first.two")).isEqualTo("{\"value\":2}");
+        assertThat(answerOf(module, "second.three")).isEqualTo("{\"value\":3}");
     }
 
     @Test
@@ -108,9 +108,9 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let echo (n) = n
                 """);
 
-        assertThat(answerOf(module, "echoing.echo", "[7]")).isEqualTo("7");
+        assertThat(answerOf(module, "echoing.echo", "[7]")).isEqualTo("{\"value\":7}");
         assertThat(answerOf(module, "echoing.echo", "[-9007199254740993]"))
-                .isEqualTo("-9007199254740993");
+                .isEqualTo("{\"value\":-9007199254740993}");
     }
 
     @Test
@@ -123,7 +123,7 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let second (a, b) = b
                 """);
 
-        assertThat(answerOf(module, "picking.second", "[\"one\", \"two\"]")).isEqualTo("\"two\"");
+        assertThat(answerOf(module, "picking.second", "[\"one\", \"two\"]")).isEqualTo("{\"value\":\"two\"}");
     }
 
     @Test
@@ -136,12 +136,12 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let flag (n, on, tag) = on
                 """);
 
-        assertThat(answerOf(module, "mixing.flag", "[1, true, \"x\"]")).isEqualTo("true");
-        assertThat(answerOf(module, "mixing.flag", "[1, false, \"x\"]")).isEqualTo("false");
+        assertThat(answerOf(module, "mixing.flag", "[1, true, \"x\"]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "mixing.flag", "[1, false, \"x\"]")).isEqualTo("{\"value\":false}");
     }
 
     @Test
-    void endsTheCallWhenTheInputIsNotWhatWasDeclared() {
+    void answersWithWhatItFoundWrongRatherThanEndingTheCall() {
         Running module = compiled("""
                 module strict
 
@@ -150,16 +150,59 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let echo (n) = n
                 """);
 
-        assertThat(refusalFor(module, "strict.echo", "[\"7\"]"))
-                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
-        assertThat(refusalFor(module, "strict.echo", "[1.5]"))
-                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
-        assertThat(refusalFor(module, "strict.echo", "[1, 2]"))
-                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
-        assertThat(refusalFor(module, "strict.echo", "7"))
-                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
-        assertThat(refusalFor(module, "strict.echo", "[99999999999999999999]"))
-                .contains(AbortReason.NUMBER_OUT_OF_RANGE);
+        assertThat(answerOf(module, "strict.echo", "[\"7\"]")).isEqualTo(
+                "{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"string\",\"expected\":\"Int\"}}]}");
+        assertThat(answerOf(module, "strict.echo", "[1.5]")).contains("\"code\":\"type_mismatch\"");
+        assertThat(answerOf(module, "strict.echo", "[99999999999999999999]"))
+                .contains("\"code\":\"out_of_range\"");
+    }
+
+    @Test
+    void saysSoAtTheRootWhenTheCallItselfIsNotWhatWasDeclared() {
+        Running module = compiled("""
+                module strict
+
+                behavior echo : (n: Int) -> Int
+
+                let echo (n) = n
+                """);
+
+        assertThat(answerOf(module, "strict.echo", "[1, 2]")).isEqualTo(
+                "{\"issues\":[{\"path\":\"\",\"code\":\"invalid_size\","
+                        + "\"meta\":{\"actual\":\"2\",\"expected\":\"1\"}}]}");
+        assertThat(answerOf(module, "strict.echo", "7")).isEqualTo(
+                "{\"issues\":[{\"path\":\"\",\"code\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"arguments\"}}]}");
+    }
+
+    @Test
+    void reportsEveryPlaceItRefusedRatherThanTheFirst() {
+        Running module = compiled("""
+                module several
+
+                behavior all : (a: Int, b: Bool, c: String) -> Bool
+
+                let all (a, b, c) = b
+                """);
+
+        String answer = answerOf(module, "several.all", "[\"x\", 1, false]");
+
+        assertThat(answer).contains("\"path\":\"/0\"", "\"path\":\"/1\"", "\"path\":\"/2\"");
+        assertThat(answer).contains("\"expected\":\"Int\"", "\"expected\":\"Bool\"",
+                "\"expected\":\"String\"");
+    }
+
+    @Test
+    void endsTheCallOnInputThatIsNotOneDocument() {
+        Running module = compiled("""
+                module strict
+
+                behavior echo : (n: Int) -> Int
+
+                let echo (n) = n
+                """);
+
         assertThat(refusalFor(module, "strict.echo", "[1")).contains(AbortReason.MALFORMED_JSON);
     }
 

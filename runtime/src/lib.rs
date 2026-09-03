@@ -24,6 +24,7 @@
 
 #![no_std]
 
+mod issues;
 mod json;
 mod value;
 
@@ -49,8 +50,10 @@ static mut ARENA_TOP: usize = 0;
 /// The failure record's width in bytes: generation, reason, descriptor, aux0, aux1.
 const FAILURE_BYTES: usize = 4 + 4 + 4 + 8 + 8;
 
-/// Every allocation starts at a multiple of this, which is what the widest value the arena holds
-/// wants — an `i64` in a Decimal's unscaled digits or in a temporal's instant.
+/// What the failure record and the arena's own base start at. Only those: an allocation is handed
+/// out exactly as long as it was asked for, so that a run of text written piece by piece is one
+/// run rather than pieces with gaps between them. A wasm load does not require its address to be
+/// aligned, and every payload here is read and written as unaligned anyway.
 const ALIGN: usize = 8;
 
 /// Places the arena above everything the link put in static memory.
@@ -82,9 +85,15 @@ pub unsafe extern "C" fn __ronto_alloc(size: u32) -> u32 {
             __souther_abort(REASON_OUT_OF_MEMORY, 0, size as u64, 0);
         }
     }
-    ARENA_TOP = align_up(end);
+    ARENA_TOP = end;
     core::ptr::write_bytes(start as *mut u8, 0, size as usize);
     start as u32
+}
+
+/// The first byte the arena has not handed out, for whoever is writing a run of text and wants to
+/// know where it began or how far it has got.
+pub(crate) unsafe fn next_free() -> u32 {
+    ARENA_TOP as u32
 }
 
 /// The arena's current top, for a caller that means to pop back to it.
@@ -199,11 +208,9 @@ pub const REASON_OUT_OF_MEMORY: u32 = 1;
 pub const REASON_BAD_MARK: u32 = 2;
 /// What was handed in is not one JSON document. `aux0` is where the reading stopped.
 pub const REASON_MALFORMED_JSON: u32 = 3;
-/// What was written is not what the place was declared to hold. `aux0` is what was there and
-/// `aux1` what was asked for.
-pub const REASON_NOT_WHAT_WAS_DECLARED: u32 = 4;
-/// A whole number outside what an `Int` holds.
-pub const REASON_NUMBER_OUT_OF_RANGE: u32 = 5;
+/// A value whose tag nothing here knows. What a decoder was handed never reaches this: a value is
+/// made by generated code, so a tag no one knows means the emitter is wrong rather than the input.
+pub const REASON_NOT_A_VALUE: u32 = 4;
 
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says

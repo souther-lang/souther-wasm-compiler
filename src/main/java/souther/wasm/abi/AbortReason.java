@@ -21,17 +21,13 @@ public enum AbortReason {
     MALFORMED_JSON(3),
 
     /**
-     * What was written is not what the place was declared to hold.
+     * A value whose tag nothing knows.
      *
-     * <p>{@code aux0} is what was there and {@code aux1} what was asked for. Not where this is
-     * going: input a decoder refuses is an expected outcome and belongs in the answer as the
-     * issues it found, at their paths, rather than as a trap. What that needs is a value this
-     * runtime has not got yet.
+     * <p>Not something bad input reaches: a value is made by generated code, so a tag no one knows
+     * means this compiler emitted it wrongly rather than that a caller wrote something odd. What a
+     * decoder refuses comes back as issues instead, in the answer.
      */
-    NOT_WHAT_WAS_DECLARED(4),
-
-    /** A whole number outside what an {@code Int} holds. */
-    NUMBER_OUT_OF_RANGE(5);
+    NOT_A_VALUE(4);
 
     private final int code;
 

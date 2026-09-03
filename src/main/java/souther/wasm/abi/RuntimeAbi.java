@@ -135,17 +135,29 @@ public final class RuntimeAbi {
     /** {@code (i32 ptr, i32 len) -> i64}: a string quoted and escaped, answered packed. */
     public static final String JSON_WRITE_STRING = "__souther_json_write_string";
 
-    /** {@code (i32 document, i32 index, i32 expected) -> i32}: one argument of a call. */
+    /** {@code (i32 document, i32 expected) -> ()}: checks that a call was handed its arguments. */
+    public static final String CHECK_ARGUMENTS = "__souther_check_arguments";
+
+    /** {@code (i32 document, i32 index) -> i32}: one argument of a call. */
     public static final String ARGUMENT = "__souther_argument";
 
-    /** {@code (i32 json) -> i32}: a JSON value read as the {@code Int} the place was declared. */
+    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as an {@code Int}, or nothing. */
     public static final String READ_INT = "__souther_read_int";
 
-    /** {@code (i32 json) -> i32}: a JSON value read as a {@code Bool}. */
+    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as a {@code Bool}, or nothing. */
     public static final String READ_BOOL = "__souther_read_bool";
 
-    /** {@code (i32 json) -> i32}: a JSON value read as a {@code String}. */
+    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as a {@code String}, or nothing. */
     public static final String READ_STRING = "__souther_read_string";
+
+    /** {@code () -> ()}: forgets what an earlier call's decode found. */
+    public static final String ISSUES_BEGIN = "__souther_issues_begin";
+
+    /** {@code () -> i32}: how many issues this call's decode found. */
+    public static final String ISSUES_COUNT = "__souther_issues_count";
+
+    /** {@code () -> i64}: the issues as the answer a caller reads, packed. */
+    public static final String ISSUES_WRITTEN = "__souther_issues_written";
 
     /** {@code (i64 value) -> i32}: a cell holding an {@code Int}. */
     public static final String INT = "__souther_int";
