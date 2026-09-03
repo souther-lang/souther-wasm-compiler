@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
@@ -97,6 +98,7 @@ public final class WasmCompiler {
         // written, so most are gone by now — but not one that reaches itself, which cannot be.
         List<Written> written = new ArrayList<>();
         List<Crossing> injected = new ArrayList<>();
+        List<Composed> composed = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedHelper helper : module.helpers()) {
                 int index = fragment.declare(overCells(fragment, helper.parameters().size()));
@@ -113,6 +115,10 @@ public final class WasmCompiler {
                     injected.add(new Crossing(index, behavior, injected.size()));
                     continue;
                 }
+                if (behavior.implementation() instanceof CheckedImplementation.Composed held) {
+                    composed.add(new Composed(index, behavior, held.composition()));
+                    continue;
+                }
                 Body body = bodyOf(behavior);
                 written.add(new Written(index, body.parameters(), body.body(), behavior.name()));
             }
@@ -124,6 +130,9 @@ public final class WasmCompiler {
         }
         for (Crossing each : injected) {
             fragment.write(each.index(), emitter.reachingOut(each));
+        }
+        for (Composed each : composed) {
+            fragment.write(each.index(), emitter.composing(each));
         }
         int stringToString = fragment.functionType(
                 List.of(Type.I32, Type.I32), List.of(Type.I32, Type.I32));
@@ -168,6 +177,10 @@ public final class WasmCompiler {
     private record Crossing(int index, CheckedBehavior behavior, int ordinal) {
     }
 
+    /** A behavior written as stages: where its function goes, which one it is, and the stages. */
+    private record Composed(int index, CheckedBehavior behavior, Composition composition) {
+    }
+
     /** One function to write: where it goes, what it binds, and what it answers. */
     private record Written(int index, List<Core.Binder> parameters, Core body, ValueName declares) {
     }
@@ -179,8 +192,8 @@ public final class WasmCompiler {
     private static Body bodyOf(CheckedBehavior behavior) {
         return switch (behavior.implementation()) {
             case CheckedImplementation.Body it -> new Body(it.parameters(), it.body());
-            case CheckedImplementation.Composed ignored -> throw new NotLowered(
-                    behavior.name() + " is composed, and this backend does not write a composition yet");
+            case CheckedImplementation.Composed ignored -> throw new IllegalStateException(
+                    behavior.name() + " is composed and is written as stages, not as a body");
             case CheckedImplementation.Injected ignored -> throw new IllegalStateException(
                     behavior.name() + " is injected and is written as a crossing, not as a body");
             case CheckedImplementation.Unwritten ignored -> throw new NotLowered(
@@ -252,6 +265,53 @@ public final class WasmCompiler {
             }
             value(out, written.body());
             return out.body();
+        }
+
+        /**
+         * A behavior written as stages, each applied to what the one before answered.
+         *
+         * <p>A stage offered part of what is running takes only the cases it accepts; anything
+         * else has left the main line, and the composition answers with it rather than offering it
+         * to what follows. Which cases those are is the checker's answer and is read off the
+         * stage — a backend working it out again would be working out what is already settled.
+         */
+        byte[] composing(Composed held) {
+            var takes = held.behavior().signature().takes();
+            out = new BodyWriter(takes.size(), 0);
+            locals = new HashMap<>();
+            writing = held.behavior().name();
+            int running = out.narrow();
+
+            List<Composition.Stage> stages = held.composition().stages();
+            for (int i = 0; i < takes.size(); i++) {
+                out.localGet(i);
+            }
+            out.call(reached.get(stages.get(0).behavior())).localSet(running);
+
+            out.block();
+            for (int i = 1; i < stages.size(); i++) {
+                Composition.Stage stage = stages.get(i);
+                if (stage.routing() instanceof Composition.Routing.OnCases accepted) {
+                    accepts(out, running, accepted.accepted());
+                    out.ifZero().leave(1).end();
+                }
+                out.localGet(running).call(reached.get(stage.behavior())).localSet(running);
+            }
+            out.end();
+
+            return out.localGet(running).body();
+        }
+
+        /** Leaves on the stack whether the running value is one of the cases a stage accepts. */
+        private void accepts(BodyWriter out, int running, List<TypeSymbol> cases) {
+            for (int i = 0; i < cases.size(); i++) {
+                out.localGet(running)
+                        .constant(shapes.ofMember(cases.get(i)))
+                        .call(calls.of(RuntimeAbi.IS));
+                if (i > 0) {
+                    out.or();
+                }
+            }
         }
 
         /**
