@@ -220,6 +220,108 @@ public final class WasmCompiler {
         }
     }
 
+    /**
+     * The runtime function an intrinsic is a call of.
+     *
+     * <p>Written out rather than worked out from the name, because an intrinsic's name belongs to
+     * the library and an export's to the runtime, and neither is derivable from the other. What
+     * holds them together is that every constant the library declares is named here and every name
+     * here is one the runtime exports — which is asked of the two lists rather than of a call.
+     */
+    static String abiNameOf(Kernel kernel) {
+    return switch (kernel) {
+        case STRING_LENGTH -> RuntimeAbi.Kernels.STRING_LENGTH;
+        case STRING_SLICE -> RuntimeAbi.Kernels.STRING_SLICE;
+        case STRING_APPEND -> RuntimeAbi.Kernels.STRING_APPEND;
+        case STRING_REVERSE -> RuntimeAbi.Kernels.STRING_REVERSE;
+        case STRING_REPEAT -> RuntimeAbi.Kernels.STRING_REPEAT;
+        case STRING_CONTAINS -> RuntimeAbi.Kernels.STRING_CONTAINS;
+        case STRING_MATCHES -> RuntimeAbi.Kernels.STRING_MATCHES;
+        case STRING_STARTS_WITH -> RuntimeAbi.Kernels.STRING_STARTS_WITH;
+        case STRING_ENDS_WITH -> RuntimeAbi.Kernels.STRING_ENDS_WITH;
+        case STRING_TRIM -> RuntimeAbi.Kernels.STRING_TRIM;
+        case STRING_FROM_INT -> RuntimeAbi.Kernels.STRING_FROM_INT;
+        case STRING_SPLIT -> RuntimeAbi.Kernels.STRING_SPLIT;
+        case STRING_JOIN -> RuntimeAbi.Kernels.STRING_JOIN;
+        case STRING_CONCAT -> RuntimeAbi.Kernels.STRING_CONCAT;
+        case STRING_REPLACE -> RuntimeAbi.Kernels.STRING_REPLACE;
+        case STRING_LOWERCASE -> RuntimeAbi.Kernels.STRING_LOWERCASE;
+        case STRING_UPPERCASE -> RuntimeAbi.Kernels.STRING_UPPERCASE;
+        case STRING_WORDS -> RuntimeAbi.Kernels.STRING_WORDS;
+        case STRING_LINES -> RuntimeAbi.Kernels.STRING_LINES;
+        case STRING_PAD_LEFT -> RuntimeAbi.Kernels.STRING_PAD_LEFT;
+        case STRING_PAD_RIGHT -> RuntimeAbi.Kernels.STRING_PAD_RIGHT;
+        case STRING_CHARACTERS -> RuntimeAbi.Kernels.STRING_CHARACTERS;
+        case STRING_CODE_POINTS -> RuntimeAbi.Kernels.STRING_CODE_POINTS;
+        case INT_ADD -> RuntimeAbi.Kernels.INT_ADD;
+        case INT_SUBTRACT -> RuntimeAbi.Kernels.INT_SUBTRACT;
+        case INT_MULTIPLY -> RuntimeAbi.Kernels.INT_MULTIPLY;
+        case INT_COMPARE -> RuntimeAbi.Kernels.INT_COMPARE;
+        case INT_FLOOR_MOD -> RuntimeAbi.Kernels.INT_FLOOR_MOD;
+        case INT_DIVIDE -> RuntimeAbi.Kernels.INT_DIVIDE;
+        case INT_TRUNCATING_REMAINDER -> RuntimeAbi.Kernels.INT_TRUNCATING_REMAINDER;
+        case STRING_TO_INT -> RuntimeAbi.Kernels.STRING_TO_INT;
+        case STRING_FROM_DECIMAL -> RuntimeAbi.Kernels.STRING_FROM_DECIMAL;
+        case STRING_TO_DECIMAL -> RuntimeAbi.Kernels.STRING_TO_DECIMAL;
+        case OPTION_MAP -> RuntimeAbi.Kernels.OPTION_MAP;
+        case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
+        case LIST_GET -> RuntimeAbi.Kernels.LIST_GET;
+        case LIST_FIND -> RuntimeAbi.Kernels.LIST_FIND;
+        case DECIMAL_ADD -> RuntimeAbi.Kernels.DECIMAL_ADD;
+        case DECIMAL_SUBTRACT -> RuntimeAbi.Kernels.DECIMAL_SUBTRACT;
+        case DECIMAL_MULTIPLY -> RuntimeAbi.Kernels.DECIMAL_MULTIPLY;
+        case DECIMAL_DIVIDE -> RuntimeAbi.Kernels.DECIMAL_DIVIDE;
+        case DECIMAL_ROUND -> RuntimeAbi.Kernels.DECIMAL_ROUND;
+        case DECIMAL_TO_INT -> RuntimeAbi.Kernels.DECIMAL_TO_INT;
+        case DECIMAL_FROM_INT -> RuntimeAbi.Kernels.DECIMAL_FROM_INT;
+        case DECIMAL_COMPARE -> RuntimeAbi.Kernels.DECIMAL_COMPARE;
+        case DATE_ADD_DAYS, DATETIME_ADD_DAYS -> RuntimeAbi.Kernels.DATE_ADD_DAYS;
+        case DATE_ADD_MONTHS -> RuntimeAbi.Kernels.DATE_ADD_MONTHS;
+        case DATE_ADD_YEARS -> RuntimeAbi.Kernels.DATE_ADD_YEARS;
+        case DATE_DAYS_BETWEEN -> RuntimeAbi.Kernels.DATE_DAYS_BETWEEN;
+        case DATE_YEAR, DATE_MONTH, DATE_DAY -> RuntimeAbi.Kernels.DATE_PART;
+        case DATE_FROM_PARTS -> RuntimeAbi.Kernels.DATE_FROM_PARTS;
+        case TIME_FROM_PARTS -> RuntimeAbi.Kernels.TIME_FROM_PARTS;
+        case TIME_HOUR, TIME_MINUTE, TIME_SECOND -> RuntimeAbi.Kernels.TIME_PART;
+        case DATETIME_ADD_MINUTES, DATETIME_ADD_HOURS -> RuntimeAbi.Kernels.DATETIME_ADD;
+        case DATETIME_MINUTES_BETWEEN -> RuntimeAbi.Kernels.DATETIME_MINUTES_BETWEEN;
+        case DATETIME_TO_DATE -> RuntimeAbi.Kernels.DATETIME_TO_DATE;
+        case DATETIME_TO_TIME -> RuntimeAbi.Kernels.DATETIME_TO_TIME;
+        case DATETIME_FROM_DATE_AND_TIME -> RuntimeAbi.Kernels.DATETIME_FROM_PARTS;
+        case LIST_SORT -> RuntimeAbi.Kernels.LIST_SORT;
+        case LIST_SORT_BY -> RuntimeAbi.Kernels.LIST_SORT_BY;
+        case LIST_MAX, LIST_MIN -> RuntimeAbi.Kernels.LIST_FURTHEST;
+        case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
+        case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
+        case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
+        case LIST_RANGE_INCLUSIVE -> RuntimeAbi.Kernels.LIST_RANGE_INCLUSIVE;
+        case SET_EMPTY -> RuntimeAbi.Kernels.SET_EMPTY;
+        case SET_SINGLETON -> RuntimeAbi.Kernels.SET_SINGLETON;
+        case SET_INSERT -> RuntimeAbi.Kernels.SET_INSERT;
+        case SET_REMOVE -> RuntimeAbi.Kernels.SET_REMOVE;
+        case SET_CONTAINS -> RuntimeAbi.Kernels.SET_CONTAINS;
+        case SET_UNION -> RuntimeAbi.Kernels.SET_UNION;
+        case SET_INTERSECTION -> RuntimeAbi.Kernels.SET_INTERSECTION;
+        case SET_DIFFERENCE -> RuntimeAbi.Kernels.SET_DIFFERENCE;
+        case SET_TO_LIST -> RuntimeAbi.Kernels.SET_TO_LIST;
+        case SET_FROM_LIST -> RuntimeAbi.Kernels.SET_FROM_LIST;
+        case SET_IS_EMPTY, MAP_IS_EMPTY -> RuntimeAbi.Kernels.IS_EMPTY;
+        case SET_SIZE, MAP_SIZE -> RuntimeAbi.Kernels.SIZE;
+        case MAP_EMPTY -> RuntimeAbi.Kernels.MAP_EMPTY;
+        case MAP_GET -> RuntimeAbi.Kernels.MAP_GET;
+        case MAP_CONTAINS_KEY -> RuntimeAbi.Kernels.MAP_CONTAINS_KEY;
+        case MAP_KEYS -> RuntimeAbi.Kernels.MAP_KEYS;
+        case MAP_VALUES -> RuntimeAbi.Kernels.MAP_VALUES;
+        case MAP_SINGLETON -> RuntimeAbi.Kernels.MAP_SINGLETON;
+        case MAP_INSERT -> RuntimeAbi.Kernels.MAP_INSERT;
+        case MAP_REMOVE -> RuntimeAbi.Kernels.MAP_REMOVE;
+        case MAP_TO_LIST -> RuntimeAbi.Kernels.MAP_TO_LIST;
+        case MAP_FROM_LIST -> RuntimeAbi.Kernels.MAP_FROM_LIST;
+        default -> throw new NotLowered(kernel + " is an intrinsic this backend does not"
+                + " write yet, which the library declared after this switch was last read");
+    };
+    }
+
     /** The runtime's functions, by the index a generated call writes. */
     private record Runtime(LinkPlan plan) {
 
@@ -784,93 +886,11 @@ public final class WasmCompiler {
          * than working it out from a value it may have none of.
          */
         private void kernel(BodyWriter out, Core.Call call, Kernel kernel) {
-            String operation = switch (kernel) {
-                case STRING_LENGTH -> RuntimeAbi.Kernels.STRING_LENGTH;
-                case STRING_SLICE -> RuntimeAbi.Kernels.STRING_SLICE;
-                case STRING_APPEND -> RuntimeAbi.Kernels.STRING_APPEND;
-                case STRING_REVERSE -> RuntimeAbi.Kernels.STRING_REVERSE;
-                case STRING_REPEAT -> RuntimeAbi.Kernels.STRING_REPEAT;
-                case STRING_CONTAINS -> RuntimeAbi.Kernels.STRING_CONTAINS;
-                case STRING_STARTS_WITH -> RuntimeAbi.Kernels.STRING_STARTS_WITH;
-                case STRING_ENDS_WITH -> RuntimeAbi.Kernels.STRING_ENDS_WITH;
-                case STRING_TRIM -> RuntimeAbi.Kernels.STRING_TRIM;
-                case STRING_FROM_INT -> RuntimeAbi.Kernels.STRING_FROM_INT;
-                case STRING_SPLIT -> RuntimeAbi.Kernels.STRING_SPLIT;
-                case STRING_JOIN -> RuntimeAbi.Kernels.STRING_JOIN;
-                case STRING_CONCAT -> RuntimeAbi.Kernels.STRING_CONCAT;
-                case STRING_REPLACE -> RuntimeAbi.Kernels.STRING_REPLACE;
-                case STRING_LOWERCASE -> RuntimeAbi.Kernels.STRING_LOWERCASE;
-                case STRING_UPPERCASE -> RuntimeAbi.Kernels.STRING_UPPERCASE;
-                case STRING_WORDS -> RuntimeAbi.Kernels.STRING_WORDS;
-                case STRING_LINES -> RuntimeAbi.Kernels.STRING_LINES;
-                case STRING_PAD_LEFT -> RuntimeAbi.Kernels.STRING_PAD_LEFT;
-                case STRING_PAD_RIGHT -> RuntimeAbi.Kernels.STRING_PAD_RIGHT;
-                case STRING_CHARACTERS -> RuntimeAbi.Kernels.STRING_CHARACTERS;
-                case STRING_CODE_POINTS -> RuntimeAbi.Kernels.STRING_CODE_POINTS;
-                case INT_ADD -> RuntimeAbi.Kernels.INT_ADD;
-                case INT_SUBTRACT -> RuntimeAbi.Kernels.INT_SUBTRACT;
-                case INT_MULTIPLY -> RuntimeAbi.Kernels.INT_MULTIPLY;
-                case INT_COMPARE -> RuntimeAbi.Kernels.INT_COMPARE;
-                case INT_FLOOR_MOD -> RuntimeAbi.Kernels.INT_FLOOR_MOD;
-                case INT_DIVIDE -> RuntimeAbi.Kernels.INT_DIVIDE;
-                case INT_TRUNCATING_REMAINDER -> RuntimeAbi.Kernels.INT_TRUNCATING_REMAINDER;
-                case STRING_TO_INT -> RuntimeAbi.Kernels.STRING_TO_INT;
-                case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
-                case LIST_GET -> RuntimeAbi.Kernels.LIST_GET;
-                case LIST_FIND -> RuntimeAbi.Kernels.LIST_FIND;
-                case DECIMAL_ADD -> RuntimeAbi.Kernels.DECIMAL_ADD;
-                case DECIMAL_SUBTRACT -> RuntimeAbi.Kernels.DECIMAL_SUBTRACT;
-                case DECIMAL_MULTIPLY -> RuntimeAbi.Kernels.DECIMAL_MULTIPLY;
-                case DECIMAL_DIVIDE -> RuntimeAbi.Kernels.DECIMAL_DIVIDE;
-                case DECIMAL_ROUND -> RuntimeAbi.Kernels.DECIMAL_ROUND;
-                case DECIMAL_TO_INT -> RuntimeAbi.Kernels.DECIMAL_TO_INT;
-                case DECIMAL_FROM_INT -> RuntimeAbi.Kernels.DECIMAL_FROM_INT;
-                case DECIMAL_COMPARE -> RuntimeAbi.Kernels.DECIMAL_COMPARE;
-                case DATE_ADD_DAYS, DATETIME_ADD_DAYS -> RuntimeAbi.Kernels.DATE_ADD_DAYS;
-                case DATE_ADD_MONTHS -> RuntimeAbi.Kernels.DATE_ADD_MONTHS;
-                case DATE_ADD_YEARS -> RuntimeAbi.Kernels.DATE_ADD_YEARS;
-                case DATE_DAYS_BETWEEN -> RuntimeAbi.Kernels.DATE_DAYS_BETWEEN;
-                case DATE_YEAR, DATE_MONTH, DATE_DAY -> RuntimeAbi.Kernels.DATE_PART;
-                case DATE_FROM_PARTS -> RuntimeAbi.Kernels.DATE_FROM_PARTS;
-                case TIME_FROM_PARTS -> RuntimeAbi.Kernels.TIME_FROM_PARTS;
-                case TIME_HOUR, TIME_MINUTE, TIME_SECOND -> RuntimeAbi.Kernels.TIME_PART;
-                case DATETIME_ADD_MINUTES, DATETIME_ADD_HOURS -> RuntimeAbi.Kernels.DATETIME_ADD;
-                case DATETIME_MINUTES_BETWEEN -> RuntimeAbi.Kernels.DATETIME_MINUTES_BETWEEN;
-                case DATETIME_TO_DATE -> RuntimeAbi.Kernels.DATETIME_TO_DATE;
-                case DATETIME_TO_TIME -> RuntimeAbi.Kernels.DATETIME_TO_TIME;
-                case DATETIME_FROM_DATE_AND_TIME -> RuntimeAbi.Kernels.DATETIME_FROM_PARTS;
-                case LIST_SORT -> RuntimeAbi.Kernels.LIST_SORT;
-                case LIST_SORT_BY -> RuntimeAbi.Kernels.LIST_SORT_BY;
-                case LIST_MAX, LIST_MIN -> RuntimeAbi.Kernels.LIST_FURTHEST;
-                case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
-                case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
-                case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
-                case LIST_RANGE_INCLUSIVE -> RuntimeAbi.Kernels.LIST_RANGE_INCLUSIVE;
-                case SET_EMPTY -> RuntimeAbi.Kernels.SET_EMPTY;
-                case SET_SINGLETON -> RuntimeAbi.Kernels.SET_SINGLETON;
-                case SET_INSERT -> RuntimeAbi.Kernels.SET_INSERT;
-                case SET_REMOVE -> RuntimeAbi.Kernels.SET_REMOVE;
-                case SET_CONTAINS -> RuntimeAbi.Kernels.SET_CONTAINS;
-                case SET_UNION -> RuntimeAbi.Kernels.SET_UNION;
-                case SET_INTERSECTION -> RuntimeAbi.Kernels.SET_INTERSECTION;
-                case SET_DIFFERENCE -> RuntimeAbi.Kernels.SET_DIFFERENCE;
-                case SET_TO_LIST -> RuntimeAbi.Kernels.SET_TO_LIST;
-                case SET_FROM_LIST -> RuntimeAbi.Kernels.SET_FROM_LIST;
-                case SET_IS_EMPTY, MAP_IS_EMPTY -> RuntimeAbi.Kernels.IS_EMPTY;
-                case SET_SIZE, MAP_SIZE -> RuntimeAbi.Kernels.SIZE;
-                case MAP_EMPTY -> RuntimeAbi.Kernels.MAP_EMPTY;
-                case MAP_GET -> RuntimeAbi.Kernels.MAP_GET;
-                case MAP_CONTAINS_KEY -> RuntimeAbi.Kernels.MAP_CONTAINS_KEY;
-                case MAP_KEYS -> RuntimeAbi.Kernels.MAP_KEYS;
-                case MAP_VALUES -> RuntimeAbi.Kernels.MAP_VALUES;
-                case MAP_SINGLETON -> RuntimeAbi.Kernels.MAP_SINGLETON;
-                case MAP_INSERT -> RuntimeAbi.Kernels.MAP_INSERT;
-                case MAP_REMOVE -> RuntimeAbi.Kernels.MAP_REMOVE;
-                case MAP_TO_LIST -> RuntimeAbi.Kernels.MAP_TO_LIST;
-                case MAP_FROM_LIST -> RuntimeAbi.Kernels.MAP_FROM_LIST;
-                default -> throw new NotLowered(writing + " reaches " + kernel
-                        + ", which this backend does not write yet");
-            };
+            if (kernel == Kernel.STRING_MATCHES) {
+                recognised(out, call);
+                return;
+            }
+            String operation = abiNameOf(kernel);
             Integer rounds = TAKES_A_MODE.get(kernel);
             for (int i = 0; i < call.args().size(); i++) {
                 value(out, call.args().get(i));
@@ -908,6 +928,23 @@ public final class WasmCompiler {
         }
 
         /**
+         * {@code String.matches}, whose pattern is a literal and so is read here.
+         *
+         * <p>What crosses is the machine that recognises the pattern rather than the pattern
+         * itself, so the runtime holds no reader for one. A pattern written in a way this backend
+         * does not read is refused where it is written, which is the only place a program that
+         * would have been recognised differently can still be declined.
+         */
+        private void recognised(BodyWriter out, Core.Call call) {
+            if (!(call.args().get(0) instanceof Core.Str written)) {
+                throw new NotLowered(writing + " matches against a pattern that is not written out");
+            }
+            value(out, call.args().get(1));
+            out.constant(Patterns.place(fragment, written.value()))
+                    .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
+        }
+
+        /**
          * The kernels that answer either a value or a named case, and which case each names.
          *
          * <p>Written down because the library's own signature writes it: {@code Int.divide} answers
@@ -921,7 +958,8 @@ public final class WasmCompiler {
                 Kernel.DECIMAL_DIVIDE, "DivisionByZero",
                 Kernel.DATE_FROM_PARTS, "NotADate",
                 Kernel.TIME_FROM_PARTS, "NotATime",
-                Kernel.STRING_TO_INT, "NotANumber");
+                Kernel.STRING_TO_INT, "NotANumber",
+                Kernel.STRING_TO_DECIMAL, "NotANumber");
 
         /** What a sort's key answers, which is what its order is asked of. */
         private souther.compiler.types.Type keyType(Core.Call call) {

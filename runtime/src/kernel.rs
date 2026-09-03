@@ -11,6 +11,7 @@
 use crate::descriptor;
 use crate::json;
 use crate::order;
+use crate::regex;
 use crate::temporal;
 use crate::value::{
     self, __souther_int, __souther_int_value, __souther_list, __souther_list_get,
@@ -91,6 +92,44 @@ pub unsafe extern "C" fn __souther_string_repeat(count: u32, text: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_contains(part: u32, text: u32) -> u32 {
     value::__souther_bool(u32::from(index_of(text, part).is_some()))
+}
+
+/// `String.matches(pattern, s)`, where the pattern was read where it was written and reaches here
+/// as the machine that recognises it.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_matches(text: u32, machine: u32) -> u32 {
+    value::__souther_bool(u32::from(regex::matches(
+        __souther_string_bytes(text),
+        __souther_string_length(text),
+        machine,
+    )))
+}
+
+/// `String.fromDecimal(d)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_from_decimal(amount: u32) -> u32 {
+    let (at, length) = crate::decimal::written_in_full(amount);
+    __souther_string(at, length)
+}
+
+/// `String.toDecimal(s)`, which answers the case it is told the name of where the text is no
+/// amount — the same way `String.toInt` answers one.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_to_decimal(text: u32, absent: u32) -> u32 {
+    let held = crate::decimal::parse(__souther_string_bytes(text), __souther_string_length(text));
+    if held == 0 {
+        return value::__souther_unit(absent);
+    }
+    held
+}
+
+/// `Option.map(f, opt)`: what the block answers for what the option holds, or nothing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_option_map(block: u32, held: u32) -> u32 {
+    if value::__souther_is_some(held) == 0 {
+        return value::__souther_none();
+    }
+    value::__souther_some(crate::__souther_call_block(block, value::__souther_held(held)))
 }
 
 /// `String.startsWith(prefix, s)`.

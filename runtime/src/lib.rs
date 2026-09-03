@@ -30,6 +30,7 @@ mod issues;
 mod kernel;
 mod json;
 mod order;
+mod regex;
 mod temporal;
 mod text;
 mod value;

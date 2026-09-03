@@ -367,6 +367,42 @@ pub unsafe fn parse(at: u32, length: u32) -> u32 {
     of_digits(out, written, held as i32, negative)
 }
 
+/// An amount written out in full, however far its point falls.
+///
+/// Never in exponent form and never stripped, so what it says is the scale the amount carries:
+/// a thousand held to two places is written to two places. That is what a caller who set the scale
+/// asked for, and the shorter form would answer a question they did not ask.
+pub unsafe fn written_in_full(cell: u32) -> (u32, u32) {
+    let (at, length) = digits(cell);
+    let held = scale(cell);
+    let out = crate::next_free();
+    let mut total = 0;
+    if sign(cell) < 0 {
+        total += byte(b'-');
+    }
+    if held <= 0 {
+        total += copy(at, length);
+        for _ in 0..(-(held as i64)) {
+            total += byte(b'0');
+        }
+        return (out, total);
+    }
+    let places = held as u32;
+    if places >= length {
+        total += byte(b'0');
+        total += byte(b'.');
+        for _ in 0..(places - length) {
+            total += byte(b'0');
+        }
+        total += copy(at, length);
+        return (out, total);
+    }
+    total += copy(at, length - places);
+    total += byte(b'.');
+    total += copy(at + (length - places), places);
+    (out, total)
+}
+
 /// Where one amount stands relative to another, by what they are worth and not by how written.
 pub unsafe fn compare(left: u32, right: u32) -> i32 {
     let a = sign(left);

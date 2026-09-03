@@ -1,7 +1,6 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
@@ -204,36 +203,6 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 """);
 
         assertThat(refusalFor(module, "strict.echo", "[1")).contains(AbortReason.MALFORMED_JSON);
-    }
-
-    @Test
-    void saysWhatItMetRatherThanEmittingSomethingThatWouldAnswerWrongly() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
-                module wording
-
-                behavior matching : (s: String) -> Bool
-
-                let matching (s) = String.matches("a+", s)
-                """));
-
-        assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("STRING_MATCHES");
-    }
-
-    @Test
-    void saysSoForATypeItCannotReadAnArgumentAs() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
-                module wording
-
-                behavior matching : (s: String) -> Bool
-
-                let matching (s) = String.matches("a+", s)
-                """));
-
-        assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("does not write yet");
     }
 
     private static Optional<AbortReason> refusalFor(Running module, String export, String arguments) {

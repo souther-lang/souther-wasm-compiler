@@ -295,6 +295,18 @@ public final class RuntimeAbi {
         public static final String STRING_REPEAT = "__souther_string_repeat";
         /** {@code (i32 sub, i32 s) -> i32}. */
         public static final String STRING_CONTAINS = "__souther_string_contains";
+
+        /** {@code String.matches(pattern, s)}, told the machine the pattern was read into. */
+        public static final String STRING_MATCHES = "__souther_string_matches";
+
+        /** {@code String.fromDecimal(d)}. */
+        public static final String STRING_FROM_DECIMAL = "__souther_string_from_decimal";
+
+        /** {@code String.toDecimal(s)}. */
+        public static final String STRING_TO_DECIMAL = "__souther_string_to_decimal";
+
+        /** {@code Option.map(f, opt)}. */
+        public static final String OPTION_MAP = "__souther_option_map";
         /** {@code (i32 prefix, i32 s) -> i32}. */
         public static final String STRING_STARTS_WITH = "__souther_string_starts_with";
         /** {@code (i32 suffix, i32 s) -> i32}. */

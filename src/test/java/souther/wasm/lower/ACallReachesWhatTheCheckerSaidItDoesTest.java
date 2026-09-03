@@ -1,7 +1,6 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -135,21 +134,6 @@ class ACallReachesWhatTheCheckerSaidItDoesTest {
                 """);
 
         assertThat(answerOf(module, "counting.quadrupled", "[3]")).isEqualTo("{\"value\":12}");
-    }
-
-    @Test
-    void saysSoForACallThisBackendCannotReachYet() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
-                module counting
-
-                behavior matching : (s: String) -> Bool
-
-                let matching (s) = String.matches("a+", s)
-                """));
-
-        assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("reaches");
     }
 
     private static Running compiled(String... sources) {

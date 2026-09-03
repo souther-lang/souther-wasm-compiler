@@ -6,10 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import souther.compiler.core.Kernel;
 import souther.compiler.program.CheckedProgram;
 import souther.runtime.IntMath;
 import souther.runtime.Strings;
 import souther.wasm.Running;
+import souther.wasm.link.LinkPlan;
 import souther.wasm.abi.RuntimeAbi;
 
 /**
@@ -314,18 +316,15 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     }
 
     @Test
-    void saysSoForAnIntrinsicItDoesNotWriteYet() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
-                module wording
+    void writesEveryIntrinsicTheLibraryDeclaresAsSomethingTheRuntimeExports() {
+        LinkPlan runtime = LinkPlan.reading(WasmCompiler.runtimeModule());
 
-                behavior matching : (s: String) -> Bool
-
-                let matching (s) = String.matches("a+", s)
-                """));
-
-        assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("STRING_MATCHES");
+        for (Kernel kernel : Kernel.values()) {
+            String named = WasmCompiler.abiNameOf(kernel);
+            assertThat(runtime.layout().export(named))
+                    .describedAs(kernel + " is written as " + named)
+                    .isPresent();
+        }
     }
 
     private static String value(String written) {
