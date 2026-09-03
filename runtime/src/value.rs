@@ -174,6 +174,27 @@ pub unsafe extern "C" fn __souther_list_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 + 4 * index as usize) as *const u32)
 }
 
+/// Whether a value was made as the type a descriptor describes.
+///
+/// A cell holds the descriptor of the type it was made as, and a sum's cases are its leaves, so
+/// which arm of a match a value takes is this asked of each in turn.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
+    u32::from(core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor)
+}
+
+/// Whether an option holds something.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_is_some(cell: u32) -> u32 {
+    u32::from(core::ptr::read_unaligned(cell as usize as *const u32) == TAG_SOME)
+}
+
+/// What an option holds. Asked only where it holds something.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_held(cell: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
+}
+
 /// The `+` operator on `Int`. Leaving the range is a model bug rather than a value, so it ends the
 /// call: nothing an `Int` can hold is the answer, and a wrapped one would be a different number
 /// quietly standing where the right one was.

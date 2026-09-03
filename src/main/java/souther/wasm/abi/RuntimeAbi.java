@@ -201,6 +201,15 @@ public final class RuntimeAbi {
     /** {@code (i32 cell) -> i32}: the {@code Bool} a cell holds, as one or zero. */
     public static final String BOOL_VALUE = "__souther_bool_value";
 
+    /** {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. */
+    public static final String IS = "__souther_is";
+
+    /** {@code (i32 cell) -> i32}: whether an option holds something. */
+    public static final String IS_SOME = "__souther_is_some";
+
+    /** {@code (i32 cell) -> i32}: what an option holds, asked where it holds something. */
+    public static final String HELD = "__souther_held";
+
     /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
     public static final String CONCAT = "__souther_concat";
 

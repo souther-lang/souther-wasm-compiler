@@ -32,6 +32,8 @@ final class BodyWriter {
     private static final int OPCODE_I32_GT_S = 0x4a;
     private static final int OPCODE_I32_LE_S = 0x4c;
     private static final int OPCODE_I32_GE_S = 0x4e;
+    private static final int OPCODE_UNREACHABLE = 0x00;
+    private static final int OPCODE_I32_OR = 0x72;
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
     private static final int OPCODE_I64_SHR_U = 0x88;
 
@@ -135,6 +137,18 @@ final class BodyWriter {
     /** The other way of the condition just opened. */
     BodyWriter otherwise() {
         writer.write((byte) OPCODE_ELSE);
+        return this;
+    }
+
+    /** Turns the two numbers on the stack into whether either of them is not zero. */
+    BodyWriter or() {
+        writer.write((byte) OPCODE_I32_OR);
+        return this;
+    }
+
+    /** Ends the call where nothing else has. */
+    BodyWriter unreachable() {
+        writer.write((byte) OPCODE_UNREACHABLE);
         return this;
     }
 

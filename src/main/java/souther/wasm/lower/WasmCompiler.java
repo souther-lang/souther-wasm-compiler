@@ -7,15 +7,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import souther.compiler.core.Core;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.BinOp;
+import souther.compiler.types.Refinement;
+import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
+import souther.wasm.abi.AbortReason;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.emit.Type;
 import souther.wasm.link.LinkPlan;
@@ -257,6 +261,14 @@ public final class WasmCompiler {
                     value(out, chosen.els());
                     out.localSet(answer).end().localGet(answer);
                 }
+                case Core.LetIn bound -> {
+                    int local = scratch();
+                    value(out, bound.value());
+                    out.localSet(local);
+                    locals.put(bound.binder().binding(), local);
+                    value(out, bound.body());
+                }
+                case Core.Match chosen -> match(out, chosen);
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {
@@ -269,6 +281,99 @@ public final class WasmCompiler {
                         + expression.getClass().getSimpleName()
                         + ", and this backend writes a literal or a read of a parameter");
             }
+        }
+
+        /**
+         * A match, as one condition per arm over the value it is given.
+         *
+         * <p>Which arm a value takes is asked of the value: a cell holds the descriptor of the
+         * type it was made as, and a sum's cases are its leaves, so the arms are told apart by
+         * which leaves each answers for.
+         *
+         * <p>Where an arm selects on an option, what it tests is whether the option holds
+         * something, and what it binds is what the option holds — not the option.
+         */
+        private void match(BodyWriter out, Core.Match chosen) {
+            int subject = scratch();
+            int answer = scratch();
+            value(out, chosen.scrutinee());
+            out.localSet(subject);
+
+            int opened = 0;
+            for (Core.Case arm : chosen.cases()) {
+                condition(out, arm, subject);
+                out.ifNotZero();
+                bind(out, arm, subject);
+                value(out, arm.body());
+                out.localSet(answer).otherwise();
+                opened++;
+            }
+            // The checker settles that one arm answers, so nothing written reaches this. What it
+            // stands for is this backend having tested for the wrong thing.
+            out.constant(AbortReason.NO_ARM.code())
+                    .constant(0)
+                    .constant(0L)
+                    .constant(0L)
+                    .call(calls.of(RuntimeAbi.ABORT))
+                    .unreachable();
+            for (int i = 0; i < opened; i++) {
+                out.end();
+            }
+            out.localGet(answer);
+        }
+
+        /** Leaves on the stack whether an arm is the one a value takes. */
+        private void condition(BodyWriter out, Core.Case arm, int subject) {
+            Optional<ResolvedCase> selected = arm.selectedCase();
+            if (selected.isPresent()
+                    && selected.get().refinement() instanceof Refinement.OptionPresent) {
+                out.localGet(subject).call(calls.of(RuntimeAbi.IS_SOME));
+                return;
+            }
+            if (selected.isPresent()
+                    && selected.get().refinement() instanceof Refinement.OptionAbsent) {
+                out.localGet(subject).call(calls.of(RuntimeAbi.IS_SOME)).constant(0)
+                        .compares(BodyWriter.Comparison.EQUAL);
+                return;
+            }
+            List<TypeSymbol> atoms = arm.caseTypes();
+            if (atoms.isEmpty()) {
+                throw new NotLowered(behavior.name()
+                        + " has an arm selecting nothing this backend can tell a value by");
+            }
+            for (int i = 0; i < atoms.size(); i++) {
+                out.localGet(subject)
+                        .constant(shapes.ofDeclared(asDeclared(atoms.get(i))))
+                        .call(calls.of(RuntimeAbi.IS));
+                if (i > 0) {
+                    // Either of them: an or-pattern answers for each of the leaves it names.
+                    out.or();
+                }
+            }
+        }
+
+        /** Puts what an arm binds where its body reads it. */
+        private void bind(BodyWriter out, Core.Case arm, int subject) {
+            if (arm.binder() == null) {
+                return;
+            }
+            int local = scratch();
+            boolean present = arm.selectedCase()
+                    .map(each -> each.refinement() instanceof Refinement.OptionPresent)
+                    .orElse(false);
+            out.localGet(subject);
+            if (present) {
+                out.call(calls.of(RuntimeAbi.HELD));
+            }
+            out.localSet(local);
+            locals.put(arm.binder().binding(), local);
+        }
+
+        private static TypeSymbol.AtModule asDeclared(TypeSymbol name) {
+            if (name instanceof TypeSymbol.AtModule named) {
+                return named;
+            }
+            throw new NotLowered(name + " selects an arm and is not declared by a module");
         }
 
         /**

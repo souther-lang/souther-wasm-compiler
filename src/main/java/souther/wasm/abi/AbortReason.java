@@ -33,7 +33,15 @@ public enum AbortReason {
     INT_OVERFLOW(5),
 
     /** A division by zero, which the {@code /} operator treats as a model bug rather than a case. */
-    DIVISION_BY_ZERO(6);
+    DIVISION_BY_ZERO(6),
+
+    /**
+     * A match ran out of arms.
+     *
+     * <p>The checker settles that one always answers, so reaching this means this backend tested
+     * for the wrong thing rather than that the model left a case out.
+     */
+    NO_ARM(7);
 
     private final int code;
 

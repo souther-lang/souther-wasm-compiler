@@ -214,6 +214,9 @@ pub const REASON_MALFORMED_JSON: u32 = 3;
 pub const REASON_INT_OVERFLOW: u32 = 5;
 /// A division by zero, which the `/` operator treats as a model bug rather than a case.
 pub const REASON_DIVISION_BY_ZERO: u32 = 6;
+/// A match ran out of arms. The checker settles that one always answers, so reaching this means
+/// the emitter tested for the wrong thing rather than that the model left a case out.
+pub const REASON_NO_ARM: u32 = 7;
 
 /// A value whose tag nothing here knows. What a decoder was handed never reaches this: a value is
 /// made by generated code, so a tag no one knows means the emitter is wrong rather than the input.
