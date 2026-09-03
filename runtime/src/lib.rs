@@ -210,6 +210,11 @@ pub const REASON_OUT_OF_MEMORY: u32 = 1;
 pub const REASON_BAD_MARK: u32 = 2;
 /// What was handed in is not one JSON document. `aux0` is where the reading stopped.
 pub const REASON_MALFORMED_JSON: u32 = 3;
+/// A whole number's arithmetic left the range an `Int` holds. `aux0` and `aux1` are the operands.
+pub const REASON_INT_OVERFLOW: u32 = 5;
+/// A division by zero, which the `/` operator treats as a model bug rather than a case.
+pub const REASON_DIVISION_BY_ZERO: u32 = 6;
+
 /// A value whose tag nothing here knows. What a decoder was handed never reaches this: a value is
 /// made by generated code, so a tag no one knows means the emitter is wrong rather than the input.
 pub const REASON_NOT_A_VALUE: u32 = 4;

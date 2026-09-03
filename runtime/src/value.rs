@@ -36,7 +36,7 @@ use crate::issues::{
     CODE_TYPE_MISMATCH,
 };
 use crate::json;
-use crate::{abort, alloc, REASON_NOT_A_VALUE};
+use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_INT_OVERFLOW, REASON_NOT_A_VALUE};
 
 /// The one value a type with a single value has. `+4` is which type.
 pub const TAG_UNIT: u32 = 0;
@@ -172,6 +172,76 @@ pub unsafe extern "C" fn __souther_list_length(cell: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 + 4 * index as usize) as *const u32)
+}
+
+/// The `+` operator on `Int`. Leaving the range is a model bug rather than a value, so it ends the
+/// call: nothing an `Int` can hold is the answer, and a wrapped one would be a different number
+/// quietly standing where the right one was.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
+    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
+    match a.checked_add(b) {
+        Some(sum) => __souther_int(sum),
+        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+    }
+}
+
+/// The `-` operator on `Int`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_subtract(left: u32, right: u32) -> u32 {
+    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
+    match a.checked_sub(b) {
+        Some(difference) => __souther_int(difference),
+        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+    }
+}
+
+/// The `*` operator on `Int`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_multiply(left: u32, right: u32) -> u32 {
+    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
+    match a.checked_mul(b) {
+        Some(product) => __souther_int(product),
+        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+    }
+}
+
+/// The `/` operator on `Int`: truncating, and ending the call on a zero divisor.
+///
+/// A zero divisor is a model bug here rather than a case. Code that means it as a case asks
+/// `Int.divide`, whose type says so.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_divide(left: u32, right: u32) -> u32 {
+    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
+    if b == 0 {
+        abort(REASON_DIVISION_BY_ZERO, 0, a as u64, 0);
+    }
+    match a.checked_div(b) {
+        Some(quotient) => __souther_int(quotient),
+        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+    }
+}
+
+/// Where one value is written relative to another of its type, as a whole number.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_compare(left: u32, right: u32, descriptor: u32) -> i32 {
+    order::compare(left, right, descriptor)
+}
+
+/// The `++` operator on `String`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_concat(left: u32, right: u32) -> u32 {
+    let (a, a_length) = (__souther_string_bytes(left), __souther_string_length(left));
+    let (b, b_length) = (__souther_string_bytes(right), __souther_string_length(right));
+    let cell = header(TAG_STRING, a_length + b_length);
+    let _ = alloc(a_length + b_length);
+    core::ptr::copy_nonoverlapping(a as *const u8, (cell as usize + HEADER) as *mut u8, a_length as usize);
+    core::ptr::copy_nonoverlapping(
+        b as *const u8,
+        (cell as usize + HEADER + a_length as usize) as *mut u8,
+        b_length as usize,
+    );
+    cell
 }
 
 /// A map of that many entries, with nothing in them yet.

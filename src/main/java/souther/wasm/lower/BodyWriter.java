@@ -26,6 +26,12 @@ final class BodyWriter {
     private static final int OPCODE_I32_CONST = 0x41;
     private static final int OPCODE_I64_CONST = 0x42;
     private static final int OPCODE_I32_EQZ = 0x45;
+    private static final int OPCODE_I32_EQ = 0x46;
+    private static final int OPCODE_I32_NE = 0x47;
+    private static final int OPCODE_I32_LT_S = 0x48;
+    private static final int OPCODE_I32_GT_S = 0x4a;
+    private static final int OPCODE_I32_LE_S = 0x4c;
+    private static final int OPCODE_I32_GE_S = 0x4e;
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
     private static final int OPCODE_I64_SHR_U = 0x88;
 
@@ -93,6 +99,24 @@ final class BodyWriter {
     BodyWriter shiftRight(long places) {
         constant(places);
         writer.write((byte) OPCODE_I64_SHR_U);
+        return this;
+    }
+
+    /** How one number stands to another. */
+    enum Comparison {
+        EQUAL, UNEQUAL, LESS, AT_MOST, GREATER, AT_LEAST
+    }
+
+    /** Turns the two numbers on the stack into whether the first stands that way to the second. */
+    BodyWriter compares(Comparison how) {
+        writer.write((byte) switch (how) {
+            case EQUAL -> OPCODE_I32_EQ;
+            case UNEQUAL -> OPCODE_I32_NE;
+            case LESS -> OPCODE_I32_LT_S;
+            case AT_MOST -> OPCODE_I32_LE_S;
+            case GREATER -> OPCODE_I32_GT_S;
+            case AT_LEAST -> OPCODE_I32_GE_S;
+        });
         return this;
     }
 

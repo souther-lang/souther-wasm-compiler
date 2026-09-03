@@ -27,7 +27,13 @@ public enum AbortReason {
      * means this compiler emitted it wrongly rather than that a caller wrote something odd. What a
      * decoder refuses comes back as issues instead, in the answer.
      */
-    NOT_A_VALUE(4);
+    NOT_A_VALUE(4),
+
+    /** Arithmetic left the range an {@code Int} holds. {@code aux0} and {@code aux1} are what of. */
+    INT_OVERFLOW(5),
+
+    /** A division by zero, which the {@code /} operator treats as a model bug rather than a case. */
+    DIVISION_BY_ZERO(6);
 
     private final int code;
 

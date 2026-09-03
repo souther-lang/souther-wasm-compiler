@@ -209,16 +209,15 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
     @Test
     void saysWhatItMetRatherThanEmittingSomethingThatWouldAnswerWrongly() {
         CheckedProgram program = CheckedProgram.of(List.of("""
-                module adding
+                module folding
 
-                behavior twice : (n: Int) -> Int
+                behavior total : (xs: List<Int>) -> Int
 
-                let twice (n) = n + n
+                let total (xs) = List.fold((acc, x) -> acc + x, 0, xs)
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Binary");
+                .isInstanceOf(NotLowered.class);
     }
 
     @Test

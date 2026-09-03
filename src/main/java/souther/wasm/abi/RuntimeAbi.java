@@ -177,6 +177,33 @@ public final class RuntimeAbi {
     /** {@code () -> i32}: an option holding nothing. */
     public static final String NONE = "__souther_none";
 
+    /** {@code (i32 descriptor, i32 entries) -> i32}: a map of that many entries, its places empty. */
+    public static final String MAP = "__souther_map";
+
+    /** {@code (i32 left, i32 right) -> i32}: the {@code +} operator on {@code Int}. */
+    public static final String ADD = "__souther_add";
+
+    /** {@code (i32 left, i32 right) -> i32}: the {@code -} operator on {@code Int}. */
+    public static final String SUBTRACT = "__souther_subtract";
+
+    /** {@code (i32 left, i32 right) -> i32}: the {@code *} operator on {@code Int}. */
+    public static final String MULTIPLY = "__souther_multiply";
+
+    /** {@code (i32 left, i32 right) -> i32}: the {@code /} operator on {@code Int}. */
+    public static final String DIVIDE = "__souther_divide";
+
+    /**
+     * {@code (i32 left, i32 right, i32 descriptor) -> i32}: where one value is written relative to
+     * another of its type, which is what every comparison is answered by.
+     */
+    public static final String COMPARE = "__souther_compare";
+
+    /** {@code (i32 cell) -> i32}: the {@code Bool} a cell holds, as one or zero. */
+    public static final String BOOL_VALUE = "__souther_bool_value";
+
+    /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
+    public static final String CONCAT = "__souther_concat";
+
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
 

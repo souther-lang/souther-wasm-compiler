@@ -12,6 +12,7 @@ import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
@@ -246,6 +247,16 @@ public final class WasmCompiler {
                     out.call(calls.of(RuntimeAbi.SOME));
                 }
                 case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
+                case Core.Binary binary -> binary(out, binary);
+                case Core.If chosen -> {
+                    int answer = scratch();
+                    value(out, chosen.cond());
+                    out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifNotZero();
+                    value(out, chosen.then());
+                    out.localSet(answer).otherwise();
+                    value(out, chosen.els());
+                    out.localSet(answer).end().localGet(answer);
+                }
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {
@@ -258,6 +269,62 @@ public final class WasmCompiler {
                         + expression.getClass().getSimpleName()
                         + ", and this backend writes a literal or a read of a parameter");
             }
+        }
+
+        /**
+         * An operator, over the values its operands are.
+         *
+         * <p>A comparison is answered by where one value is written relative to the other, whatever
+         * the two are: that is one question with one answer, and asking it per type would be as
+         * many answers as there are types to disagree about.
+         *
+         * <p>{@code &&} and {@code ||} are the two that decide whether their second operand runs at
+         * all, so they are written as a condition rather than as a call taking both.
+         */
+        private void binary(BodyWriter out, Core.Binary binary) {
+            switch (binary.op()) {
+                case ADD -> arithmetic(out, binary, RuntimeAbi.ADD);
+                case SUB -> arithmetic(out, binary, RuntimeAbi.SUBTRACT);
+                case MUL -> arithmetic(out, binary, RuntimeAbi.MULTIPLY);
+                case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE);
+                case CONCAT -> arithmetic(out, binary, RuntimeAbi.CONCAT);
+                case EQ -> comparison(out, binary, BodyWriter.Comparison.EQUAL);
+                case NE -> comparison(out, binary, BodyWriter.Comparison.UNEQUAL);
+                case LT -> comparison(out, binary, BodyWriter.Comparison.LESS);
+                case LE -> comparison(out, binary, BodyWriter.Comparison.AT_MOST);
+                case GT -> comparison(out, binary, BodyWriter.Comparison.GREATER);
+                case GE -> comparison(out, binary, BodyWriter.Comparison.AT_LEAST);
+                case AND, OR -> {
+                    int answer = scratch();
+                    value(out, binary.left());
+                    out.localSet(answer)
+                            .localGet(answer)
+                            .call(calls.of(RuntimeAbi.BOOL_VALUE));
+                    if (binary.op() == BinOp.AND) {
+                        out.ifNotZero();
+                    } else {
+                        out.ifZero();
+                    }
+                    value(out, binary.right());
+                    out.localSet(answer).end().localGet(answer);
+                }
+            }
+        }
+
+        private void comparison(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
+            value(out, binary.left());
+            value(out, binary.right());
+            out.constant(shapes.of(binary.left().type()))
+                    .call(calls.of(RuntimeAbi.COMPARE))
+                    .constant(0)
+                    .compares(how)
+                    .call(calls.of(RuntimeAbi.BOOL));
+        }
+
+        private void arithmetic(BodyWriter out, Core.Binary binary, String operation) {
+            value(out, binary.left());
+            value(out, binary.right());
+            out.call(calls.of(operation));
         }
 
         /**
