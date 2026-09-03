@@ -85,10 +85,39 @@ public final class WasmFragment {
      * @param body the locals vector followed by the instructions and their {@code end}
      */
     public int define(int typeIndex, byte[] body) {
+        int index = declare(typeIndex);
+        write(index, body);
+        return index;
+    }
+
+    /**
+     * Takes an index for a function whose body is not written yet.
+     *
+     * <p>For a body that calls another written after it, or itself. A call writes the index of
+     * what it reaches, so every index has to be settled before the first body is written, and a
+     * link refuses to finish while any of them is still empty.
+     */
+    public int declare(int typeIndex) {
         int index = plan.firstGeneratedFunctionIndex() + bodies.size();
         functionTypes.add(typeIndex);
-        bodies.add(body.clone());
+        bodies.add(null);
         return index;
+    }
+
+    /**
+     * Puts the body of something declared where it was promised.
+     *
+     * @param functionIndex what {@link #declare} answered
+     */
+    public void write(int functionIndex, byte[] body) {
+        int at = functionIndex - plan.firstGeneratedFunctionIndex();
+        if (at < 0 || at >= bodies.size()) {
+            throw new IllegalArgumentException("nothing was declared at " + functionIndex);
+        }
+        if (bodies.get(at) != null) {
+            throw new IllegalArgumentException("function " + functionIndex + " is already written");
+        }
+        bodies.set(at, body.clone());
     }
 
     /**
@@ -168,6 +197,12 @@ public final class WasmFragment {
     }
 
     List<byte[]> functionBodies() {
+        for (int i = 0; i < bodies.size(); i++) {
+            if (bodies.get(i) == null) {
+                throw new IllegalStateException("function "
+                        + (plan.firstGeneratedFunctionIndex() + i) + " was declared and not written");
+            }
+        }
         return List.copyOf(bodies);
     }
 

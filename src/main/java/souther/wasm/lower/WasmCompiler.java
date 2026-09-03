@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,9 +15,9 @@ import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.BinOp;
+import souther.compiler.types.BindingId;
 import souther.compiler.types.Refinement;
 import souther.compiler.types.ResolvedCase;
-import souther.compiler.types.BindingId;
 import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
 import souther.wasm.abi.AbortReason;
@@ -70,16 +71,66 @@ public final class WasmCompiler {
         WasmFragment fragment = new WasmFragment(plan);
         Runtime calls = new Runtime(plan);
         Descriptors shapes = new Descriptors(program, fragment);
-        int stringToString = fragment.functionType(
-                List.of(Type.I32, Type.I32), List.of(Type.I32, Type.I32));
+        Map<ValueName, Integer> reached = new HashMap<>();
 
+        // Every index is settled before the first body is written, because a call writes the index
+        // of what it reaches and a body may reach one written after it, or itself.
+        // Behaviors and nothing else. A helper's body is expanded where it was called, so a
+        // checked program carries no helper for a call to reach.
+        List<Written> written = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
-                byte[] body = new Behavior(fragment, calls, shapes, behavior).write();
-                fragment.export(exportName(behavior.name()), fragment.define(stringToString, body));
+                Body body = bodyOf(behavior);
+                int index = fragment.declare(overCells(fragment, body.parameters().size()));
+                reached.put(behavior.name(), index);
+                written.add(new Written(index, body.parameters(), body.body(), behavior.name()));
+            }
+        }
+
+        Emitter emitter = new Emitter(fragment, calls, shapes, reached);
+        for (Written each : written) {
+            fragment.write(each.index(), emitter.overValues(each));
+        }
+        int stringToString = fragment.functionType(
+                List.of(Type.I32, Type.I32), List.of(Type.I32, Type.I32));
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                byte[] wrapper = emitter.crossing(behavior, reached.get(behavior.name()));
+                fragment.export(exportName(behavior.name()), fragment.define(stringToString, wrapper));
             }
         }
         return Linker.link(fragment);
+    }
+
+    /** The shape of a generated function over values: a cell per parameter, and a cell answered. */
+    private static int overCells(WasmFragment fragment, int arity) {
+        List<Type> takes = new ArrayList<>();
+        for (int i = 0; i < arity; i++) {
+            takes.add(Type.I32);
+        }
+        return fragment.functionType(takes, List.of(Type.I32));
+    }
+
+    /** One function to write: where it goes, what it binds, and what it answers. */
+    private record Written(int index, List<Core.Binder> parameters, Core body, ValueName declares) {
+    }
+
+    /** What a behavior's implementation says, or why this backend cannot write it. */
+    private record Body(List<Core.Binder> parameters, Core body) {
+    }
+
+    private static Body bodyOf(CheckedBehavior behavior) {
+        return switch (behavior.implementation()) {
+            case CheckedImplementation.Body it -> new Body(it.parameters(), it.body());
+            case CheckedImplementation.Composed ignored -> throw new NotLowered(
+                    behavior.name() + " is composed, and this backend does not write a composition yet");
+            case CheckedImplementation.Injected ignored -> throw new NotLowered(
+                    behavior.name() + " is injected, and this backend does not reach out of the module yet");
+            case CheckedImplementation.Unwritten ignored -> throw new NotLowered(
+                    behavior.name() + " is not written, so there is nothing to emit for it");
+            case CheckedImplementation.ImplementedElsewhere ignored -> throw new NotLowered(
+                    behavior.name() + " is implemented by another build, and this backend links one program");
+        };
     }
 
     /** The name a caller reaches a behavior by. */
@@ -107,50 +158,60 @@ public final class WasmCompiler {
         }
     }
 
-    /** One behavior's export, written. */
-    private static final class Behavior {
-
-        /** The pointer the caller's JSON is at. */
-        private static final int LOCAL_INPUT_POINTER = 0;
-        /** How long the caller's JSON is. */
-        private static final int LOCAL_INPUT_LENGTH = 1;
+    /**
+     * Writes the bodies of what a program declares.
+     *
+     * <p>Two shapes of function. One is what a declaration is: a cell per parameter, and a cell
+     * answered, which is what a call from another body reaches. The other is the crossing an
+     * export is — a document in and a document out — which reads the arguments, calls the first,
+     * and writes what came back.
+     */
+    private static final class Emitter {
 
         private final WasmFragment fragment;
         private final Runtime calls;
         private final Descriptors shapes;
-        private final CheckedBehavior behavior;
-        private final Map<BindingId, Integer> locals = new HashMap<>();
-        private BodyWriter out;
-        private final List<Core.Binder> parameters;
-        private final Core body;
+        private final Map<ValueName, Integer> reached;
 
-        Behavior(WasmFragment fragment, Runtime calls, Descriptors shapes, CheckedBehavior behavior) {
+        private BodyWriter out;
+        private Map<BindingId, Integer> locals;
+        private Object writing;
+
+        Emitter(WasmFragment fragment, Runtime calls, Descriptors shapes,
+                Map<ValueName, Integer> reached) {
             this.fragment = fragment;
             this.calls = calls;
             this.shapes = shapes;
-            this.behavior = behavior;
-            CheckedImplementation implementation = behavior.implementation();
-            CheckedImplementation.Body written = switch (implementation) {
-                case CheckedImplementation.Body it -> it;
-                case CheckedImplementation.Composed ignored -> throw new NotLowered(
-                        behavior.name() + " is composed, and this backend does not write a composition yet");
-                case CheckedImplementation.Injected ignored -> throw new NotLowered(
-                        behavior.name() + " is injected, and this backend does not reach out of the module yet");
-                case CheckedImplementation.Unwritten ignored -> throw new NotLowered(
-                        behavior.name() + " is not written, so there is nothing to emit for it");
-                case CheckedImplementation.ImplementedElsewhere ignored -> throw new NotLowered(
-                        behavior.name() + " is implemented by another build, and this backend links one program");
-            };
-            this.parameters = written.parameters();
-            this.body = written.body();
+            this.reached = reached;
         }
 
-        byte[] write() {
-            int arity = parameters.size();
-            BodyWriter out = new BodyWriter(2, 1);
-            this.out = out;
+        /** A declaration's own function: its parameters as cells, its answer as one. */
+        byte[] overValues(Written written) {
+            out = new BodyWriter(written.parameters().size(), 0);
+            locals = new HashMap<>();
+            writing = written.declares();
+            for (int i = 0; i < written.parameters().size(); i++) {
+                locals.put(written.parameters().get(i).binding(), i);
+            }
+            value(out, written.body());
+            return out.body();
+        }
+
+        /**
+         * The export a behavior is reached from outside by.
+         *
+         * <p>The arguments are one JSON array in the order the behavior declares its parameters,
+         * and the answer is either the value under {@code value} or what the decoder found wrong
+         * under {@code issues}.
+         */
+        byte[] crossing(CheckedBehavior behavior, int declaration) {
+            out = new BodyWriter(2, 1);
+            locals = new HashMap<>();
+            writing = behavior.name();
             int packed = out.wide(0);
             int document = out.narrow();
+            var takes = behavior.signature().takes();
+            int arity = takes.size();
 
             out.call(calls.of(RuntimeAbi.ISSUES_BEGIN))
                     .localGet(LOCAL_INPUT_POINTER)
@@ -163,11 +224,10 @@ public final class WasmCompiler {
 
             // Only where the arguments are there at all: a place that is not in the document has
             // nowhere to be read from, and reading it would be reading past what the caller wrote.
+            int[] read = new int[arity];
             out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifZero();
-            var takes = behavior.signature().takes();
             for (int i = 0; i < arity; i++) {
-                int local = out.narrow();
-                locals.put(parameters.get(i).binding(), local);
+                read[i] = out.narrow();
                 byte[] path = ("/" + i).getBytes(StandardCharsets.UTF_8);
                 out.localGet(document)
                         .constant(i)
@@ -176,7 +236,7 @@ public final class WasmCompiler {
                         .constant(fragment.place(path))
                         .constant(path.length)
                         .call(calls.of(RuntimeAbi.READ))
-                        .localSet(local);
+                        .localSet(read[i]);
             }
             out.end();
 
@@ -186,8 +246,11 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.ISSUES_WRITTEN))
                     .localSet(packed)
                     .otherwise();
-            value(out, body);
-            out.constant(shapes.of(behavior.signature().answers()))
+            for (int i = 0; i < arity; i++) {
+                out.localGet(read[i]);
+            }
+            out.call(declaration)
+                    .constant(shapes.of(behavior.signature().answers()))
                     .call(calls.of(RuntimeAbi.WRITE))
                     .localSet(packed)
                     .end();
@@ -200,6 +263,11 @@ public final class WasmCompiler {
                     .body();
         }
 
+        /** The pointer the caller's JSON is at. */
+        private static final int LOCAL_INPUT_POINTER = 0;
+        /** How long the caller's JSON is. */
+        private static final int LOCAL_INPUT_LENGTH = 1;
+
         /** Leaves the value of an expression on the stack, as the cell it is. */
         private void value(BodyWriter out, Core expression) {
             switch (expression) {
@@ -211,6 +279,24 @@ public final class WasmCompiler {
                             .constant(utf8.length)
                             .call(calls.of(RuntimeAbi.STRING));
                 }
+                case Core.ListLit made -> {
+                    int list = scratch();
+                    out.constant(shapes.of(made.type()))
+                            .constant(made.elements().size())
+                            .call(calls.of(RuntimeAbi.LIST))
+                            .localSet(list);
+                    for (int i = 0; i < made.elements().size(); i++) {
+                        out.localGet(list).constant(i);
+                        value(out, made.elements().get(i));
+                        out.call(calls.of(RuntimeAbi.LIST_SET));
+                    }
+                    out.localGet(list);
+                }
+                case Core.OptionSome some -> {
+                    value(out, some.value());
+                    out.call(calls.of(RuntimeAbi.SOME));
+                }
+                case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
                 case Core.Construct made -> {
                     int record = scratch();
                     out.constant(shapes.ofDeclared(made.typeName()))
@@ -233,24 +319,6 @@ public final class WasmCompiler {
                     out.constant(shapes.positionOf(shapeOf(read.target()), read.field()))
                             .call(calls.of(RuntimeAbi.RECORD_GET));
                 }
-                case Core.ListLit made -> {
-                    int list = scratch();
-                    out.constant(shapes.of(made.type()))
-                            .constant(made.elements().size())
-                            .call(calls.of(RuntimeAbi.LIST))
-                            .localSet(list);
-                    for (int i = 0; i < made.elements().size(); i++) {
-                        out.localGet(list).constant(i);
-                        value(out, made.elements().get(i));
-                        out.call(calls.of(RuntimeAbi.LIST_SET));
-                    }
-                    out.localGet(list);
-                }
-                case Core.OptionSome some -> {
-                    value(out, some.value());
-                    out.call(calls.of(RuntimeAbi.SOME));
-                }
-                case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
                 case Core.Binary binary -> binary(out, binary);
                 case Core.If chosen -> {
                     int answer = scratch();
@@ -269,18 +337,49 @@ public final class WasmCompiler {
                     value(out, bound.body());
                 }
                 case Core.Match chosen -> match(out, chosen);
+                case Core.Call call -> call(out, call);
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {
-                        throw new NotLowered(behavior.name() + " reads " + read.name()
+                        throw new NotLowered(writing + " reads " + read.name()
                                 + ", which is bound by something this backend does not write yet");
                     }
                     out.localGet(local);
                 }
-                default -> throw new NotLowered(behavior.name() + " answers with "
+                default -> throw new NotLowered(writing + " answers with "
                         + expression.getClass().getSimpleName()
-                        + ", and this backend writes a literal or a read of a parameter");
+                        + ", which this backend does not write yet");
             }
+        }
+
+        /**
+         * A call, which is the declaration it reaches with its arguments before it.
+         *
+         * <p>What it reaches is read off the call rather than worked out from a name: the checker
+         * typed it against a declaration and says which, and a spelling this resolved again would
+         * be resolving what was resolved already.
+         */
+        private void call(BodyWriter out, Core.Call call) {
+            if (!(call.fn() instanceof Core.Reached.OfDeclaration declaration)) {
+                throw new NotLowered(writing + " reaches " + call.fn()
+                        + ", and this backend reaches a helper and a behavior");
+            }
+            if (!(declaration.reaches() instanceof Core.Reaches.ABehavior reaches)) {
+                // A helper: expanded where it was written, so nothing reaches one here. Said
+                // rather than assumed, because a checker that stopped expanding them would
+                // otherwise reach whatever this happened to do next.
+                throw new NotLowered(writing + " reaches " + declaration.name()
+                        + ", and this backend reaches a behavior");
+            }
+            Integer index = reached.get(reaches.behavior());
+            if (index == null) {
+                throw new NotLowered(writing + " reaches " + reaches.behavior()
+                        + ", which this program declares no body for here");
+            }
+            for (Core argument : call.args()) {
+                value(out, argument);
+            }
+            out.call(index);
         }
 
         /**
@@ -338,7 +437,7 @@ public final class WasmCompiler {
             }
             List<TypeSymbol> atoms = arm.caseTypes();
             if (atoms.isEmpty()) {
-                throw new NotLowered(behavior.name()
+                throw new NotLowered(writing
                         + " has an arm selecting nothing this backend can tell a value by");
             }
             for (int i = 0; i < atoms.size(); i++) {
@@ -444,7 +543,7 @@ public final class WasmCompiler {
                     && reference.name() instanceof TypeSymbol.AtModule named) {
                 return named;
             }
-            throw new NotLowered(behavior.name() + " reads a field off a "
+            throw new NotLowered(writing + " reads a field off a "
                     + expression.type() + ", and this backend reads one off a shape");
         }
 
