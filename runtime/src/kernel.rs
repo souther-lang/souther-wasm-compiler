@@ -395,6 +395,16 @@ pub unsafe extern "C" fn __souther_list_size(list: u32) -> u32 {
     __souther_int(__souther_list_length(list) as i64)
 }
 
+/// `List.get(index, xs)`: what the list holds there, or nothing where it holds nothing there.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_at(index: u32, list: u32) -> u32 {
+    let at = __souther_int_value(index);
+    if at < 0 || at >= __souther_list_length(list) as i64 {
+        return value::__souther_none();
+    }
+    value::__souther_some(__souther_list_get(list, at as u32))
+}
+
 /// `List.reverse`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_reverse(list: u32, descriptor: u32) -> u32 {

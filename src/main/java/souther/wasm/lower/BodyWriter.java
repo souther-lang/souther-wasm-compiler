@@ -21,6 +21,11 @@ final class BodyWriter {
     private static final int OPCODE_IF = 0x04;
     private static final int OPCODE_ELSE = 0x05;
     private static final int OPCODE_CALL = 0x10;
+    private static final int OPCODE_CALL_INDIRECT = 0x11;
+    private static final int OPCODE_BLOCK = 0x02;
+    private static final int OPCODE_LOOP = 0x03;
+    private static final int OPCODE_BR = 0x0c;
+    private static final int OPCODE_BR_IF = 0x0d;
     private static final int OPCODE_LOCAL_GET = 0x20;
     private static final int OPCODE_LOCAL_SET = 0x21;
     private static final int OPCODE_I32_CONST = 0x41;
@@ -34,6 +39,7 @@ final class BodyWriter {
     private static final int OPCODE_I32_GE_S = 0x4e;
     private static final int OPCODE_UNREACHABLE = 0x00;
     private static final int OPCODE_I32_OR = 0x72;
+    private static final int OPCODE_I32_ADD = 0x6a;
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
     private static final int OPCODE_I64_EXTEND_I32_S = 0xac;
     private static final int OPCODE_I64_SHR_U = 0x88;
@@ -144,6 +150,46 @@ final class BodyWriter {
     /** The other way of the condition just opened. */
     BodyWriter otherwise() {
         writer.write((byte) OPCODE_ELSE);
+        return this;
+    }
+
+    /**
+     * Calls what the slot on the stack holds, with the arguments already under it.
+     *
+     * @param typeIndex the shape of what is being called, which is checked as the call is made
+     */
+    BodyWriter callSlot(int typeIndex) {
+        writer.write((byte) OPCODE_CALL_INDIRECT).writeUnsignedLeb128(typeIndex).writeUnsignedLeb128(0);
+        return this;
+    }
+
+    /** Opens a place to leave from, closed by {@link #end}. */
+    BodyWriter block() {
+        writer.write((byte) OPCODE_BLOCK).write((byte) BLOCK_TYPE_EMPTY);
+        return this;
+    }
+
+    /** Opens a place to go back to, closed by {@link #end}. */
+    BodyWriter loop() {
+        writer.write((byte) OPCODE_LOOP).write((byte) BLOCK_TYPE_EMPTY);
+        return this;
+    }
+
+    /** Goes to the edge of the block that many out, whatever is on the stack. */
+    BodyWriter leave(int depth) {
+        writer.write((byte) OPCODE_BR).writeUnsignedLeb128(depth);
+        return this;
+    }
+
+    /** The same, where the number on the stack is not zero. */
+    BodyWriter leaveIf(int depth) {
+        writer.write((byte) OPCODE_BR_IF).writeUnsignedLeb128(depth);
+        return this;
+    }
+
+    /** Adds the two numbers on the stack. */
+    BodyWriter add() {
+        writer.write((byte) OPCODE_I32_ADD);
         return this;
     }
 

@@ -209,11 +209,12 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
     @Test
     void saysWhatItMetRatherThanEmittingSomethingThatWouldAnswerWrongly() {
         CheckedProgram program = CheckedProgram.of(List.of("""
-                module folding
+                module counting
 
-                behavior total : (xs: List<Int>) -> Int
+                behavior grouped : (xs: List<Int>) -> Map<String, Int>
 
-                let total (xs) = List.fold((acc, x) -> acc + x, 0, xs)
+                let grouped (xs) = List.fold((acc, x) -> Map.insert(String.fromInt(x), x, acc),
+                    Map.empty, xs)
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))

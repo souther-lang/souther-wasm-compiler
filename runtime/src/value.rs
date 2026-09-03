@@ -56,6 +56,12 @@ pub const TAG_SOME: u32 = 6;
 pub const TAG_NONE: u32 = 7;
 /// A map. `+8` is how many entries, and a key pointer and a value pointer follow per entry.
 pub const TAG_MAP: u32 = 8;
+/// A block written where a value goes. `+4` is the table slot its body sits in and `+8` is what it
+/// was written among — the values it reads that were bound outside it.
+pub const TAG_CLOSURE: u32 = 9;
+/// A list still being grown. Not a list: what it holds is followed by room it does not, so a
+/// reader taking it for one would read past what is there.
+pub const TAG_BUILDER: u32 = 10;
 
 const HEADER: usize = 8;
 
@@ -323,6 +329,108 @@ pub unsafe extern "C" fn __souther_map_set(cell: u32, index: u32, key: u32, valu
 /// Shortens a map to the entries it kept.
 unsafe fn map_of_length(cell: u32, entries: u32) {
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
+}
+
+/// A block as a value: where its body is, and what it reads from around it.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_closure(slot: u32, captured: u32) -> u32 {
+    let cell = header(TAG_CLOSURE, slot);
+    let _ = alloc(4);
+    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, captured);
+    cell
+}
+
+/// The table slot a closure's body sits in.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_closure_slot(cell: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + 4) as *const u32)
+}
+
+/// What a closure was written among.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_closure_captured(cell: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
+}
+
+/// A list that grows, for a walk that does not know how long its answer will be.
+///
+/// The same cell a finished list is, with room past what it holds. Growing past that room copies
+/// into a longer one, which is why what a walk answers is asked for at the end rather than being
+/// the cell it started with.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_builder(descriptor: u32) -> u32 {
+    let cell = header(TAG_BUILDER, descriptor);
+    let _ = alloc(4 + 4 * INITIAL_ROOM);
+    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, 0);
+    core::ptr::write_unaligned((cell as usize + HEADER + 4) as *mut u32, INITIAL_ROOM);
+    cell
+}
+
+/// How many places a builder starts with. One is enough to be right and slow; this is enough to be
+/// right and not slow for a walk over a document a caller wrote.
+const INITIAL_ROOM: u32 = 4;
+
+/// Adds everything a list holds to the end of a builder, answering the builder that holds it.
+///
+/// A list and not one value, because what a step writes is `acc ++ [x]` — the walk grows by
+/// whatever the step wrote there, which is a list of none, one or more.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_grow(builder: u32, added: u32) -> u32 {
+    let mut held = builder;
+    for i in 0..__souther_list_length(added) {
+        held = grown(held, __souther_list_get(added, i));
+    }
+    held
+}
+
+/// Adds one value to the end of a builder.
+unsafe fn grown(builder: u32, value: u32) -> u32 {
+    let held = core::ptr::read_unaligned((builder as usize + HEADER) as *const u32);
+    let room = core::ptr::read_unaligned((builder as usize + HEADER + 4) as *const u32);
+    if held < room {
+        core::ptr::write_unaligned(
+            (builder as usize + HEADER + 8 + 4 * held as usize) as *mut u32,
+            value,
+        );
+        core::ptr::write_unaligned((builder as usize + HEADER) as *mut u32, held + 1);
+        return builder;
+    }
+    let descriptor = core::ptr::read_unaligned((builder as usize + 4) as *const u32);
+    let wider = header(TAG_BUILDER, descriptor);
+    let _ = alloc(4 + 4 * (room * 2 + 1));
+    core::ptr::write_unaligned((wider as usize + HEADER) as *mut u32, held + 1);
+    core::ptr::write_unaligned((wider as usize + HEADER + 4) as *mut u32, room * 2 + 1);
+    for i in 0..held {
+        core::ptr::write_unaligned(
+            (wider as usize + HEADER + 8 + 4 * i as usize) as *mut u32,
+            core::ptr::read_unaligned(
+                (builder as usize + HEADER + 8 + 4 * i as usize) as *const u32,
+            ),
+        );
+    }
+    core::ptr::write_unaligned(
+        (wider as usize + HEADER + 8 + 4 * held as usize) as *mut u32,
+        value,
+    );
+    wider
+}
+
+/// The list a builder has grown, with nothing past what it holds.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_sealed(builder: u32) -> u32 {
+    let held = core::ptr::read_unaligned((builder as usize + HEADER) as *const u32);
+    let descriptor = core::ptr::read_unaligned((builder as usize + 4) as *const u32);
+    let out = __souther_list(descriptor, held);
+    for i in 0..held {
+        __souther_list_set(
+            out,
+            i,
+            core::ptr::read_unaligned(
+                (builder as usize + HEADER + 8 + 4 * i as usize) as *const u32,
+            ),
+        );
+    }
+    out
 }
 
 /// An option holding a value.

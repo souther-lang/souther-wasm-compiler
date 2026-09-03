@@ -159,6 +159,24 @@ public final class RuntimeAbi {
     /** {@code (i32 descriptor) -> i32}: the one value of a type that has one. */
     public static final String UNIT = "__souther_unit";
 
+    /** {@code (i32 slot, i32 captured) -> i32}: a block as a value. */
+    public static final String CLOSURE = "__souther_closure";
+
+    /** {@code (i32 cell) -> i32}: the table slot a closure's body sits in. */
+    public static final String CLOSURE_SLOT = "__souther_closure_slot";
+
+    /** {@code (i32 cell) -> i32}: what a closure was written among. */
+    public static final String CLOSURE_CAPTURED = "__souther_closure_captured";
+
+    /** {@code (i32 descriptor) -> i32}: a list that grows. */
+    public static final String BUILDER = "__souther_builder";
+
+    /** {@code (i32 builder, i32 value) -> i32}: the builder holding one more. */
+    public static final String GROW = "__souther_grow";
+
+    /** {@code (i32 builder) -> i32}: the list a builder has grown. */
+    public static final String SEALED = "__souther_sealed";
+
     /** {@code (i32 descriptor, i32 length) -> i32}: a list of that many, its places empty. */
     public static final String LIST = "__souther_list";
 
@@ -185,6 +203,12 @@ public final class RuntimeAbi {
 
     /** {@code (i32 left, i32 right) -> i32}: the {@code -} operator on {@code Int}. */
     public static final String SUBTRACT = "__souther_subtract";
+
+    /** {@code (i32 cell) -> i64}: the whole number a cell holds. */
+    public static final String INT_VALUE = "__souther_int_value";
+
+    /** {@code (i32 cell) -> i32}: how many elements a list holds, as a plain number. */
+    public static final String LIST_LENGTH_OF = "__souther_list_length";
 
     /** {@code (i32 cell) -> i32}: the unary {@code -} on {@code Int}. */
     public static final String NEGATE = "__souther_negate";
@@ -280,6 +304,8 @@ public final class RuntimeAbi {
         public static final String INT_TRUNCATING_REMAINDER = "__souther_int_remainder";
         /** {@code (i32 s, i32 absent) -> i32}. */
         public static final String STRING_TO_INT = "__souther_string_to_int";
+        /** {@code (i32 index, i32 xs) -> i32}. */
+        public static final String LIST_GET = "__souther_list_at";
         /** {@code (i32 xs) -> i32}. */
         public static final String LIST_LENGTH = "__souther_list_size";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */

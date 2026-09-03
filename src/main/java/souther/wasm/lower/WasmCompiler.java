@@ -16,6 +16,7 @@ import souther.compiler.core.Core;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedHelper;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
@@ -92,10 +93,17 @@ public final class WasmCompiler {
 
         // Every index is settled before the first body is written, because a call writes the index
         // of what it reaches and a body may reach one written after it, or itself.
-        // Behaviors and nothing else. A helper's body is expanded where it was called, so a
-        // checked program carries no helper for a call to reach.
+        // A helper is here where the checker left one. It expands a call to a helper where it was
+        // written, so most are gone by now — but not one that reaches itself, which cannot be.
         List<Written> written = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
+            for (CheckedHelper helper : module.helpers()) {
+                int index = fragment.declare(overCells(fragment, helper.parameters().size()));
+                reached.put(helper.declares(), index);
+                written.add(new Written(index, helper.parameters().stream()
+                        .map(CheckedHelper.Parameter::binder).toList(), helper.body(),
+                        helper.declares()));
+            }
             for (CheckedBehavior behavior : module.behaviors()) {
                 Body body = bodyOf(behavior);
                 int index = fragment.declare(overCells(fragment, body.parameters().size()));
@@ -426,6 +434,8 @@ public final class WasmCompiler {
                     value(out, bound.body());
                 }
                 case Core.Match chosen -> match(out, chosen);
+                case Core.Block block -> closure(out, block);
+                case Core.Apply applied -> apply(out, applied);
                 case Core.Call call -> call(out, call);
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
@@ -442,6 +452,84 @@ public final class WasmCompiler {
         }
 
         /**
+         * A block written where a value goes: where its body is, and what it reads from around it.
+         *
+         * <p>The body becomes a function of its own, taking what the block was written among ahead
+         * of what it is applied to. What it reads from around it is copied in as the block is made,
+         * so the block answers the same afterwards however the body it left goes on.
+         */
+        private void closure(BodyWriter out, Core.Block block) {
+            List<BindingId> captured = FreeReads.of(block).stream()
+                    .filter(locals::containsKey)
+                    .toList();
+            int slot = fragment.slot(blockFunction(block, captured));
+            int room = scratch();
+            out.constant(slot)
+                    .constant(shapes.of(anyList()))
+                    .constant(captured.size())
+                    .call(calls.of(RuntimeAbi.LIST))
+                    .localSet(room);
+            for (int i = 0; i < captured.size(); i++) {
+                out.localGet(room)
+                        .constant(i)
+                        .localGet(locals.get(captured.get(i)))
+                        .call(calls.of(RuntimeAbi.LIST_SET));
+            }
+            out.localGet(room).call(calls.of(RuntimeAbi.CLOSURE));
+        }
+
+        /**
+         * The function a block's body becomes.
+         *
+         * <p>Written now and not put off, so that the emitter's own state — which local holds
+         * which binding — belongs to one function at a time. What is around it is saved and put
+         * back, because a block is written in the middle of writing the body it appears in.
+         */
+        private int blockFunction(Core.Block block, List<BindingId> captured) {
+            int index = fragment.declare(overCells(fragment, 1 + block.params().size()));
+            BodyWriter around = out;
+            Map<BindingId, Integer> outer = locals;
+            Object was = writing;
+
+            out = new BodyWriter(1 + block.params().size(), 0);
+            locals = new HashMap<>();
+            for (int i = 0; i < block.params().size(); i++) {
+                locals.put(block.params().get(i).binding(), 1 + i);
+            }
+            for (int i = 0; i < captured.size(); i++) {
+                int local = out.narrow();
+                out.localGet(0).constant(i).call(calls.of(RuntimeAbi.LIST_GET)).localSet(local);
+                locals.put(captured.get(i), local);
+            }
+            value(out, block.body());
+            byte[] body = out.body();
+
+            out = around;
+            locals = outer;
+            writing = was;
+            fragment.write(index, body);
+            return index;
+        }
+
+        /** Applies a block to arguments, through the slot the block's own value carries. */
+        private void apply(BodyWriter out, Core.Apply applied) {
+            int closure = scratch();
+            value(out, applied.fn());
+            out.localSet(closure)
+                    .localGet(closure)
+                    .call(calls.of(RuntimeAbi.CLOSURE_CAPTURED));
+            applied.args().forEach(argument -> value(out, argument));
+            out.localGet(closure)
+                    .call(calls.of(RuntimeAbi.CLOSURE_SLOT))
+                    .callSlot(overCells(fragment, 1 + applied.args().size()));
+        }
+
+        /** A list of values, whatever they are: what a closure carries what it read in. */
+        private souther.compiler.types.Type anyList() {
+            return new souther.compiler.types.Type.ListOf(souther.compiler.types.Type.Prim.INT);
+        }
+
+        /**
          * A call, which is the declaration it reaches with its arguments before it.
          *
          * <p>What it reaches is read off the call rather than worked out from a name: the checker
@@ -449,6 +537,10 @@ public final class WasmCompiler {
          * be resolving what was resolved already.
          */
         private void call(BodyWriter out, Core.Call call) {
+            if (call.fn() instanceof Core.Emitted operation) {
+                emitted(out, call, operation);
+                return;
+            }
             if (call.fn() instanceof Core.Reached.OfKernel intrinsic) {
                 kernel(out, call, intrinsic.kernel());
                 return;
@@ -457,22 +549,71 @@ public final class WasmCompiler {
                 throw new NotLowered(writing + " reaches " + call.fn()
                         + ", and this backend reaches a helper and a behavior");
             }
-            if (!(declaration.reaches() instanceof Core.Reaches.ABehavior reaches)) {
-                // A helper: expanded where it was written, so nothing reaches one here. Said
-                // rather than assumed, because a checker that stopped expanding them would
-                // otherwise reach whatever this happened to do next.
-                throw new NotLowered(writing + " reaches " + declaration.name()
-                        + ", and this backend reaches a behavior");
-            }
-            Integer index = reached.get(reaches.behavior());
+            ValueName name = switch (declaration.reaches()) {
+                case Core.Reaches.AHelper helper -> helper.declaration();
+                case Core.Reaches.ABehavior reaches -> reaches.behavior();
+            };
+            Integer index = reached.get(name);
             if (index == null) {
-                throw new NotLowered(writing + " reaches " + reaches.behavior()
+                throw new NotLowered(writing + " reaches " + name
                         + ", which this program declares no body for here");
             }
             for (Core argument : call.args()) {
                 value(out, argument);
             }
             out.call(index);
+        }
+
+        /**
+         * An operation this compiler minted for a shape a backend lowers whole.
+         *
+         * <p>A fold that grows a list is one walk with one answer, so it is written as a walk: a
+         * builder, an element at a time from where the walk starts, and the step applied to both.
+         * What the step adds is added to the builder it was handed, which is why the step answers
+         * one — the builder may have had to move to hold what it was given.
+         */
+        private void emitted(BodyWriter out, Core.Call call, Core.Emitted operation) {
+            switch (operation) {
+                case GROW_LIST -> {
+                    value(out, call.args().get(0));
+                    value(out, call.args().get(1));
+                    out.call(calls.of(RuntimeAbi.GROW));
+                }
+                case BUILD_LIST -> buildList(out, call);
+                default -> throw new NotLowered(writing + " reaches " + operation
+                        + ", which this backend does not write yet");
+            }
+        }
+
+        /** {@code $build(step, xs, from)}: the walk that grows a list and seals it. */
+        private void buildList(BodyWriter out, Core.Call call) {
+            int step = scratch();
+            int over = scratch();
+            int at = scratch();
+            int held = scratch();
+            int builder = scratch();
+
+            value(out, call.args().get(0));
+            out.localSet(step);
+            value(out, call.args().get(1));
+            out.localSet(over);
+            value(out, call.args().get(2));
+            out.call(calls.of(RuntimeAbi.INT_VALUE)).wrap().localSet(at);
+            out.localGet(over).call(calls.of(RuntimeAbi.LIST_LENGTH_OF)).localSet(held);
+            out.constant(shapes.of(call.type())).call(calls.of(RuntimeAbi.BUILDER)).localSet(builder);
+
+            out.block().loop()
+                    .localGet(at).localGet(held).compares(BodyWriter.Comparison.AT_LEAST).leaveIf(1);
+            out.localGet(step).call(calls.of(RuntimeAbi.CLOSURE_CAPTURED))
+                    .localGet(builder)
+                    .localGet(over).localGet(at).call(calls.of(RuntimeAbi.LIST_GET))
+                    .localGet(step).call(calls.of(RuntimeAbi.CLOSURE_SLOT))
+                    .callSlot(overCells(fragment, 3))
+                    .localSet(builder);
+            out.localGet(at).constant(1).add().localSet(at).leave(0);
+            out.end().end();
+
+            out.localGet(builder).call(calls.of(RuntimeAbi.SEALED));
         }
 
         /**
@@ -510,6 +651,7 @@ public final class WasmCompiler {
                 case INT_TRUNCATING_REMAINDER -> RuntimeAbi.Kernels.INT_TRUNCATING_REMAINDER;
                 case STRING_TO_INT -> RuntimeAbi.Kernels.STRING_TO_INT;
                 case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
+                case LIST_GET -> RuntimeAbi.Kernels.LIST_GET;
                 case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
                 case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
                 case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
