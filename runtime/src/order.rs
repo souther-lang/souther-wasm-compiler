@@ -31,6 +31,66 @@ const RANK_STRING: i32 = 4;
 const RANK_ARRAY: i32 = 5;
 const RANK_OBJECT: i32 = 6;
 
+/// Where a value stands relative to another of its type.
+///
+/// Not the same question as where it is written. A set of alternatives places its own in the order
+/// the declaration writes them, and what each is written as is its name — so a set of them is
+/// written in one order and sorted in another, and one unit may be a case of two sets that place
+/// it differently. Everything else answers both questions alike.
+pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
+    match descriptor::kind(descriptor) {
+        KIND_SUM | KIND_ENUMERATION => {
+            let a = case_of(left, descriptor);
+            let b = case_of(right, descriptor);
+            if a != b {
+                return if a < b { -1 } else { 1 };
+            }
+            if descriptor::kind(descriptor) == KIND_ENUMERATION {
+                0
+            } else {
+                ranked(left, right, descriptor::member(descriptor, a))
+            }
+        }
+        KIND_PRODUCT => {
+            for i in 0..descriptor::arity(descriptor) {
+                let each = ranked(
+                    value::__souther_record_get(left, i),
+                    value::__souther_record_get(right, i),
+                    descriptor::member(descriptor, i),
+                );
+                if each != 0 {
+                    return each;
+                }
+            }
+            0
+        }
+        KIND_LIST | KIND_SET => {
+            let element = descriptor::member(descriptor, 0);
+            let a = value::__souther_list_length(left);
+            let b = value::__souther_list_length(right);
+            let shorter = if a < b { a } else { b };
+            for i in 0..shorter {
+                let each = ranked(
+                    value::__souther_list_get(left, i),
+                    value::__souther_list_get(right, i),
+                    element,
+                );
+                if each != 0 {
+                    return each;
+                }
+            }
+            if a < b {
+                -1
+            } else if a > b {
+                1
+            } else {
+                0
+            }
+        }
+        _ => compare(left, right, descriptor),
+    }
+}
+
 /// Where a value is written relative to another of the same type.
 pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
     let a = rank(left, descriptor);

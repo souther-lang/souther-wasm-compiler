@@ -677,6 +677,9 @@ public final class WasmCompiler {
                 case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
                 case LIST_GET -> RuntimeAbi.Kernels.LIST_GET;
                 case LIST_FIND -> RuntimeAbi.Kernels.LIST_FIND;
+                case LIST_SORT -> RuntimeAbi.Kernels.LIST_SORT;
+                case LIST_SORT_BY -> RuntimeAbi.Kernels.LIST_SORT_BY;
+                case LIST_MAX, LIST_MIN -> RuntimeAbi.Kernels.LIST_FURTHEST;
                 case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
                 case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
                 case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
@@ -710,6 +713,14 @@ public final class WasmCompiler {
             if (BUILDS_A_LIST.contains(kernel)) {
                 out.constant(shapes.of(call.type()));
             }
+            if (kernel == Kernel.LIST_SORT_BY) {
+                // Sorting by what a block answers wants the type of what it answers, which is the
+                // block's own result and not the list's element.
+                out.constant(shapes.of(keyType(call)));
+            }
+            if (kernel == Kernel.LIST_MAX || kernel == Kernel.LIST_MIN) {
+                out.constant(kernel == Kernel.LIST_MAX ? 1 : 0);
+            }
             String absent = ANSWERS_A_CASE.get(kernel);
             if (absent != null) {
                 out.constant(shapes.ofMember(caseNamed(call.type(), absent)));
@@ -729,6 +740,14 @@ public final class WasmCompiler {
                 Kernel.INT_DIVIDE, "DivisionByZero",
                 Kernel.INT_TRUNCATING_REMAINDER, "DivisionByZero",
                 Kernel.STRING_TO_INT, "NotANumber");
+
+        /** What a sort's key answers, which is what its order is asked of. */
+        private souther.compiler.types.Type keyType(Core.Call call) {
+            if (call.args().get(0).type() instanceof souther.compiler.types.Type.FnOf key) {
+                return key.result();
+            }
+            throw new NotLowered(writing + " sorts by something that is not written as a function");
+        }
 
         /** The alternative of a set that goes by a name. */
         private static TypeSymbol caseNamed(souther.compiler.types.Type answered, String name) {
@@ -753,6 +772,7 @@ public final class WasmCompiler {
                 Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
                 Kernel.STRING_WORDS, Kernel.STRING_LINES,
                 Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE,
+                Kernel.LIST_SORT, Kernel.LIST_SORT_BY,
                 Kernel.SET_EMPTY, Kernel.SET_SINGLETON, Kernel.SET_INSERT, Kernel.SET_REMOVE,
                 Kernel.SET_UNION, Kernel.SET_INTERSECTION, Kernel.SET_DIFFERENCE,
                 Kernel.SET_TO_LIST, Kernel.SET_FROM_LIST,

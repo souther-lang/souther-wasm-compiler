@@ -270,10 +270,14 @@ pub unsafe extern "C" fn __souther_divide(left: u32, right: u32) -> u32 {
     }
 }
 
-/// Where one value is written relative to another of its type, as a whole number.
+/// Where one value stands relative to another of its type, as a whole number.
+///
+/// What a comparison in a body asks, which is not what a set is written in the order of: a set of
+/// alternatives places its own in the order its declaration writes them and is written as their
+/// names.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_compare(left: u32, right: u32, descriptor: u32) -> i32 {
-    order::compare(left, right, descriptor)
+    order::ranked(left, right, descriptor)
 }
 
 /// The `++` operator on `String`.

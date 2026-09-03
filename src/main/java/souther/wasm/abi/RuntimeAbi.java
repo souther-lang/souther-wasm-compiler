@@ -320,6 +320,12 @@ public final class RuntimeAbi {
         public static final String LIST_GET = "__souther_list_at";
         /** {@code (i32 p, i32 xs) -> i32}. */
         public static final String LIST_FIND = "__souther_list_find";
+        /** {@code (i32 xs, i32 descriptor) -> i32}. */
+        public static final String LIST_SORT = "__souther_list_sort";
+        /** {@code (i32 key, i32 xs, i32 descriptor, i32 keys) -> i32}. */
+        public static final String LIST_SORT_BY = "__souther_list_sort_by";
+        /** {@code (i32 xs, i32 latest) -> i32}: the furthest either way. */
+        public static final String LIST_FURTHEST = "__souther_list_furthest";
         /** {@code (i32 xs) -> i32}. */
         public static final String LIST_LENGTH = "__souther_list_size";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */

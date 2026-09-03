@@ -599,6 +599,82 @@ pub unsafe extern "C" fn __souther_list_find(kept: u32, list: u32) -> u32 {
     value::__souther_none()
 }
 
+/// `List.sort(xs)`: the elements in the order their type places them.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_sort(list: u32, descriptor: u32) -> u32 {
+    let element = descriptor::member(descriptor, 0);
+    let held = __souther_list_length(list);
+    let out = __souther_list(descriptor, held);
+    for i in 0..held {
+        __souther_list_set(out, i, __souther_list_get(list, i));
+    }
+    // An insertion sort, which keeps two equal elements in the order they were written.
+    for i in 1..held {
+        let mut j = i;
+        while j > 0
+            && order::ranked(__souther_list_get(out, j - 1), __souther_list_get(out, j), element) > 0
+        {
+            let earlier = __souther_list_get(out, j - 1);
+            __souther_list_set(out, j - 1, __souther_list_get(out, j));
+            __souther_list_set(out, j, earlier);
+            j -= 1;
+        }
+    }
+    out
+}
+
+/// `List.max(xs)` and `List.min(xs)`: the furthest one either way, or nothing where there is none.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_furthest(list: u32, latest: u32) -> u32 {
+    let held = __souther_list_length(list);
+    if held == 0 {
+        return value::__souther_none();
+    }
+    let descriptor = core::ptr::read_unaligned((list as usize + 4) as *const u32);
+    let element = descriptor::member(descriptor, 0);
+    let mut best = __souther_list_get(list, 0);
+    for i in 1..held {
+        let each = __souther_list_get(list, i);
+        let against = order::ranked(each, best, element);
+        if (latest != 0 && against > 0) || (latest == 0 && against < 0) {
+            best = each;
+        }
+    }
+    value::__souther_some(best)
+}
+
+/// `List.sortBy(key, xs)`: the elements in the order what the block answers of each places them.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_sort_by(
+    key: u32,
+    list: u32,
+    descriptor: u32,
+    keys: u32,
+) -> u32 {
+    let held = __souther_list_length(list);
+    let out = __souther_list(descriptor, held);
+    let by = __souther_list(descriptor, held);
+    for i in 0..held {
+        let each = __souther_list_get(list, i);
+        __souther_list_set(out, i, each);
+        __souther_list_set(by, i, crate::__souther_call_block(key, each));
+    }
+    for i in 1..held {
+        let mut j = i;
+        while j > 0 && order::ranked(__souther_list_get(by, j - 1), __souther_list_get(by, j), keys) > 0
+        {
+            let earlier = __souther_list_get(out, j - 1);
+            __souther_list_set(out, j - 1, __souther_list_get(out, j));
+            __souther_list_set(out, j, earlier);
+            let key_before = __souther_list_get(by, j - 1);
+            __souther_list_set(by, j - 1, __souther_list_get(by, j));
+            __souther_list_set(by, j, key_before);
+            j -= 1;
+        }
+    }
+    out
+}
+
 /// `List.reverse`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_reverse(list: u32, descriptor: u32) -> u32 {

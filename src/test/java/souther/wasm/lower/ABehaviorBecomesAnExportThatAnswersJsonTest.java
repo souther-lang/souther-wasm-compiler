@@ -209,16 +209,18 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
     @Test
     void saysWhatItMetRatherThanEmittingSomethingThatWouldAnswerWrongly() {
         CheckedProgram program = CheckedProgram.of(List.of("""
-                module counting
+                module pricing
 
-                behavior ordered : (xs: List<Int>) -> List<Int>
+                data Money = { amount: Decimal }
 
-                let ordered (xs) = List.sort(xs)
+                behavior doubled : (m: Money) -> Money
+
+                let doubled (m) = Money { amount = m.amount + m.amount }
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("LIST_SORT");
+                .hasMessageContaining("DECIMAL");
     }
 
     @Test
