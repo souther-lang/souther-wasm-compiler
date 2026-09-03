@@ -656,6 +656,26 @@ public final class WasmCompiler {
                 case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
                 case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
                 case LIST_RANGE_INCLUSIVE -> RuntimeAbi.Kernels.LIST_RANGE_INCLUSIVE;
+                case SET_EMPTY -> RuntimeAbi.Kernels.SET_EMPTY;
+                case SET_SINGLETON -> RuntimeAbi.Kernels.SET_SINGLETON;
+                case SET_INSERT -> RuntimeAbi.Kernels.SET_INSERT;
+                case SET_REMOVE -> RuntimeAbi.Kernels.SET_REMOVE;
+                case SET_CONTAINS -> RuntimeAbi.Kernels.SET_CONTAINS;
+                case SET_UNION -> RuntimeAbi.Kernels.SET_UNION;
+                case SET_INTERSECTION -> RuntimeAbi.Kernels.SET_INTERSECTION;
+                case SET_DIFFERENCE -> RuntimeAbi.Kernels.SET_DIFFERENCE;
+                case SET_TO_LIST -> RuntimeAbi.Kernels.SET_TO_LIST;
+                case SET_FROM_LIST -> RuntimeAbi.Kernels.SET_FROM_LIST;
+                case SET_IS_EMPTY, MAP_IS_EMPTY -> RuntimeAbi.Kernels.IS_EMPTY;
+                case SET_SIZE, MAP_SIZE -> RuntimeAbi.Kernels.SIZE;
+                case MAP_EMPTY -> RuntimeAbi.Kernels.MAP_EMPTY;
+                case MAP_GET -> RuntimeAbi.Kernels.MAP_GET;
+                case MAP_CONTAINS_KEY -> RuntimeAbi.Kernels.MAP_CONTAINS_KEY;
+                case MAP_KEYS -> RuntimeAbi.Kernels.MAP_KEYS;
+                case MAP_VALUES -> RuntimeAbi.Kernels.MAP_VALUES;
+                case MAP_SINGLETON -> RuntimeAbi.Kernels.MAP_SINGLETON;
+                case MAP_INSERT -> RuntimeAbi.Kernels.MAP_INSERT;
+                case MAP_REMOVE -> RuntimeAbi.Kernels.MAP_REMOVE;
                 default -> throw new NotLowered(writing + " reaches " + kernel
                         + ", which this backend does not write yet");
             };
@@ -697,10 +717,21 @@ public final class WasmCompiler {
             throw new NotLowered("a kernel answering " + name + " was typed as " + answered);
         }
 
-        /** The kernels answering a list, which are the ones told what list to build. */
+        /**
+         * The kernels told what they build.
+         *
+         * <p>A collection knows what it holds by the descriptor its cell carries, and one being
+         * made has no cell yet. So an operation that makes one is handed the type it is making,
+         * which the declaration answered and the values it was given may not have an example of.
+         */
         private static final Set<Kernel> BUILDS_A_LIST = Set.of(
                 Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
-                Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE);
+                Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE,
+                Kernel.SET_EMPTY, Kernel.SET_SINGLETON, Kernel.SET_INSERT, Kernel.SET_REMOVE,
+                Kernel.SET_UNION, Kernel.SET_INTERSECTION, Kernel.SET_DIFFERENCE,
+                Kernel.SET_TO_LIST, Kernel.SET_FROM_LIST,
+                Kernel.MAP_EMPTY, Kernel.MAP_KEYS, Kernel.MAP_VALUES, Kernel.MAP_SINGLETON,
+                Kernel.MAP_INSERT, Kernel.MAP_REMOVE);
 
         /**
          * A match, as one condition per arm over the value it is given.

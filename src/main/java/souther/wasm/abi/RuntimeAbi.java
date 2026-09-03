@@ -316,6 +316,46 @@ public final class RuntimeAbi {
         public static final String LIST_PRODUCT = "__souther_list_product";
         /** {@code (i32 from, i32 to, i32 descriptor) -> i32}. */
         public static final String LIST_RANGE_INCLUSIVE = "__souther_list_range";
+        /** {@code (i32 descriptor) -> i32}. */
+        public static final String SET_EMPTY = "__souther_set_empty";
+        /** {@code (i32 value, i32 descriptor) -> i32}. */
+        public static final String SET_SINGLETON = "__souther_set_singleton";
+        /** {@code (i32 value, i32 s, i32 descriptor) -> i32}. */
+        public static final String SET_INSERT = "__souther_set_insert";
+        /** {@code (i32 value, i32 s, i32 descriptor) -> i32}. */
+        public static final String SET_REMOVE = "__souther_set_remove";
+        /** {@code (i32 value, i32 s) -> i32}. */
+        public static final String SET_CONTAINS = "__souther_set_contains";
+        /** {@code (i32 a, i32 b, i32 descriptor) -> i32}. */
+        public static final String SET_UNION = "__souther_set_union";
+        /** {@code (i32 a, i32 b, i32 descriptor) -> i32}. */
+        public static final String SET_INTERSECTION = "__souther_set_intersection";
+        /** {@code (i32 a, i32 b, i32 descriptor) -> i32}. */
+        public static final String SET_DIFFERENCE = "__souther_set_difference";
+        /** {@code (i32 s, i32 descriptor) -> i32}. */
+        public static final String SET_TO_LIST = "__souther_set_to_list";
+        /** {@code (i32 xs, i32 descriptor) -> i32}. */
+        public static final String SET_FROM_LIST = "__souther_set_from_list";
+        /** {@code (i32 collection) -> i32}: of a set or of a map. */
+        public static final String IS_EMPTY = "__souther_is_empty";
+        /** {@code (i32 collection) -> i32}: of a set or of a map. */
+        public static final String SIZE = "__souther_size_of";
+        /** {@code (i32 descriptor) -> i32}. */
+        public static final String MAP_EMPTY = "__souther_map_empty";
+        /** {@code (i32 key, i32 m) -> i32}. */
+        public static final String MAP_GET = "__souther_map_get";
+        /** {@code (i32 key, i32 m) -> i32}. */
+        public static final String MAP_CONTAINS_KEY = "__souther_map_contains";
+        /** {@code (i32 m, i32 descriptor) -> i32}. */
+        public static final String MAP_KEYS = "__souther_map_keys";
+        /** {@code (i32 m, i32 descriptor) -> i32}. */
+        public static final String MAP_VALUES = "__souther_map_values";
+        /** {@code (i32 key, i32 value, i32 descriptor) -> i32}. */
+        public static final String MAP_SINGLETON = "__souther_map_singleton";
+        /** {@code (i32 key, i32 value, i32 m, i32 descriptor) -> i32}. */
+        public static final String MAP_INSERT = "__souther_map_insert";
+        /** {@code (i32 key, i32 m, i32 descriptor) -> i32}. */
+        public static final String MAP_REMOVE = "__souther_map_remove";
     }
 
     /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
