@@ -132,6 +132,183 @@ pub unsafe extern "C" fn __souther_string_trim(text: u32) -> u32 {
     __souther_string(bytes + start, end - start)
 }
 
+/// `String.lowercase(s)` and `String.uppercase(s)`, a character at a time.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_lowercase(text: u32) -> u32 {
+    recased(text, false)
+}
+
+/// `String.uppercase(s)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_uppercase(text: u32) -> u32 {
+    recased(text, true)
+}
+
+unsafe fn recased(text: u32, up: bool) -> u32 {
+    let bytes = __souther_string_bytes(text);
+    let length = __souther_string_length(text);
+    let out = next_free();
+    let mut total = 0;
+    let mut at = 0;
+    while at < length {
+        let width = character_width(core::ptr::read((bytes + at) as *const u8));
+        let point = code_point_at(bytes + at, width);
+        match char::from_u32(point) {
+            Some(held) => {
+                if up {
+                    for each in held.to_uppercase() {
+                        total += put(each);
+                    }
+                } else {
+                    for each in held.to_lowercase() {
+                        total += put(each);
+                    }
+                }
+            }
+            None => {
+                let piece = alloc(width);
+                core::ptr::copy_nonoverlapping(
+                    (bytes + at) as *const u8,
+                    piece as *mut u8,
+                    width as usize,
+                );
+                total += width;
+            }
+        }
+        at += width;
+    }
+    __souther_string(out, total)
+}
+
+/// Writes one character onto the arena's top and answers how many bytes that took.
+unsafe fn put(held: char) -> u32 {
+    let mut room = [0u8; 4];
+    let written = held.encode_utf8(&mut room).len();
+    let at = alloc(written as u32);
+    core::ptr::copy_nonoverlapping(room.as_ptr(), at as *mut u8, written);
+    written as u32
+}
+
+/// `String.words(s)`: the pieces between runs of whitespace, with none empty.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_words(text: u32, descriptor: u32) -> u32 {
+    let bytes = __souther_string_bytes(text);
+    let length = __souther_string_length(text);
+    let mut held = 0;
+    let mut at = 0;
+    while at < length {
+        while at < length && blank(core::ptr::read((bytes + at) as *const u8)) {
+            at += 1;
+        }
+        if at == length {
+            break;
+        }
+        held += 1;
+        while at < length && !blank(core::ptr::read((bytes + at) as *const u8)) {
+            at += 1;
+        }
+    }
+    let out = __souther_list(descriptor, held);
+    let mut i = 0;
+    at = 0;
+    while at < length {
+        while at < length && blank(core::ptr::read((bytes + at) as *const u8)) {
+            at += 1;
+        }
+        if at == length {
+            break;
+        }
+        let start = at;
+        while at < length && !blank(core::ptr::read((bytes + at) as *const u8)) {
+            at += 1;
+        }
+        __souther_list_set(out, i, __souther_string(bytes + start, at - start));
+        i += 1;
+    }
+    out
+}
+
+/// `String.lines(s)`: what `split` on a newline gives, after a carriage return before one is gone.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_lines(text: u32, descriptor: u32) -> u32 {
+    let bytes = __souther_string_bytes(text);
+    let length = __souther_string_length(text);
+    let out = next_free();
+    let mut total = 0;
+    let mut at = 0;
+    while at < length {
+        let byte = core::ptr::read((bytes + at) as *const u8);
+        if byte == b'\r' && at + 1 < length && core::ptr::read((bytes + at + 1) as *const u8) == b'\n'
+        {
+            at += 1;
+            continue;
+        }
+        let piece = alloc(1);
+        core::ptr::write(piece as *mut u8, byte);
+        total += 1;
+        at += 1;
+    }
+    let joined = __souther_string(out, total);
+    let newline = __souther_string(b"\n".as_ptr() as u32, 1);
+    __souther_string_split(newline, joined, descriptor)
+}
+
+/// `String.padLeft(width, pad, s)` and `String.padRight(width, pad, s)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_pad_left(width: u32, pad: u32, text: u32) -> u32 {
+    let fill = padding(width, pad, text);
+    if __souther_string_length(fill) == 0 {
+        return text;
+    }
+    value::__souther_concat(fill, text)
+}
+
+/// `String.padRight(width, pad, s)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_pad_right(width: u32, pad: u32, text: u32) -> u32 {
+    let fill = padding(width, pad, text);
+    if __souther_string_length(fill) == 0 {
+        return text;
+    }
+    value::__souther_concat(text, fill)
+}
+
+/// What brings a string up to exactly a width in code points, cut so a long pad does not overshoot.
+unsafe fn padding(width: u32, pad: u32, text: u32) -> u32 {
+    let wanted = __souther_int_value(width);
+    let missing = wanted - code_points(text) as i64;
+    if missing <= 0 || __souther_string_length(pad) == 0 {
+        return __souther_string(0, 0);
+    }
+    if missing > u32::MAX as i64 {
+        abort(REASON_OUT_OF_RANGE, 0, wanted as u64, 0);
+    }
+    let each = code_points(pad) as i64;
+    let times = (missing + each - 1) / each;
+    let repeated = __souther_string_repeat(__souther_int(times), pad);
+    let cut = __souther_string_slice(__souther_int(0), __souther_int(missing), repeated);
+    cut
+}
+
+fn blank(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
+
+unsafe fn code_point_at(at: u32, width: u32) -> u32 {
+    let first = core::ptr::read(at as *const u8) as u32;
+    match width {
+        1 => first,
+        2 => ((first & 0x1f) << 6) | trailing(at, 1),
+        3 => ((first & 0x0f) << 12) | (trailing(at, 1) << 6) | trailing(at, 2),
+        _ => {
+            ((first & 0x07) << 18)
+                | (trailing(at, 1) << 12)
+                | (trailing(at, 2) << 6)
+                | trailing(at, 3)
+        }
+    }
+}
+
 /// `String.fromInt`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_from_int(number: u32) -> u32 {

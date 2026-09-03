@@ -24,6 +24,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
 
     private static final String[] TEXTS = {
         "", "a", "abc", "  padded  ", "ごきげんよう", "a😀b", "\tmixed \n", "aaa", "a,b,,c",
+        "one\r\ntwo\n", "Ĳ ǅ ß",
     };
 
     @Test
@@ -170,6 +171,60 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     }
 
     @Test
+    void recasesAndBreaksAndPadsWhereSouthersRuntimeDoes() {
+        Running module = compiled("""
+                module wording
+
+                behavior quiet : (s: String) -> String
+
+                let quiet (s) = String.lowercase(s)
+
+                behavior loud : (s: String) -> String
+
+                let loud (s) = String.uppercase(s)
+
+                behavior spoken : (s: String) -> List<String>
+
+                let spoken (s) = String.words(s)
+
+                behavior rows : (s: String) -> List<String>
+
+                let rows (s) = String.lines(s)
+
+                behavior widened : (n: Int, p: String, s: String) -> String
+
+                let widened (n, p, s) = String.padLeft(n, p, s)
+
+                behavior lengthened : (n: Int, p: String, s: String) -> String
+
+                let lengthened (n, p, s) = String.padRight(n, p, s)
+                """);
+
+        for (String text : TEXTS) {
+            assertThat(answerOf(module, "wording.quiet", array(quoted(text))))
+                    .describedAs(text).isEqualTo(value(quoted(text.toLowerCase())));
+            assertThat(answerOf(module, "wording.loud", array(quoted(text))))
+                    .describedAs(text).isEqualTo(value(quoted(text.toUpperCase())));
+            assertThat(answerOf(module, "wording.spoken", array(quoted(text))))
+                    .describedAs(text).isEqualTo(value(written(Strings.words(text))));
+            assertThat(answerOf(module, "wording.rows", array(quoted(text))))
+                    .describedAs(text).isEqualTo(value(written(Strings.lines(text))));
+            for (long width : new long[] {0, 3, 8}) {
+                for (String pad : new String[] {"-", "ab", ""}) {
+                    assertThat(answerOf(module, "wording.widened",
+                            array(Long.toString(width), quoted(pad), quoted(text))))
+                            .describedAs(text + " left " + width + " " + pad)
+                            .isEqualTo(value(quoted(Strings.padLeft(text, width, pad))));
+                    assertThat(answerOf(module, "wording.lengthened",
+                            array(Long.toString(width), quoted(pad), quoted(text))))
+                            .describedAs(text + " right " + width + " " + pad)
+                            .isEqualTo(value(quoted(Strings.padRight(text, width, pad))));
+                }
+            }
+        }
+    }
+
+    @Test
     void countsWhereSouthersRuntimeCounts() {
         Running module = compiled("""
                 module counting
@@ -263,14 +318,14 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module wording
 
-                behavior shouted : (s: String) -> String
+                behavior matching : (s: String) -> Bool
 
-                let shouted (s) = String.uppercase(s)
+                let matching (s) = String.matches("a+", s)
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("STRING_UPPERCASE");
+                .hasMessageContaining("STRING_MATCHES");
     }
 
     private static String value(String written) {
@@ -288,7 +343,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     /** A string as JSON writes it. The texts here carry nothing but a tab and a newline to escape. */
     private static String quoted(String text) {
         return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\t", "\\t").replace("\n", "\\n") + "\"";
+                .replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r") + "\"";
     }
 
     private static String written(List<String> texts) {

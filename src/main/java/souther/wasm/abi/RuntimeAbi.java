@@ -284,6 +284,18 @@ public final class RuntimeAbi {
         public static final String STRING_CONCAT = "__souther_string_concat_all";
         /** {@code (i32 target, i32 replacement, i32 s) -> i32}. */
         public static final String STRING_REPLACE = "__souther_string_replace";
+        /** {@code (i32 s) -> i32}. */
+        public static final String STRING_LOWERCASE = "__souther_string_lowercase";
+        /** {@code (i32 s) -> i32}. */
+        public static final String STRING_UPPERCASE = "__souther_string_uppercase";
+        /** {@code (i32 s, i32 descriptor) -> i32}. */
+        public static final String STRING_WORDS = "__souther_string_words";
+        /** {@code (i32 s, i32 descriptor) -> i32}. */
+        public static final String STRING_LINES = "__souther_string_lines";
+        /** {@code (i32 width, i32 pad, i32 s) -> i32}. */
+        public static final String STRING_PAD_LEFT = "__souther_string_pad_left";
+        /** {@code (i32 width, i32 pad, i32 s) -> i32}. */
+        public static final String STRING_PAD_RIGHT = "__souther_string_pad_right";
         /** {@code (i32 s, i32 descriptor) -> i32}. */
         public static final String STRING_CHARACTERS = "__souther_string_characters";
         /** {@code (i32 s, i32 descriptor) -> i32}. */

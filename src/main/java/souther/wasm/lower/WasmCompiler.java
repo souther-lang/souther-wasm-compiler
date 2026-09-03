@@ -658,6 +658,12 @@ public final class WasmCompiler {
                 case STRING_JOIN -> RuntimeAbi.Kernels.STRING_JOIN;
                 case STRING_CONCAT -> RuntimeAbi.Kernels.STRING_CONCAT;
                 case STRING_REPLACE -> RuntimeAbi.Kernels.STRING_REPLACE;
+                case STRING_LOWERCASE -> RuntimeAbi.Kernels.STRING_LOWERCASE;
+                case STRING_UPPERCASE -> RuntimeAbi.Kernels.STRING_UPPERCASE;
+                case STRING_WORDS -> RuntimeAbi.Kernels.STRING_WORDS;
+                case STRING_LINES -> RuntimeAbi.Kernels.STRING_LINES;
+                case STRING_PAD_LEFT -> RuntimeAbi.Kernels.STRING_PAD_LEFT;
+                case STRING_PAD_RIGHT -> RuntimeAbi.Kernels.STRING_PAD_RIGHT;
                 case STRING_CHARACTERS -> RuntimeAbi.Kernels.STRING_CHARACTERS;
                 case STRING_CODE_POINTS -> RuntimeAbi.Kernels.STRING_CODE_POINTS;
                 case INT_ADD -> RuntimeAbi.Kernels.INT_ADD;
@@ -745,6 +751,7 @@ public final class WasmCompiler {
          */
         private static final Set<Kernel> BUILDS_A_LIST = Set.of(
                 Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
+                Kernel.STRING_WORDS, Kernel.STRING_LINES,
                 Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE,
                 Kernel.SET_EMPTY, Kernel.SET_SINGLETON, Kernel.SET_INSERT, Kernel.SET_REMOVE,
                 Kernel.SET_UNION, Kernel.SET_INTERSECTION, Kernel.SET_DIFFERENCE,
