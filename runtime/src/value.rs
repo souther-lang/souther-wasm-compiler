@@ -341,6 +341,62 @@ unsafe fn map_of_length(cell: u32, entries: u32) {
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
 }
 
+/// Starts the array a call's arguments are written as.
+///
+/// A crossing out of this module writes its arguments the way a caller writes them coming in, so
+/// what a host implements is what a host calls: a document in, a document out.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_arguments(held: u32) -> u32 {
+    let cell = header(TAG_ARGUMENTS, 0);
+    let _ = alloc(4);
+    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, held);
+    // Where the run starts is where the arena is once this cell is out of the way, so it is taken
+    // after the cell rather than as it is made.
+    core::ptr::write_unaligned((cell as usize + 4) as *mut u32, crate::next_free());
+    write(b"[");
+    cell
+}
+
+/// Writes one more argument into the array being written.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_argument_written(document: u32, value: u32, descriptor: u32) {
+    let left = core::ptr::read_unaligned((document as usize + HEADER) as *const u32);
+    let held = core::ptr::read_unaligned((document as usize + 4) as *const u32);
+    let _ = held;
+    if left == 0 {
+        return;
+    }
+    written(value, descriptor);
+    core::ptr::write_unaligned((document as usize + HEADER) as *mut u32, left - 1);
+    if left > 1 {
+        write(b",");
+    }
+}
+
+/// Closes the array, answering the run of bytes it is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_arguments_sealed(document: u32) -> u32 {
+    write(b"]");
+    let from = core::ptr::read_unaligned((document as usize + 4) as *const u32);
+    core::ptr::write_unaligned((document as usize + HEADER) as *mut u32, crate::next_free() - from);
+    document
+}
+
+/// Where a written array of arguments starts.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_arguments_bytes(document: u32) -> u32 {
+    core::ptr::read_unaligned((document as usize + 4) as *const u32)
+}
+
+/// How long a written array of arguments is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_arguments_length(document: u32) -> u32 {
+    core::ptr::read_unaligned((document as usize + HEADER) as *const u32)
+}
+
+/// An array of arguments being written. `+4` is where its bytes start.
+pub const TAG_ARGUMENTS: u32 = 12;
+
 /// Values written together, with nothing in them yet.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_tuple(held: u32) -> u32 {

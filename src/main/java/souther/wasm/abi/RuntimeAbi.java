@@ -159,6 +159,21 @@ public final class RuntimeAbi {
     /** {@code (i32 descriptor) -> i32}: the one value of a type that has one. */
     public static final String UNIT = "__souther_unit";
 
+    /** {@code (i32 held) -> i32}: starts the array a crossing's arguments are written as. */
+    public static final String WRITE_ARGUMENTS = "__souther_arguments";
+
+    /** {@code (i32 document, i32 value, i32 descriptor) -> ()}: writes one more argument. */
+    public static final String WRITE_ARGUMENT = "__souther_argument_written";
+
+    /** {@code (i32 document) -> i32}: closes the array. */
+    public static final String SEAL_ARGUMENTS = "__souther_arguments_sealed";
+
+    /** {@code (i32 document) -> i32}: where a written array of arguments starts. */
+    public static final String ARGUMENTS_BYTES = "__souther_arguments_bytes";
+
+    /** {@code (i32 document) -> i32}: how long a written array of arguments is. */
+    public static final String ARGUMENTS_LENGTH = "__souther_arguments_length";
+
     /** {@code (i32 held) -> i32}: values written together, with nothing in them yet. */
     public static final String TUPLE = "__souther_tuple";
 

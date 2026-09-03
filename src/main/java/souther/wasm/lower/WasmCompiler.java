@@ -96,6 +96,7 @@ public final class WasmCompiler {
         // A helper is here where the checker left one. It expands a call to a helper where it was
         // written, so most are gone by now — but not one that reaches itself, which cannot be.
         List<Written> written = new ArrayList<>();
+        List<Crossing> injected = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedHelper helper : module.helpers()) {
                 int index = fragment.declare(overCells(fragment, helper.parameters().size()));
@@ -105,9 +106,14 @@ public final class WasmCompiler {
                         helper.declares()));
             }
             for (CheckedBehavior behavior : module.behaviors()) {
-                Body body = bodyOf(behavior);
-                int index = fragment.declare(overCells(fragment, body.parameters().size()));
+                int arity = behavior.signature().takes().size();
+                int index = fragment.declare(overCells(fragment, arity));
                 reached.put(behavior.name(), index);
+                if (behavior.implementation() instanceof CheckedImplementation.Injected) {
+                    injected.add(new Crossing(index, behavior, injected.size()));
+                    continue;
+                }
+                Body body = bodyOf(behavior);
                 written.add(new Written(index, body.parameters(), body.body(), behavior.name()));
             }
         }
@@ -115,6 +121,9 @@ public final class WasmCompiler {
         Emitter emitter = new Emitter(fragment, calls, shapes, reached);
         for (Written each : written) {
             fragment.write(each.index(), emitter.overValues(each));
+        }
+        for (Crossing each : injected) {
+            fragment.write(each.index(), emitter.reachingOut(each));
         }
         int stringToString = fragment.functionType(
                 List.of(Type.I32, Type.I32), List.of(Type.I32, Type.I32));
@@ -148,6 +157,17 @@ public final class WasmCompiler {
         return fragment.functionType(takes, List.of(Type.I32));
     }
 
+    /**
+     * A behavior supplied from outside: where its function goes, which one it is, and what it was
+     * declared to take and answer.
+     *
+     * <p>The number is what the host is told: an ordinal of this build, which is enough for a host
+     * holding the table this compiler also writes. Not a name — a name would have to travel as
+     * bytes on every call for a number the host looks up once.
+     */
+    private record Crossing(int index, CheckedBehavior behavior, int ordinal) {
+    }
+
     /** One function to write: where it goes, what it binds, and what it answers. */
     private record Written(int index, List<Core.Binder> parameters, Core body, ValueName declares) {
     }
@@ -161,8 +181,8 @@ public final class WasmCompiler {
             case CheckedImplementation.Body it -> new Body(it.parameters(), it.body());
             case CheckedImplementation.Composed ignored -> throw new NotLowered(
                     behavior.name() + " is composed, and this backend does not write a composition yet");
-            case CheckedImplementation.Injected ignored -> throw new NotLowered(
-                    behavior.name() + " is injected, and this backend does not reach out of the module yet");
+            case CheckedImplementation.Injected ignored -> throw new IllegalStateException(
+                    behavior.name() + " is injected and is written as a crossing, not as a body");
             case CheckedImplementation.Unwritten ignored -> throw new NotLowered(
                     behavior.name() + " is not written, so there is nothing to emit for it");
             case CheckedImplementation.ImplementedElsewhere ignored -> throw new NotLowered(
@@ -231,6 +251,49 @@ public final class WasmCompiler {
                 locals.put(written.parameters().get(i).binding(), i);
             }
             value(out, written.body());
+            return out.body();
+        }
+
+        /**
+         * A behavior supplied from outside, as the crossing it is.
+         *
+         * <p>Its arguments are written as the array a call is, handed over, and what came back is
+         * read as the type the declaration answers. So a host implements one the way a caller
+         * calls one: a document in, a document out, and nothing of how this module holds a value.
+         */
+        byte[] reachingOut(Crossing crossing) {
+            var takes = crossing.behavior().signature().takes();
+            out = new BodyWriter(takes.size(), 1);
+            locals = new HashMap<>();
+            writing = crossing.behavior().name();
+            int written = out.wide(0);
+            int document = out.narrow();
+
+            // The arguments as one array, which is what a call is written as at either edge.
+            out.constant(takes.size()).call(calls.of(RuntimeAbi.WRITE_ARGUMENTS)).localSet(document);
+            for (int i = 0; i < takes.size(); i++) {
+                out.localGet(document)
+                        .localGet(i)
+                        .constant(shapes.of(takes.get(i)))
+                        .call(calls.of(RuntimeAbi.WRITE_ARGUMENT));
+            }
+            out.localGet(document).call(calls.of(RuntimeAbi.SEAL_ARGUMENTS)).localSet(document);
+
+            out.constant(crossing.ordinal())
+                    .localGet(document)
+                    .call(calls.of(RuntimeAbi.ARGUMENTS_BYTES))
+                    .localGet(document)
+                    .call(calls.of(RuntimeAbi.ARGUMENTS_LENGTH))
+                    .call(calls.of(RuntimeAbi.HOST_CALL))
+                    .localSet(written);
+
+            out.localGet(written).wrap()
+                    .localGet(written).shiftRight(32).wrap()
+                    .call(calls.of(RuntimeAbi.JSON_PARSE))
+                    .constant(shapes.of(crossing.behavior().signature().answers()))
+                    .constant(0)
+                    .constant(0)
+                    .call(calls.of(RuntimeAbi.READ));
             return out.body();
         }
 
