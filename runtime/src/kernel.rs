@@ -105,6 +105,38 @@ pub unsafe extern "C" fn __souther_string_matches(text: u32, machine: u32) -> u3
     )))
 }
 
+/// An amount a body wrote down, read from the text it was written as.
+///
+/// The text sits in static memory and the value is built where it is used, because a value lives
+/// on the arena and the arena is reset between calls. What the text says was settled where it was
+/// written, so nothing here can fail to read it.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_decimal_written(at: u32, length: u32) -> u32 {
+    crate::decimal::parse(at, length)
+}
+
+/// A day a body wrote down, read from the text it was written as.
+///
+/// Three names rather than one told which, because the number a tag goes by is the runtime's and
+/// writing it down on the other side would be a second account of the same thing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_date_written(at: u32, length: u32) -> u32 {
+    temporal::made(value::TAG_DATE, temporal::read_day(at, length).unwrap_or(0), 0)
+}
+
+/// A time of day a body wrote down, read from the text it was written as.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_time_written(at: u32, length: u32) -> u32 {
+    temporal::made(value::TAG_TIME, 0, temporal::read_time(at, length).unwrap_or(0))
+}
+
+/// A day and a time together that a body wrote down, read from the text it was written as.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_datetime_written(at: u32, length: u32) -> u32 {
+    let (day, second) = temporal::read_both(at, length).unwrap_or((0, 0));
+    temporal::made(value::TAG_DATE_TIME, day, second)
+}
+
 /// `String.fromDecimal(d)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_from_decimal(amount: u32) -> u32 {

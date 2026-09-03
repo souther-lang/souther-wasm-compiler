@@ -488,6 +488,18 @@ public final class RuntimeAbi {
     /** {@code (i32 ptr, i32 len) -> i32}: a cell holding a {@code String}. */
     public static final String STRING = "__souther_string";
 
+    /** An amount a body wrote down, read from the text it was written as. */
+    public static final String DECIMAL_WRITTEN = "__souther_decimal_written";
+
+    /** A day a body wrote down, read from the text it was written as. */
+    public static final String DATE_WRITTEN = "__souther_date_written";
+
+    /** A time of day a body wrote down, read from the text it was written as. */
+    public static final String TIME_WRITTEN = "__souther_time_written";
+
+    /** A day and a time together a body wrote down, read from the text it was written as. */
+    public static final String DATETIME_WRITTEN = "__souther_datetime_written";
+
     /**
      * {@code (i32 cell, i32 descriptor) -> i64}: a value written as the answer a caller reads,
      * answered packed.

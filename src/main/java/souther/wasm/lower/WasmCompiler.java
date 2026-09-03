@@ -573,6 +573,28 @@ public final class WasmCompiler {
                             .constant(utf8.length)
                             .call(calls.of(RuntimeAbi.STRING));
                 }
+                case Core.Decimal amount -> {
+                    // The text rather than the digits and the scale, because that is the one form
+                    // both sides already agree on how to read, and what was written is what a
+                    // scale is: a thousand written to two places carries two.
+                    byte[] written = amount.value().toPlainString()
+                            .getBytes(StandardCharsets.UTF_8);
+                    out.constant(fragment.place(written))
+                            .constant(written.length)
+                            .call(calls.of(RuntimeAbi.DECIMAL_WRITTEN));
+                }
+                case Core.Temporal written -> {
+                    byte[] utf8 = written.text().getBytes(StandardCharsets.UTF_8);
+                    out.constant(fragment.place(utf8))
+                            .constant(utf8.length)
+                            .call(calls.of(switch (written.kind()) {
+                                case DATE -> RuntimeAbi.DATE_WRITTEN;
+                                case TIME -> RuntimeAbi.TIME_WRITTEN;
+                                case DATETIME -> RuntimeAbi.DATETIME_WRITTEN;
+                                default -> throw new NotLowered(writing + " writes down a "
+                                        + written.kind() + ", which is no day and no time");
+                            }));
+                }
                 case Core.ListLit made -> {
                     int list = scratch();
                     out.constant(shapes.of(made.type()))
