@@ -1,7 +1,10 @@
 package souther.wasm.link;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import souther.wasm.link.RuntimeLayout.Export;
@@ -229,14 +232,36 @@ final class LayoutReader {
         return end;
     }
 
+    /**
+     * Every section, in the order the module wrote them, as an id and the bytes it framed.
+     *
+     * <p>The bytes are handed over unread. A linker rewrites the vector of a section it appends to
+     * by putting its own entries after these, which needs the count at the front and nothing else
+     * of what follows it — the code section above all, whose entries are the bodies this project
+     * does not model.
+     */
+    List<RawSection> rawSections() {
+        List<RawSection> raw = new ArrayList<>();
+        for (Section section : sections()) {
+            raw.add(new RawSection(
+                    section.id(),
+                    Arrays.copyOfRange(module, section.start(), section.end())));
+        }
+        return raw;
+    }
+
+    /** A section as it stands in a module: what it is, and the bytes it frames. */
+    record RawSection(int id, byte[] payload) {
+    }
+
     private record Section(int id, int start, int end) {
     }
 
-    private java.util.List<Section> sections() {
+    private List<Section> sections() {
         if (module.length < 8) {
             throw malformed("a module shorter than its own header");
         }
-        java.util.List<Section> sections = new java.util.ArrayList<>();
+        List<Section> sections = new ArrayList<>();
         Cursor at = new Cursor(8);
         while (at.position < module.length) {
             int id = at.readByte();

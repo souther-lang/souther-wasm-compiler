@@ -3,12 +3,21 @@ package souther.wasm.abi;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.dylibso.chicory.runtime.HostFunction;
+import com.dylibso.chicory.runtime.ImportValues;
+import com.dylibso.chicory.runtime.Instance;
+import com.dylibso.chicory.wasm.ChicoryException;
+import com.dylibso.chicory.wasm.Parser;
+import com.dylibso.chicory.wasm.types.ValType;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import org.junit.jupiter.api.Test;
+import souther.wasm.link.RuntimeLayout;
 
 /**
  * The runtime's side of {@link RuntimeAbi}, read off the module this build carries.
@@ -64,7 +73,7 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
         int big = runtime.call(RuntimeAbi.ALLOC, 5 * 65536);
 
         assertThat(big).isPositive();
-        runtime.write(big, "x".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        runtime.write(big, "x".getBytes(StandardCharsets.UTF_8));
         assertThat(runtime.read(big, 1)).containsExactly((byte) 'x');
     }
 
@@ -75,7 +84,7 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
         int mark = runtime.callInt(RuntimeAbi.ALLOC_MARK);
 
         assertThatThrownBy(() -> runtime.call(RuntimeAbi.ALLOC_RESET, mark - 8))
-                .isInstanceOf(com.dylibso.chicory.wasm.ChicoryException.class);
+                .isInstanceOf(ChicoryException.class);
 
         runtime.call(RuntimeAbi.ALLOC_RESET, mark);
         FailureRecord record = runtime.failureRecord();
@@ -89,7 +98,7 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
         RuntimeUnderTest runtime = RuntimeUnderTest.started();
         int mark = runtime.callInt(RuntimeAbi.ALLOC_MARK);
         assertThatThrownBy(() -> runtime.call(RuntimeAbi.ALLOC_RESET, mark - 8))
-                .isInstanceOf(com.dylibso.chicory.wasm.ChicoryException.class);
+                .isInstanceOf(ChicoryException.class);
         runtime.call(RuntimeAbi.ALLOC_RESET, mark);
 
         // A caller that snapshots after that abort and then sees a trap of its own reads the same
@@ -102,29 +111,29 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
     /** The module this build carries, instantiated and placed, with the arena ready to hand out. */
     private static final class RuntimeUnderTest {
 
-        private final com.dylibso.chicory.runtime.Instance instance;
+        private final Instance instance;
 
-        private RuntimeUnderTest(com.dylibso.chicory.runtime.Instance instance) {
+        private RuntimeUnderTest(Instance instance) {
             this.instance = instance;
         }
 
         static RuntimeUnderTest started() {
-            var hostCall = new com.dylibso.chicory.runtime.HostFunction(
+            var hostCall = new HostFunction(
                     RuntimeAbi.IMPORT_MODULE,
                     RuntimeAbi.IMPORT_HOST_CALL,
-                    java.util.List.of(
-                            com.dylibso.chicory.wasm.types.ValType.I32,
-                            com.dylibso.chicory.wasm.types.ValType.I32,
-                            com.dylibso.chicory.wasm.types.ValType.I32,
-                            com.dylibso.chicory.wasm.types.ValType.I32,
-                            com.dylibso.chicory.wasm.types.ValType.I32),
-                    java.util.List.of(com.dylibso.chicory.wasm.types.ValType.I32),
+                    List.of(
+                            ValType.I32,
+                            ValType.I32,
+                            ValType.I32,
+                            ValType.I32,
+                            ValType.I32),
+                    List.of(ValType.I32),
                     (inst, args) -> new long[] {0});
-            var imports = com.dylibso.chicory.runtime.ImportValues.builder()
+            var imports = ImportValues.builder()
                     .addFunction(hostCall)
                     .build();
-            var instance = com.dylibso.chicory.runtime.Instance
-                    .builder(com.dylibso.chicory.wasm.Parser.parse(runtimeBytes()))
+            var instance = Instance
+                    .builder(Parser.parse(runtimeBytes()))
                     .withImportValues(imports)
                     .build();
             RuntimeUnderTest runtime = new RuntimeUnderTest(instance);
@@ -134,7 +143,7 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
 
         int staticEnd() {
             byte[] bytes = runtimeBytes();
-            return souther.wasm.link.RuntimeLayout.of(bytes).heapBase(bytes);
+            return RuntimeLayout.of(bytes).heapBase(bytes);
         }
 
         int call(String export, int argument) {

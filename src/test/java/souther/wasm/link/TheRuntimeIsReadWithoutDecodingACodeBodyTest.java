@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.link.RuntimeLayout.ExportKind;
@@ -112,7 +113,7 @@ class TheRuntimeIsReadWithoutDecodingACodeBodyTest {
 
     @Test
     void refusesAModuleWhoseSectionsRunPastItsEnd() {
-        byte[] truncated = java.util.Arrays.copyOf(RUNTIME, RUNTIME.length - 1);
+        byte[] truncated = Arrays.copyOf(RUNTIME, RUNTIME.length - 1);
 
         assertThatThrownBy(() -> RuntimeLayout.of(truncated))
                 .isInstanceOf(IllegalArgumentException.class)
