@@ -53,6 +53,7 @@ final class LayoutReader {
         int definedGlobals = 0;
         int definedTables = 0;
         int memoryMinimum = 0;
+        int tableMinimum = 0;
         OptionalInt memoryMaximum = OptionalInt.empty();
         int dataSegments = 0;
         boolean declaresDataCount = false;
@@ -89,7 +90,17 @@ final class LayoutReader {
                     }
                 }
                 case SEC_FUNCTION -> definedFunctions = at.readUnsigned();
-                case SEC_TABLE -> definedTables = at.readUnsigned();
+                case SEC_TABLE -> {
+                    definedTables = at.readUnsigned();
+                    for (int i = 0; i < definedTables; i++) {
+                        at.readByte(); // what the table holds
+                        boolean bounded = at.readByte() != 0;
+                        tableMinimum = at.readUnsigned();
+                        if (bounded) {
+                            at.readUnsigned();
+                        }
+                    }
+                }
                 case SEC_MEMORY -> {
                     int count = at.readUnsigned();
                     for (int i = 0; i < count; i++) {
@@ -137,6 +148,7 @@ final class LayoutReader {
                 importedTables + definedTables,
                 memoryMinimum,
                 memoryMaximum,
+                tableMinimum,
                 dataSegments,
                 declaresDataCount,
                 start,

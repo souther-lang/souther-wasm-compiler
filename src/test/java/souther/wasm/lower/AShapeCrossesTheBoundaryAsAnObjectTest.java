@@ -1,7 +1,6 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -123,24 +122,6 @@ class AShapeCrossesTheBoundaryAsAnObjectTest {
 
         assertThat(answerOf(module, "geometry.flip", "[7]"))
                 .contains("\"path\":\"/0\"", "\"expected\":\"an object\"", "\"actual\":\"number\"");
-    }
-
-    @Test
-    void saysSoForAShapeWhoseInvariantItCannotCheckYet() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
-                module counting
-
-                data Positive = { n: Int }
-                    invariant kept = n > 0
-
-                behavior same : (p: Positive) -> Positive
-
-                let same (p) = p
-                """));
-
-        assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("invariant");
     }
 
     private static Running compiled(String... sources) {

@@ -25,6 +25,7 @@ import souther.wasm.abi.RuntimeAbi;
  * @param tableCount tables, imported and defined together
  * @param memoryMinimumPages pages the memory asks for at instantiation
  * @param memoryMaximumPages pages the memory will not grow past, where it says
+ * @param tableMinimumSlots slots the table holds at instantiation
  * @param dataSegmentCount data segments, which a {@code DataCount} section must agree with
  * @param declaresDataCount whether the module carries a {@code DataCount} section
  * @param existingStart the function the runtime starts with, where it claimed the slot
@@ -38,6 +39,7 @@ public record RuntimeLayout(
         int tableCount,
         int memoryMinimumPages,
         OptionalInt memoryMaximumPages,
+        int tableMinimumSlots,
         int dataSegmentCount,
         boolean declaresDataCount,
         OptionalInt existingStart,

@@ -35,6 +35,7 @@ final class BodyWriter {
     private static final int OPCODE_UNREACHABLE = 0x00;
     private static final int OPCODE_I32_OR = 0x72;
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
+    private static final int OPCODE_I64_EXTEND_I32_S = 0xac;
     private static final int OPCODE_I64_SHR_U = 0x88;
 
     private static final int TYPE_I32 = 0x7f;
@@ -94,6 +95,12 @@ final class BodyWriter {
     /** Narrows the number on the stack to its low half. */
     BodyWriter wrap() {
         writer.write((byte) OPCODE_I32_WRAP_I64);
+        return this;
+    }
+
+    /** Widens the number on the stack to sixty-four bits, keeping its sign. */
+    BodyWriter extendToWide() {
+        writer.write((byte) OPCODE_I64_EXTEND_I32_S);
         return this;
     }
 

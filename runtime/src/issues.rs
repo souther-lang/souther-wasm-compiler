@@ -27,6 +27,8 @@ pub const CODE_INVALID_SIZE: &[u8] = b"invalid_size";
 pub const CODE_MISSING_FIELD: &[u8] = b"missing_field";
 /// What was written is not one of the ones the declaration offers.
 pub const CODE_NOT_ALLOWED: &[u8] = b"not_allowed";
+/// A value was written that its type says nothing may be.
+pub const CODE_INVARIANT_VIOLATION: &[u8] = b"invariant_violation";
 
 /// The first issue this call found, or zero.
 static mut FIRST: u32 = 0;

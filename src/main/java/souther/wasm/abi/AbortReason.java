@@ -41,7 +41,16 @@ public enum AbortReason {
      * <p>The checker settles that one always answers, so reaching this means this backend tested
      * for the wrong thing rather than that the model left a case out.
      */
-    NO_ARM(7);
+    NO_ARM(7),
+
+    /**
+     * A value was made inside a behavior that its type says nothing may be.
+     *
+     * <p>{@code aux0} is which of the type's invariants it breaks. At the boundary the same thing
+     * is bad input and comes back as an issue; here there is no case for it and no value to answer
+     * with, so the call ends.
+     */
+    INVARIANT_VIOLATION(8);
 
     private final int code;
 

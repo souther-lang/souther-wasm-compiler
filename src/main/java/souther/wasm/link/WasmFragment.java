@@ -33,6 +33,7 @@ public final class WasmFragment {
     private final Map<String, Integer> exports = new LinkedHashMap<>();
     private final List<Segment> data = new ArrayList<>();
     private final Set<Integer> reserved = new LinkedHashSet<>();
+    private final Map<Integer, Integer> slots = new LinkedHashMap<>();
     private int staticTop;
 
     /** A run of bytes the link places in static memory, at an address it has settled. */
@@ -134,6 +135,25 @@ public final class WasmFragment {
     }
 
     /**
+     * Puts a function in the module's table and answers the slot it took.
+     *
+     * <p>A slot is how a body the runtime does not know about is reached from inside the runtime:
+     * a decoder checking what must hold of a value calls the check this compiler wrote for that
+     * type, and a call by index into the table is the only way across.
+     *
+     * @param functionIndex what {@link #declare} or {@link #define} answered
+     */
+    public int slot(int functionIndex) {
+        Integer already = slots.get(functionIndex);
+        if (already != null) {
+            return already;
+        }
+        int slot = plan.layout().tableMinimumSlots() + slots.size();
+        slots.put(functionIndex, slot);
+        return slot;
+    }
+
+    /**
      * Places bytes in static memory and answers where they went.
      *
      * <p>Static, so they outlive the arena: what a caller reads after a call has returned is still
@@ -208,6 +228,16 @@ public final class WasmFragment {
 
     Map<String, Integer> exportedFunctions() {
         return Map.copyOf(exports);
+    }
+
+    /** The functions the table holds, in slot order after the ones the runtime already had. */
+    List<Integer> tableEntries() {
+        return List.copyOf(slots.keySet());
+    }
+
+    /** The first slot this fragment took, which is where its element segment starts. */
+    int firstSlot() {
+        return plan.layout().tableMinimumSlots();
     }
 
     List<Segment> dataSegments() {

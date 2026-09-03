@@ -201,6 +201,12 @@ public final class RuntimeAbi {
     /** {@code (i32 cell) -> i32}: the {@code Bool} a cell holds, as one or zero. */
     public static final String BOOL_VALUE = "__souther_bool_value";
 
+    /**
+     * {@code (i32 cell, i32 descriptor) -> i32}: which of a type's invariants a value breaks, or
+     * minus one where it breaks none.
+     */
+    public static final String CHECK_INVARIANTS = "__souther_check_invariants";
+
     /** {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. */
     public static final String IS = "__souther_is";
 

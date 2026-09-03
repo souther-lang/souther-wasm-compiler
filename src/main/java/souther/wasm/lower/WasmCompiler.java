@@ -6,10 +6,14 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import souther.compiler.core.Core;
+import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
@@ -70,8 +74,20 @@ public final class WasmCompiler {
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
         Runtime calls = new Runtime(plan);
-        Descriptors shapes = new Descriptors(program, fragment);
         Map<ValueName, Integer> reached = new HashMap<>();
+        // A type's check is declared as its descriptor is written, because the descriptor holds
+        // the slot the check sits in and a body of the check may make a value of the type.
+        Map<TypeSymbol.AtModule, Integer> checks = new LinkedHashMap<>();
+        Descriptors[] holder = new Descriptors[1];
+        Descriptors shapes = new Descriptors(program, fragment, name -> {
+            if (holder[0].invariantsOf(name).isEmpty()) {
+                return 0;
+            }
+            int index = fragment.declare(overCells(fragment, 1));
+            checks.put(name, index);
+            return fragment.slot(index);
+        });
+        holder[0] = shapes;
 
         // Every index is settled before the first body is written, because a call writes the index
         // of what it reaches and a body may reach one written after it, or itself.
@@ -97,6 +113,18 @@ public final class WasmCompiler {
             for (CheckedBehavior behavior : module.behaviors()) {
                 byte[] wrapper = emitter.crossing(behavior, reached.get(behavior.name()));
                 fragment.export(exportName(behavior.name()), fragment.define(stringToString, wrapper));
+            }
+        }
+
+        // Last, because everything before it asks for descriptors and asking for one is what
+        // declares a check. Writing a check asks for them too, so this goes round until a round
+        // declares nothing new.
+        Set<TypeSymbol.AtModule> already = new HashSet<>();
+        while (already.size() < checks.size()) {
+            for (Map.Entry<TypeSymbol.AtModule, Integer> each : List.copyOf(checks.entrySet())) {
+                if (already.add(each.getKey())) {
+                    fragment.write(each.getValue(), emitter.checking(each.getKey()));
+                }
             }
         }
         return Linker.link(fragment);
@@ -195,6 +223,38 @@ public final class WasmCompiler {
             }
             value(out, written.body());
             return out.body();
+        }
+
+        /**
+         * What checks a type's invariants: the value, and which of them it breaks.
+         *
+         * <p>Answers the clause's place among the ones the type writes, or minus one where the
+         * value breaks none. Which clause it is rather than that one was broken, because a caller
+         * told only that something is wrong has to work out what from the value it already had.
+         *
+         * <p>One function for both places it is asked from. The boundary runs it on what a
+         * document said, and a body runs it on what the body made, and the answer is the same
+         * question — what differs is what is done with it.
+         */
+        byte[] checking(TypeSymbol.AtModule name) {
+            out = new BodyWriter(1, 0);
+            locals = new HashMap<>();
+            writing = name;
+            List<ValueShape.Field> fields = shapes.fieldsOf(name);
+            for (int i = 0; i < fields.size(); i++) {
+                int local = out.narrow();
+                out.localGet(0).constant(i).call(calls.of(RuntimeAbi.RECORD_GET)).localSet(local);
+                locals.put(fields.get(i).binding(), local);
+            }
+            int answer = out.narrow();
+            out.constant(-1).localSet(answer);
+
+            List<ValueShape.Invariant> invariants = shapes.invariantsOf(name);
+            for (int i = invariants.size() - 1; i >= 0; i--) {
+                value(out, invariants.get(i).condition());
+                out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifZero().constant(i).localSet(answer).end();
+            }
+            return out.localGet(answer).body();
         }
 
         /**
@@ -311,6 +371,28 @@ public final class WasmCompiler {
                                 .constant(shapes.positionOf(made.typeName(), field.field()));
                         value(out, field.value());
                         out.call(calls.of(RuntimeAbi.RECORD_SET));
+                    }
+                    // Construction re-checks what must hold. Here the value is the body's own, so
+                    // a violation is a model bug rather than something a caller wrote, and it ends
+                    // the call: there is no case for it and no value to answer with.
+                    if (!shapes.invariantsOf(made.typeName()).isEmpty()) {
+                        int broken = scratch();
+                        out.localGet(record)
+                                .constant(shapes.ofDeclared(made.typeName()))
+                                .call(calls.of(RuntimeAbi.CHECK_INVARIANTS))
+                                .localSet(broken)
+                                .localGet(broken)
+                                .constant(-1)
+                                .compares(BodyWriter.Comparison.UNEQUAL)
+                                .ifNotZero()
+                                .constant(AbortReason.INVARIANT_VIOLATION.code())
+                                .constant(shapes.ofDeclared(made.typeName()))
+                                .localGet(broken)
+                                .extendToWide()
+                                .constant(0L)
+                                .call(calls.of(RuntimeAbi.ABORT))
+                                .unreachable()
+                                .end();
                     }
                     out.localGet(record);
                 }

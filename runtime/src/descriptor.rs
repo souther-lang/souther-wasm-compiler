@@ -18,6 +18,7 @@
 //! kind PRODUCT
 //! +4  u32 how many fields
 //! +8  per field: u32 where its name is, u32 how long, u32 the field's own descriptor
+//! then u32 where the type's own name is, u32 how long, u32 the slot of what checks it
 //!
 //! kind SUM
 //! +4  u32 how many cases
@@ -74,6 +75,17 @@ pub unsafe fn name(descriptor: u32, index: u32) -> (u32, u32) {
 /// The descriptor of a field's type, or of a case.
 pub unsafe fn member(descriptor: u32, index: u32) -> u32 {
     read(descriptor as usize + 8 + 12 * index as usize + 8)
+}
+
+/// Where a product's own name is, and how long it is, for an issue that names the type.
+pub unsafe fn own_name(descriptor: u32) -> (u32, u32) {
+    let at = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
+    (read(at), read(at + 4))
+}
+
+/// The table slot of what checks a product's invariants, or zero where it has none.
+pub unsafe fn invariant(descriptor: u32) -> u32 {
+    read(descriptor as usize + 8 + 12 * arity(descriptor) as usize + 8)
 }
 
 unsafe fn read(at: usize) -> u32 {

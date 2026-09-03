@@ -30,9 +30,11 @@ public final class Linker {
 
     private static final int SEC_TYPE = 1;
     private static final int SEC_FUNCTION = 3;
+    private static final int SEC_TABLE = 4;
     private static final int SEC_MEMORY = 5;
     private static final int SEC_EXPORT = 7;
     private static final int SEC_START = 8;
+    private static final int SEC_ELEMENT = 9;
     private static final int SEC_DATA_COUNT = 12;
     private static final int SEC_CODE = 10;
     private static final int SEC_DATA = 11;
@@ -82,6 +84,12 @@ public final class Linker {
         sections.put(SEC_CODE, appendEntries(sections.get(SEC_CODE), codeEntries(fragment)));
         sections.put(SEC_DATA, appendEntries(sections.get(SEC_DATA), dataEntries(fragment)));
         sections.put(SEC_MEMORY, memoryHolding(sections.get(SEC_MEMORY), fragment.staticEnd()));
+        if (!fragment.tableEntries().isEmpty()) {
+            sections.put(SEC_TABLE, tableHolding(sections.get(SEC_TABLE),
+                    fragment.firstSlot() + fragment.tableEntries().size()));
+            sections.put(SEC_ELEMENT,
+                    appendEntries(sections.get(SEC_ELEMENT), List.of(elementEntry(fragment))));
+        }
         sections.put(SEC_START, startSection(thunk));
         if (layout.declaresDataCount()) {
             sections.put(SEC_DATA_COUNT, unsignedLeb(
@@ -159,6 +167,52 @@ public final class Linker {
             entries.add(entry.toByteArray());
         }
         return entries;
+    }
+
+    /**
+     * The table, with room for the slots the link took after the ones the runtime already had.
+     */
+    private static byte[] tableHolding(byte[] section, int wanted) {
+        if (section == null) {
+            throw new IllegalArgumentException("the runtime declares no table for a link to fill");
+        }
+        Reading reading = new Reading(section);
+        int count = reading.unsigned();
+        if (count != 1) {
+            throw new IllegalArgumentException("this linker fills one table, and the runtime has " + count);
+        }
+        int holds = reading.next();
+        boolean bounded = reading.next() != 0;
+        int minimum = reading.unsigned();
+        // A toolchain writes the table with exactly the slots its own code needs, bound at that,
+        // so the bound moves with the minimum. What the bound is for is stopping the table from
+        // growing at run time, and nothing here grows one.
+        int maximum = bounded ? reading.unsigned() : 0;
+        int held = Math.max(minimum, wanted);
+
+        ByteArrayOutputStream rewritten = new ByteArrayOutputStream();
+        WasmWriter writer = new WasmWriter(rewritten);
+        writer.writeUnsignedLeb128(1)
+                .write((byte) holds)
+                .write((byte) (bounded ? 1 : 0))
+                .writeUnsignedLeb128(held);
+        if (bounded) {
+            writer.writeUnsignedLeb128(Math.max(maximum, held));
+        }
+        return rewritten.toByteArray();
+    }
+
+    /** One active element segment, putting the link's functions at the slots it took. */
+    private static byte[] elementEntry(WasmFragment fragment) {
+        ByteArrayOutputStream entry = new ByteArrayOutputStream();
+        WasmWriter writer = new WasmWriter(entry);
+        writer.writeUnsignedLeb128(0) // active, in table zero, holding functions
+                .write((byte) OPCODE_I32_CONST)
+                .writeSignedLeb128(fragment.firstSlot())
+                .write((byte) OPCODE_END)
+                .writeUnsignedLeb128(fragment.tableEntries().size());
+        fragment.tableEntries().forEach(writer::writeUnsignedLeb128);
+        return entry.toByteArray();
     }
 
     /**

@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.ToIntFunction;
+import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.Type;
@@ -43,9 +45,13 @@ final class Descriptors {
     private final Map<Type, Integer> placed = new HashMap<>();
     private final Map<TypeSymbol.AtModule, Integer> byName = new HashMap<>();
 
-    Descriptors(CheckedProgram program, WasmFragment fragment) {
+    private final ToIntFunction<TypeSymbol.AtModule> checks;
+
+    Descriptors(CheckedProgram program, WasmFragment fragment,
+            ToIntFunction<TypeSymbol.AtModule> checks) {
         this.program = program;
         this.fragment = fragment;
+        this.checks = checks;
     }
 
     /**
@@ -87,6 +93,16 @@ final class Descriptors {
         return descriptor;
     }
 
+    /** The fields of a declared shape, in the order it declares them. */
+    List<ValueShape.Field> fieldsOf(TypeSymbol.AtModule name) {
+        return product(name).fields();
+    }
+
+    /** What a declared shape says must hold of its values. */
+    List<ValueShape.Invariant> invariantsOf(TypeSymbol.AtModule name) {
+        return product(name).invariants();
+    }
+
     /** Which field of a shape a name is, by the shape's own ordering. */
     int positionOf(TypeSymbol.AtModule name, String field) {
         return product(name).positionOf(field);
@@ -105,15 +121,9 @@ final class Descriptors {
                 byName.put(name, descriptor);
                 yield descriptor;
             }
-            case CheckedData.Product shape -> {
-                if (!shape.invariants().isEmpty()) {
-                    throw new NotLowered(
-                            name + " has an invariant, and this backend does not check one yet");
-                }
-                yield composite(KIND_PRODUCT, name, shape.fields().stream()
-                        .map(field -> new Member(field.name(), field.type()))
-                        .toList());
-            }
+            case CheckedData.Product shape -> composite(KIND_PRODUCT, name, shape.fields().stream()
+                    .map(field -> new Member(field.name(), field.type()))
+                    .toList());
             // A sum's cases are its leaves: a case written as another sum is carried here as the
             // cases under it, so nothing nested reaches this and the tag always names a leaf.
             case CheckedData.Sum choice -> composite(KIND_SUM, name, choice.cases().stream()
@@ -171,7 +181,9 @@ final class Descriptors {
      * descriptor being described and neither would ever have an address.
      */
     private int composite(int kind, TypeSymbol.AtModule name, List<Member> members) {
-        int descriptor = fragment.reserve(4 + 4 + 12 * members.size());
+        // A product carries its own name and the slot of what checks it, after its fields.
+        boolean product = kind == KIND_PRODUCT;
+        int descriptor = fragment.reserve(4 + 4 + 12 * members.size() + (product ? 12 : 0));
         byName.put(name, descriptor);
 
         List<int[]> written = new ArrayList<>();
@@ -187,6 +199,12 @@ final class Descriptors {
             out.writeLittleEndian4(member[0])
                     .writeLittleEndian4(member[1])
                     .writeLittleEndian4(member[2]);
+        }
+        if (product) {
+            byte[] own = name.name().getBytes(StandardCharsets.UTF_8);
+            out.writeLittleEndian4(fragment.place(own))
+                    .writeLittleEndian4(own.length)
+                    .writeLittleEndian4(checks.applyAsInt(name));
         }
         fragment.fill(descriptor, table.toByteArray());
         return descriptor;

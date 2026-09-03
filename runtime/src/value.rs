@@ -32,8 +32,8 @@ use crate::descriptor::{
 };
 use crate::order;
 use crate::issues::{
-    self, CODE_INVALID_SIZE, CODE_MISSING_FIELD, CODE_NOT_ALLOWED, CODE_OUT_OF_RANGE,
-    CODE_TYPE_MISMATCH,
+    self, CODE_INVALID_SIZE, CODE_INVARIANT_VIOLATION, CODE_MISSING_FIELD, CODE_NOT_ALLOWED,
+    CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH,
 };
 use crate::json;
 use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_INT_OVERFLOW, REASON_NOT_A_VALUE};
@@ -476,11 +476,40 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
         }
         __souther_record_set(cell, i, read);
     }
-    if whole {
-        cell
-    } else {
-        0
+    if !whole {
+        return 0;
     }
+    // What must hold of a value is checked where the value is made, whether that is a body or the
+    // boundary. Here it is the boundary, so a violation is what a caller wrote rather than a fault
+    // and it is answered as an issue.
+    let clause = __souther_check_invariants(cell, descriptor);
+    if clause >= 0 {
+        issues::issue_of(
+            CODE_INVARIANT_VIOLATION,
+            path,
+            path_length,
+            decimal(clause as u32),
+            descriptor::own_name(descriptor),
+        );
+        return 0;
+    }
+    cell
+}
+
+/// Which of a type's invariants a value breaks, or minus one where it breaks none.
+///
+/// The check is generated: what must hold of a value is written in Souther, so what runs it is a
+/// body this runtime knows nothing about, reached through the module's table.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_check_invariants(cell: u32, descriptor: u32) -> i32 {
+    if descriptor::kind(descriptor) != KIND_PRODUCT {
+        return -1;
+    }
+    let slot = descriptor::invariant(descriptor);
+    if slot == 0 {
+        return -1;
+    }
+    crate::__souther_call_slot(slot, cell) as i32
 }
 
 /// A list is written as an array, its elements in the order it holds them; a set is one too, in
