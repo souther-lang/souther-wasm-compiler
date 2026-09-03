@@ -51,6 +51,14 @@
             <version>${jspecify.version}</version>
         </dependency>
 
+        <!-- The authority on the order a Set and a Map are written in. Only the tests read it: a
+             backend that agreed with its own idea of the order would agree with nothing. -->
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-runtime</artifactId>
+            <version>${souther.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>com.dylibso.chicory</groupId>
             <artifactId>runtime</artifactId>

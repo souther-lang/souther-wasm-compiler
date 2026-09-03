@@ -35,6 +35,7 @@ final class Descriptors {
     private static final int KIND_SUM = 5;
     private static final int KIND_LIST = 6;
     private static final int KIND_OPTION = 7;
+    private static final int KIND_SET = 8;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -67,6 +68,7 @@ final class Descriptors {
                     ofDeclared(named);
             case Type.ListOf list -> holding(KIND_LIST, list.element());
             case Type.OptionOf option -> holding(KIND_OPTION, option.element());
+            case Type.SetOf set -> holding(KIND_SET, set.element());
             default -> throw new NotLowered("a " + type
                     + ", which this backend does not write yet — it writes a scalar, a shape and a sum");
         };

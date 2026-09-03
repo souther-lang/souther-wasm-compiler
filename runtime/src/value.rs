@@ -27,9 +27,10 @@
 //! before it runs, so what a refused place leaves behind is never stood in for.
 
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_OPTION, KIND_PRODUCT, KIND_STRING, KIND_SUM,
-    KIND_UNIT,
+    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING,
+    KIND_SUM, KIND_UNIT,
 };
+use crate::order;
 use crate::issues::{
     self, CODE_INVALID_SIZE, CODE_MISSING_FIELD, CODE_NOT_ALLOWED, CODE_OUT_OF_RANGE,
     CODE_TYPE_MISMATCH,
@@ -232,7 +233,8 @@ pub unsafe extern "C" fn __souther_read(
         KIND_UNIT => unit(value, descriptor, path, path_length),
         KIND_PRODUCT => product(value, descriptor, path, path_length),
         KIND_SUM => sum(value, descriptor, path, path_length),
-        KIND_LIST => list(value, descriptor, path, path_length),
+        KIND_LIST => list(value, descriptor, path, path_length, false),
+        KIND_SET => list(value, descriptor, path, path_length, true),
         KIND_OPTION => option(value, descriptor, path, path_length),
         // Nothing a caller wrote reaches this: a descriptor is placed by the emitter, so a kind
         // no one knows means this compiler wrote it rather than that a document said something.
@@ -348,8 +350,9 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     }
 }
 
-/// A list is written as an array, its elements in the order it holds them.
-unsafe fn list(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+/// A list is written as an array, its elements in the order it holds them; a set is one too, in
+/// the order its members are written in, with what was written twice held once.
+unsafe fn list(value: u32, descriptor: u32, path: u32, path_length: u32, unique: bool) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_ARRAY {
         issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an array");
@@ -367,11 +370,55 @@ unsafe fn list(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 
         }
         __souther_list_set(cell, i, read);
     }
-    if whole {
-        cell
-    } else {
-        0
+    if !whole {
+        return 0;
     }
+    if unique {
+        return sorted_and_deduplicated(cell, descriptor);
+    }
+    cell
+}
+
+/// The members of a set, in the order they are written in, each held once.
+///
+/// Sorted here rather than on the way out because what a set is does not depend on how it was
+/// written: two documents listing the same members are one set, and a set that only settled its
+/// order at the boundary would compare as two.
+unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
+    let element = descriptor::member(descriptor, 0);
+    let held = __souther_list_length(cell);
+    // An insertion sort: a set is written out by hand and is small, and the arena has nowhere to
+    // put the second half of a merge.
+    for i in 1..held {
+        let mut j = i;
+        while j > 0
+            && order::compare(
+                __souther_list_get(cell, j - 1),
+                __souther_list_get(cell, j),
+                element,
+            ) > 0
+        {
+            let earlier = __souther_list_get(cell, j - 1);
+            __souther_list_set(cell, j - 1, __souther_list_get(cell, j));
+            __souther_list_set(cell, j, earlier);
+            j -= 1;
+        }
+    }
+    let mut kept = 0;
+    for i in 0..held {
+        let each = __souther_list_get(cell, i);
+        if kept == 0
+            || order::compare(__souther_list_get(cell, kept - 1), each, element) != 0
+        {
+            __souther_list_set(cell, kept, each);
+            kept += 1;
+        }
+    }
+    let out = __souther_list(descriptor, kept);
+    for i in 0..kept {
+        __souther_list_set(out, i, __souther_list_get(cell, i));
+    }
+    out
 }
 
 /// Where there is no key to be missing, `null` is the whole of what absence is.
@@ -500,7 +547,7 @@ unsafe fn written(cell: u32, descriptor: u32) {
         KIND_UNIT => write(b"{}"),
         KIND_PRODUCT => fields(cell, descriptor, false),
         KIND_SUM => tagged(cell, descriptor),
-        KIND_LIST => {
+        KIND_LIST | KIND_SET => {
             write(b"[");
             let element = descriptor::member(descriptor, 0);
             for i in 0..__souther_list_length(cell) {

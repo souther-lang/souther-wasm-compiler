@@ -50,6 +50,8 @@ pub const KIND_SUM: u32 = 5;
 pub const KIND_LIST: u32 = 6;
 /// An option, whose one member is what it holds when it holds one.
 pub const KIND_OPTION: u32 = 7;
+/// A set, whose one member is what its elements are.
+pub const KIND_SET: u32 = 8;
 
 /// What kind of type a descriptor describes.
 pub unsafe fn kind(descriptor: u32) -> u32 {

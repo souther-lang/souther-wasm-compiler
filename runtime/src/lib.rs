@@ -27,6 +27,7 @@
 mod descriptor;
 mod issues;
 mod json;
+mod order;
 mod value;
 
 use core::panic::PanicInfo;
