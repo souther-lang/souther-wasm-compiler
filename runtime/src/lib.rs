@@ -26,6 +26,7 @@
 
 mod descriptor;
 mod issues;
+mod kernel;
 mod json;
 mod order;
 mod value;
@@ -217,6 +218,8 @@ pub const REASON_DIVISION_BY_ZERO: u32 = 6;
 /// A value was made inside a behavior that its type says nothing may be. `aux0` is which of the
 /// type's invariants it breaks.
 pub const REASON_INVARIANT_VIOLATION: u32 = 8;
+/// An index or a count outside what the operation admits. `aux0` is what was asked for.
+pub const REASON_OUT_OF_RANGE: u32 = 9;
 /// A match ran out of arms. The checker settles that one always answers, so reaching this means
 /// the emitter tested for the wrong thing rather than that the model left a case out.
 pub const REASON_NO_ARM: u32 = 7;

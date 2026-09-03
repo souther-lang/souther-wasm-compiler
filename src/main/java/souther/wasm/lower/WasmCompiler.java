@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import souther.compiler.core.Core;
+import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedImplementation;
@@ -442,6 +443,10 @@ public final class WasmCompiler {
          * be resolving what was resolved already.
          */
         private void call(BodyWriter out, Core.Call call) {
+            if (call.fn() instanceof Core.Reached.OfKernel intrinsic) {
+                kernel(out, call, intrinsic.kernel());
+                return;
+            }
             if (!(call.fn() instanceof Core.Reached.OfDeclaration declaration)) {
                 throw new NotLowered(writing + " reaches " + call.fn()
                         + ", and this backend reaches a helper and a behavior");
@@ -463,6 +468,59 @@ public final class WasmCompiler {
             }
             out.call(index);
         }
+
+        /**
+         * An operation the standard library declares as intrinsic.
+         *
+         * <p>The arguments go over in the order the library's signature writes them. Where the
+         * operation builds a list, the descriptor of what it builds follows: what a `List.reverse`
+         * answers is a list of the same type it was handed, and the runtime is told which rather
+         * than working it out from a value it may have none of.
+         */
+        private void kernel(BodyWriter out, Core.Call call, Kernel kernel) {
+            String operation = switch (kernel) {
+                case STRING_LENGTH -> RuntimeAbi.Kernels.STRING_LENGTH;
+                case STRING_SLICE -> RuntimeAbi.Kernels.STRING_SLICE;
+                case STRING_APPEND -> RuntimeAbi.Kernels.STRING_APPEND;
+                case STRING_REVERSE -> RuntimeAbi.Kernels.STRING_REVERSE;
+                case STRING_REPEAT -> RuntimeAbi.Kernels.STRING_REPEAT;
+                case STRING_CONTAINS -> RuntimeAbi.Kernels.STRING_CONTAINS;
+                case STRING_STARTS_WITH -> RuntimeAbi.Kernels.STRING_STARTS_WITH;
+                case STRING_ENDS_WITH -> RuntimeAbi.Kernels.STRING_ENDS_WITH;
+                case STRING_TRIM -> RuntimeAbi.Kernels.STRING_TRIM;
+                case STRING_FROM_INT -> RuntimeAbi.Kernels.STRING_FROM_INT;
+                case STRING_SPLIT -> RuntimeAbi.Kernels.STRING_SPLIT;
+                case STRING_JOIN -> RuntimeAbi.Kernels.STRING_JOIN;
+                case STRING_CONCAT -> RuntimeAbi.Kernels.STRING_CONCAT;
+                case STRING_REPLACE -> RuntimeAbi.Kernels.STRING_REPLACE;
+                case STRING_CHARACTERS -> RuntimeAbi.Kernels.STRING_CHARACTERS;
+                case STRING_CODE_POINTS -> RuntimeAbi.Kernels.STRING_CODE_POINTS;
+                case INT_ADD -> RuntimeAbi.Kernels.INT_ADD;
+                case INT_SUBTRACT -> RuntimeAbi.Kernels.INT_SUBTRACT;
+                case INT_MULTIPLY -> RuntimeAbi.Kernels.INT_MULTIPLY;
+                case INT_COMPARE -> RuntimeAbi.Kernels.INT_COMPARE;
+                case INT_FLOOR_MOD -> RuntimeAbi.Kernels.INT_FLOOR_MOD;
+                case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
+                case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
+                case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
+                case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
+                case LIST_RANGE_INCLUSIVE -> RuntimeAbi.Kernels.LIST_RANGE_INCLUSIVE;
+                default -> throw new NotLowered(writing + " reaches " + kernel
+                        + ", which this backend does not write yet");
+            };
+            for (Core argument : call.args()) {
+                value(out, argument);
+            }
+            if (BUILDS_A_LIST.contains(kernel)) {
+                out.constant(shapes.of(call.type()));
+            }
+            out.call(calls.of(operation));
+        }
+
+        /** The kernels answering a list, which are the ones told what list to build. */
+        private static final Set<Kernel> BUILDS_A_LIST = Set.of(
+                Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
+                Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE);
 
         /**
          * A match, as one condition per arm over the value it is given.

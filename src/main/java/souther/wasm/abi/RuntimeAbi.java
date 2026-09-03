@@ -216,6 +216,73 @@ public final class RuntimeAbi {
     /** {@code (i32 cell) -> i32}: what an option holds, asked where it holds something. */
     public static final String HELD = "__souther_held";
 
+    /**
+     * What the standard library declares as intrinsic, by the kernel it is.
+     *
+     * <p>Each takes its arguments in the order the library's own signature writes them, so nothing
+     * is rearranged between a call site and the operation. Where one builds a list, it is handed
+     * the descriptor of the list's type after those, because the list it makes is of a type only
+     * the declaration knows.
+     */
+    public static final class Kernels {
+
+        private Kernels() {
+        }
+
+        /** {@code (i32 s) -> i32}. */
+        public static final String STRING_LENGTH = "__souther_string_size";
+        /** {@code (i32 from, i32 to, i32 s) -> i32}. */
+        public static final String STRING_SLICE = "__souther_string_slice";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String STRING_APPEND = "__souther_string_append";
+        /** {@code (i32 s) -> i32}. */
+        public static final String STRING_REVERSE = "__souther_string_reverse";
+        /** {@code (i32 n, i32 s) -> i32}. */
+        public static final String STRING_REPEAT = "__souther_string_repeat";
+        /** {@code (i32 sub, i32 s) -> i32}. */
+        public static final String STRING_CONTAINS = "__souther_string_contains";
+        /** {@code (i32 prefix, i32 s) -> i32}. */
+        public static final String STRING_STARTS_WITH = "__souther_string_starts_with";
+        /** {@code (i32 suffix, i32 s) -> i32}. */
+        public static final String STRING_ENDS_WITH = "__souther_string_ends_with";
+        /** {@code (i32 s) -> i32}. */
+        public static final String STRING_TRIM = "__souther_string_trim";
+        /** {@code (i32 n) -> i32}. */
+        public static final String STRING_FROM_INT = "__souther_string_from_int";
+        /** {@code (i32 sep, i32 s, i32 descriptor) -> i32}. */
+        public static final String STRING_SPLIT = "__souther_string_split";
+        /** {@code (i32 sep, i32 xs) -> i32}. */
+        public static final String STRING_JOIN = "__souther_string_join";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String STRING_CONCAT = "__souther_string_concat_all";
+        /** {@code (i32 target, i32 replacement, i32 s) -> i32}. */
+        public static final String STRING_REPLACE = "__souther_string_replace";
+        /** {@code (i32 s, i32 descriptor) -> i32}. */
+        public static final String STRING_CHARACTERS = "__souther_string_characters";
+        /** {@code (i32 s, i32 descriptor) -> i32}. */
+        public static final String STRING_CODE_POINTS = "__souther_string_code_points";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String INT_ADD = "__souther_int_add";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String INT_SUBTRACT = "__souther_int_subtract";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String INT_MULTIPLY = "__souther_int_multiply";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String INT_COMPARE = "__souther_int_compare";
+        /** {@code (i32 dividend, i32 divisor) -> i32}. */
+        public static final String INT_FLOOR_MOD = "__souther_int_floor_mod";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String LIST_LENGTH = "__souther_list_size";
+        /** {@code (i32 xs, i32 descriptor) -> i32}. */
+        public static final String LIST_REVERSE = "__souther_list_reverse";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String LIST_SUM = "__souther_list_sum";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String LIST_PRODUCT = "__souther_list_product";
+        /** {@code (i32 from, i32 to, i32 descriptor) -> i32}. */
+        public static final String LIST_RANGE_INCLUSIVE = "__souther_list_range";
+    }
+
     /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
     public static final String CONCAT = "__souther_concat";
 

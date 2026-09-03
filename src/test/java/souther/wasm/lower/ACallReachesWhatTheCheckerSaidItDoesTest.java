@@ -142,9 +142,9 @@ class ACallReachesWhatTheCheckerSaidItDoesTest {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module counting
 
-                behavior evened : (n: Int) -> Int
+                behavior shouted : (s: String) -> String
 
-                let evened (n) = Int.floorMod(n, 2)
+                let shouted (s) = String.uppercase(s)
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
