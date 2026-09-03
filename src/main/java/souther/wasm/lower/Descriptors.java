@@ -39,6 +39,7 @@ final class Descriptors {
     private static final int KIND_OPTION = 7;
     private static final int KIND_SET = 8;
     private static final int KIND_MAP = 9;
+    private static final int KIND_ENUMERATION = 10;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -76,6 +77,7 @@ final class Descriptors {
             case Type.ListOf list -> holding(KIND_LIST, list.element());
             case Type.OptionOf option -> holding(KIND_OPTION, option.element());
             case Type.SetOf set -> holding(KIND_SET, set.element());
+            case Type.Union union -> alternatives(null, List.copyOf(union.members()));
             case Type.MapOf map -> {
                 // A key is written as the name of an object's member, so only a type that is
                 // already text is one this backend writes. What a date or a declared key is
@@ -126,10 +128,27 @@ final class Descriptors {
                     .toList());
             // A sum's cases are its leaves: a case written as another sum is carried here as the
             // cases under it, so nothing nested reaches this and the tag always names a leaf.
-            case CheckedData.Sum choice -> composite(KIND_SUM, name, choice.cases().stream()
-                    .map(each -> new Member(each.name(), new Type.Ref(each)))
-                    .toList());
+            case CheckedData.Sum choice -> alternatives(name, choice.cases());
         };
+    }
+
+    /**
+     * A set of alternatives, in the form the set travels as.
+     *
+     * <p>Where every one of them carries nothing but which it is, the value written is the name
+     * itself; where any carries something of its own, the name stands beside it under a key. That
+     * is the language's rule about how a set of alternatives crosses, and both backends have to
+     * read it the same way or one set is two documents.
+     *
+     * @param name the type the set is declared as, or null where nobody named the members together
+     */
+    private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members) {
+        boolean carriesNothing = !members.isEmpty() && members.stream().allMatch(
+                each -> each instanceof TypeSymbol.AtModule declared
+                        && program.declaration(declared).data() instanceof CheckedData.Unit);
+        return composite(carriesNothing ? KIND_ENUMERATION : KIND_SUM, name, members.stream()
+                .map(each -> new Member(each.name(), new Type.Ref(each)))
+                .toList());
     }
 
     /** A field of a shape, or a case of a sum: what it is called and what it holds. */
@@ -184,7 +203,9 @@ final class Descriptors {
         // A product carries its own name and the slot of what checks it, after its fields.
         boolean product = kind == KIND_PRODUCT;
         int descriptor = fragment.reserve(4 + 4 + 12 * members.size() + (product ? 12 : 0));
-        byName.put(name, descriptor);
+        if (name != null) {
+            byName.put(name, descriptor);
+        }
 
         List<int[]> written = new ArrayList<>();
         for (Member member : members) {

@@ -45,8 +45,10 @@ pub const KIND_STRING: u32 = 2;
 pub const KIND_UNIT: u32 = 3;
 /// A type written as fields.
 pub const KIND_PRODUCT: u32 = 4;
-/// A type written as cases.
+/// A type written as cases, at least one of which carries something of its own.
 pub const KIND_SUM: u32 = 5;
+/// A set of alternatives that each carry nothing but which one they are, so the value is the tag.
+pub const KIND_ENUMERATION: u32 = 10;
 /// A list, whose one member is what its elements are.
 pub const KIND_LIST: u32 = 6;
 /// An option, whose one member is what it holds when it holds one.

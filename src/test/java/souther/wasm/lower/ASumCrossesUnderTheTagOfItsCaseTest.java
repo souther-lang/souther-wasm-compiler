@@ -79,7 +79,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
     }
 
     @Test
-    void carriesACaseThatHasNoFieldsAsTheTagAlone() {
+    void carriesASetWhoseAlternativesCarryNothingAsTheNameAlone() {
         Running module = compiled("""
                 module lighting
 
@@ -94,8 +94,9 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
                 let shown (s) = s
                 """);
 
-        assertThat(answerOf(module, "lighting.shown", "[{\"type\": \"Green\"}]"))
-                .isEqualTo("{\"value\":{\"type\":\"Green\"}}");
+        // Nothing to stand beside, so nothing stands beside it.
+        assertThat(answerOf(module, "lighting.shown", "[\"Green\"]"))
+                .isEqualTo("{\"value\":\"Green\"}");
     }
 
     @Test

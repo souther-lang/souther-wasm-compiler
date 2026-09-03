@@ -358,6 +358,8 @@ public final class WasmCompiler {
                     out.call(calls.of(RuntimeAbi.SOME));
                 }
                 case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
+                case Core.UnitValue only -> out.constant(shapes.ofDeclared(asDeclared(only.data())))
+                        .call(calls.of(RuntimeAbi.UNIT));
                 case Core.Construct made -> {
                     int record = scratch();
                     out.constant(shapes.ofDeclared(made.typeName()))

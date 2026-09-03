@@ -18,8 +18,8 @@
 //! not write, which is the whole thing this order exists to stop.
 
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET,
-    KIND_STRING, KIND_SUM, KIND_UNIT,
+    self, KIND_BOOL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT,
+    KIND_SET, KIND_STRING, KIND_SUM, KIND_UNIT,
 };
 use crate::value;
 
@@ -37,6 +37,9 @@ pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
     let b = rank(right, descriptor);
     if a != b {
         return if a < b { -1 } else { 1 };
+    }
+    if descriptor::kind(descriptor) == KIND_ENUMERATION {
+        return tags(left, right, descriptor);
     }
     match a {
         RANK_NULL | RANK_FALSE | RANK_TRUE => 0,
@@ -77,6 +80,8 @@ unsafe fn rank(cell: u32, descriptor: u32) -> i32 {
                 rank(held(cell), descriptor::member(descriptor, 0))
             }
         }
+        // An alternative that carries nothing is written as its name, which is a string.
+        KIND_ENUMERATION => RANK_STRING,
         KIND_UNIT | KIND_PRODUCT | KIND_SUM | KIND_MAP => RANK_OBJECT,
         _ => RANK_OBJECT,
     }
@@ -207,6 +212,13 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
     } else {
         0
     }
+}
+
+/// Two alternatives that carry nothing, by the names they are written as.
+unsafe fn tags(left: u32, right: u32, descriptor: u32) -> i32 {
+    let (a, a_length) = descriptor::name(descriptor, case_of(left, descriptor));
+    let (b, b_length) = descriptor::name(descriptor, case_of(right, descriptor));
+    bytes_as_units(a, a_length, b, b_length)
 }
 
 unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {

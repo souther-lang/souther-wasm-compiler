@@ -27,8 +27,8 @@
 //! before it runs, so what a refused place leaves behind is never stood in for.
 
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET,
-    KIND_STRING, KIND_SUM, KIND_UNIT,
+    self, KIND_BOOL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT,
+    KIND_SET, KIND_STRING, KIND_SUM, KIND_UNIT,
 };
 use crate::order;
 use crate::issues::{
@@ -365,6 +365,7 @@ pub unsafe extern "C" fn __souther_read(
         KIND_UNIT => unit(value, descriptor, path, path_length),
         KIND_PRODUCT => product(value, descriptor, path, path_length),
         KIND_SUM => sum(value, descriptor, path, path_length),
+        KIND_ENUMERATION => enumeration(value, descriptor, path, path_length),
         KIND_LIST => list(value, descriptor, path, path_length, false),
         KIND_SET => list(value, descriptor, path, path_length, true),
         KIND_MAP => map(value, descriptor, path, path_length),
@@ -663,6 +664,34 @@ unsafe fn option(value: u32, descriptor: u32, path: u32, path_length: u32) -> u3
     __souther_some(held)
 }
 
+/// A set of alternatives that each carry nothing is written as the name of the one it is.
+///
+/// Nothing to stand beside, so nothing stands beside it: the tag is the value rather than a key in
+/// an object holding the value.
+unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_STRING {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"a case");
+        return 0;
+    }
+    let held = json::__souther_json_bytes(value);
+    let held_length = json::__souther_json_length(value);
+    for i in 0..descriptor::arity(descriptor) {
+        let (case, case_length) = descriptor::name(descriptor, i);
+        if same(case, case_length, held, held_length) {
+            return __souther_unit(descriptor::member(descriptor, i));
+        }
+    }
+    issues::issue_of(
+        CODE_NOT_ALLOWED,
+        path,
+        path_length,
+        (held, held_length),
+        (b"a case".as_ptr() as u32, 6),
+    );
+    0
+}
+
 /// A value of a sum is written as its case, with the case's name under `type`.
 unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
@@ -777,6 +806,7 @@ unsafe fn written(cell: u32, descriptor: u32) {
         KIND_UNIT => write(b"{}"),
         KIND_PRODUCT => fields(cell, descriptor, false),
         KIND_SUM => tagged(cell, descriptor),
+        KIND_ENUMERATION => named(cell, descriptor),
         KIND_LIST | KIND_SET => {
             write(b"[");
             let element = descriptor::member(descriptor, 0);
@@ -838,6 +868,19 @@ unsafe fn tagged(cell: u32, descriptor: u32) {
             } else {
                 write(b"}");
             }
+            return;
+        }
+    }
+    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64);
+}
+
+/// The name of the alternative a value is, which for a set that carries nothing is the whole of it.
+unsafe fn named(cell: u32, descriptor: u32) {
+    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+    for i in 0..descriptor::arity(descriptor) {
+        if descriptor::member(descriptor, i) == held {
+            let (tag, tag_length) = descriptor::name(descriptor, i);
+            json::__souther_json_write_string(tag, tag_length);
             return;
         }
     }
