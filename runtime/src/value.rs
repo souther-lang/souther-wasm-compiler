@@ -27,7 +27,8 @@
 //! before it runs, so what a refused place leaves behind is never stood in for.
 
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_INT, KIND_PRODUCT, KIND_STRING, KIND_SUM, KIND_UNIT,
+    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_OPTION, KIND_PRODUCT, KIND_STRING, KIND_SUM,
+    KIND_UNIT,
 };
 use crate::issues::{
     self, CODE_INVALID_SIZE, CODE_MISSING_FIELD, CODE_NOT_ALLOWED, CODE_OUT_OF_RANGE,
@@ -46,6 +47,12 @@ pub const TAG_BOOL: u32 = 2;
 pub const TAG_STRING: u32 = 3;
 /// A value written as fields. `+4` is which shape, and the payload is one pointer per field.
 pub const TAG_RECORD: u32 = 4;
+/// A list. `+8` is how many elements, and the pointers follow.
+pub const TAG_LIST: u32 = 5;
+/// An option holding something, whose payload is the pointer to it.
+pub const TAG_SOME: u32 = 6;
+/// An option holding nothing.
+pub const TAG_NONE: u32 = 7;
 
 const HEADER: usize = 8;
 
@@ -134,6 +141,51 @@ pub unsafe extern "C" fn __souther_record_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 * index as usize) as *const u32)
 }
 
+/// A list of that many elements, with nothing in them yet.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list(descriptor: u32, length: u32) -> u32 {
+    let cell = header(TAG_LIST, descriptor);
+    let _ = alloc(4 + 4 * length);
+    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, length);
+    cell
+}
+
+/// Puts a value at a position of a list.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_set(cell: u32, index: u32, value: u32) {
+    core::ptr::write_unaligned(
+        (cell as usize + HEADER + 4 + 4 * index as usize) as *mut u32,
+        value,
+    );
+}
+
+/// How many elements a list holds.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_length(cell: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
+}
+
+/// The value at a position of a list.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_get(cell: u32, index: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER + 4 + 4 * index as usize) as *const u32)
+}
+
+/// An option holding a value.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_some(value: u32) -> u32 {
+    let cell = header(TAG_SOME, 0);
+    let _ = alloc(4);
+    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, value);
+    cell
+}
+
+/// An option holding nothing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_none() -> u32 {
+    header(TAG_NONE, 0)
+}
+
 /// Checks that what a caller handed in is a call of a behavior taking this many parameters.
 ///
 /// A call's arguments are one JSON array, in the order the behavior declares its parameters.
@@ -180,6 +232,8 @@ pub unsafe extern "C" fn __souther_read(
         KIND_UNIT => unit(value, descriptor, path, path_length),
         KIND_PRODUCT => product(value, descriptor, path, path_length),
         KIND_SUM => sum(value, descriptor, path, path_length),
+        KIND_LIST => list(value, descriptor, path, path_length),
+        KIND_OPTION => option(value, descriptor, path, path_length),
         // Nothing a caller wrote reaches this: a descriptor is placed by the emitter, so a kind
         // no one knows means this compiler wrote it rather than that a document said something.
         other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, 0),
@@ -267,14 +321,21 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     let mut whole = true;
     for i in 0..descriptor::arity(descriptor) {
         let (field, field_length) = descriptor::name(descriptor, i);
-        let (at, at_length) = below(path, path_length, field, field_length);
+        let (at, at_length) = below(path, path_length, (field, field_length));
+        let member = descriptor::member(descriptor, i);
         let written = entry(value, field, field_length);
         if written == 0 {
+            // An optional field has a key to be missing, and its being missing is what absence is
+            // written as there — not `null`, which is what absence is where there is no key.
+            if descriptor::kind(member) == KIND_OPTION {
+                __souther_record_set(cell, i, __souther_none());
+                continue;
+            }
             issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a field");
             whole = false;
             continue;
         }
-        let read = __souther_read(written, descriptor::member(descriptor, i), at, at_length);
+        let read = __souther_read(written, member, at, at_length);
         if read == 0 {
             whole = false;
         }
@@ -287,6 +348,44 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     }
 }
 
+/// A list is written as an array, its elements in the order it holds them.
+unsafe fn list(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_ARRAY {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an array");
+        return 0;
+    }
+    let held = json::__souther_json_length(value);
+    let cell = __souther_list(descriptor, held);
+    let element = descriptor::member(descriptor, 0);
+    let mut whole = true;
+    for i in 0..held {
+        let (at, at_length) = below(path, path_length, decimal(i));
+        let read = __souther_read(json::__souther_json_element(value, i), element, at, at_length);
+        if read == 0 {
+            whole = false;
+        }
+        __souther_list_set(cell, i, read);
+    }
+    if whole {
+        cell
+    } else {
+        0
+    }
+}
+
+/// Where there is no key to be missing, `null` is the whole of what absence is.
+unsafe fn option(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    if json::__souther_json_tag(value) == json::TAG_NULL {
+        return __souther_none();
+    }
+    let held = __souther_read(value, descriptor::member(descriptor, 0), path, path_length);
+    if held == 0 {
+        return 0;
+    }
+    __souther_some(held)
+}
+
 /// A value of a sum is written as its case, with the case's name under `type`.
 unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
@@ -296,22 +395,12 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     }
     let written = entry(value, DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32);
     if written == 0 {
-        let (at, at_length) = below(
-            path,
-            path_length,
-            DISCRIMINATOR.as_ptr() as u32,
-            DISCRIMINATOR.len() as u32,
-        );
+        let (at, at_length) = below(path, path_length, discriminator());
         issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a case");
         return 0;
     }
     if json::__souther_json_tag(written) != json::TAG_STRING {
-        let (at, at_length) = below(
-            path,
-            path_length,
-            DISCRIMINATOR.as_ptr() as u32,
-            DISCRIMINATOR.len() as u32,
-        );
+        let (at, at_length) = below(path, path_length, discriminator());
         issues::issue(
             CODE_TYPE_MISMATCH,
             at,
@@ -329,12 +418,7 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
             return __souther_read(value, descriptor::member(descriptor, i), path, path_length);
         }
     }
-    let (at, at_length) = below(
-        path,
-        path_length,
-        DISCRIMINATOR.as_ptr() as u32,
-        DISCRIMINATOR.len() as u32,
-    );
+    let (at, at_length) = below(path, path_length, discriminator());
     issues::issue_of(
         CODE_NOT_ALLOWED,
         at,
@@ -348,6 +432,11 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
 /// The key a sum's case is named under. ADR-0004's derived discriminator, which is what the JVM
 /// backend's derived codec reads and writes.
 const DISCRIMINATOR: &[u8] = b"type";
+
+/// Where the discriminator's name is, for a path built through it.
+fn discriminator() -> (u32, u32) {
+    (DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32)
+}
 
 /// What an object wrote at a key, or nothing.
 unsafe fn entry(object: u32, name: u32, name_length: u32) -> u32 {
@@ -366,7 +455,8 @@ unsafe fn entry(object: u32, name: u32, name_length: u32) -> u32 {
 }
 
 /// The JSON pointer of a place inside another, written into the arena.
-unsafe fn below(path: u32, path_length: u32, step: u32, step_length: u32) -> (u32, u32) {
+unsafe fn below(path: u32, path_length: u32, step: (u32, u32)) -> (u32, u32) {
+    let (step, step_length) = step;
     let total = path_length + 1 + step_length;
     let at = alloc(total);
     core::ptr::copy_nonoverlapping(path as *const u8, at as *mut u8, path_length as usize);
@@ -410,6 +500,27 @@ unsafe fn written(cell: u32, descriptor: u32) {
         KIND_UNIT => write(b"{}"),
         KIND_PRODUCT => fields(cell, descriptor, false),
         KIND_SUM => tagged(cell, descriptor),
+        KIND_LIST => {
+            write(b"[");
+            let element = descriptor::member(descriptor, 0);
+            for i in 0..__souther_list_length(cell) {
+                if i > 0 {
+                    write(b",");
+                }
+                written(__souther_list_get(cell, i), element);
+            }
+            write(b"]");
+        }
+        KIND_OPTION => {
+            if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
+                write(b"null");
+            } else {
+                written(
+                    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32),
+                    descriptor::member(descriptor, 0),
+                );
+            }
+        }
         other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
     }
 }
@@ -444,14 +555,25 @@ unsafe fn fields(cell: u32, descriptor: u32, opened: bool) {
     if !opened {
         write(b"{");
     }
+    let mut written_any = opened;
     for i in 0..descriptor::arity(descriptor) {
-        if opened || i > 0 {
+        let member = descriptor::member(descriptor, i);
+        let held = __souther_record_get(cell, i);
+        // An option in a field is absent by having no key, which is the way round from an option
+        // anywhere else. Writing `null` here would say the key was there holding nothing.
+        if descriptor::kind(member) == KIND_OPTION
+            && core::ptr::read_unaligned(held as usize as *const u32) == TAG_NONE
+        {
+            continue;
+        }
+        if written_any {
             write(b",");
         }
+        written_any = true;
         let (field, field_length) = descriptor::name(descriptor, i);
         json::__souther_json_write_string(field, field_length);
         write(b":");
-        written(__souther_record_get(cell, i), descriptor::member(descriptor, i));
+        written(held, member);
     }
     write(b"}");
 }

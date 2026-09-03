@@ -33,6 +33,8 @@ final class Descriptors {
     private static final int KIND_UNIT = 3;
     private static final int KIND_PRODUCT = 4;
     private static final int KIND_SUM = 5;
+    private static final int KIND_LIST = 6;
+    private static final int KIND_OPTION = 7;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -63,6 +65,8 @@ final class Descriptors {
             case Type.Prim.STRING -> scalar(KIND_STRING);
             case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule named ->
                     ofDeclared(named);
+            case Type.ListOf list -> holding(KIND_LIST, list.element());
+            case Type.OptionOf option -> holding(KIND_OPTION, option.element());
             default -> throw new NotLowered("a " + type
                     + ", which this backend does not write yet — it writes a scalar, a shape and a sum");
         };
@@ -107,6 +111,24 @@ final class Descriptors {
 
     /** A field of a shape, or a case of a sum: what it is called and what it holds. */
     private record Member(String name, Type type) {
+    }
+
+    /**
+     * A descriptor for a type whose one member has no name.
+     *
+     * <p>Written with the same shape as a product's or a sum's, so that everything with members is
+     * read the same way, and with an empty name because nothing names what a list holds.
+     */
+    private int holding(int kind, Type element) {
+        int member = of(element);
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        new WasmWriter(table)
+                .writeLittleEndian4(kind)
+                .writeLittleEndian4(1)
+                .writeLittleEndian4(0)
+                .writeLittleEndian4(0)
+                .writeLittleEndian4(member);
+        return fragment.place(table.toByteArray());
     }
 
     private int scalar(int kind) {

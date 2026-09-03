@@ -228,6 +228,24 @@ public final class WasmCompiler {
                     out.constant(shapes.positionOf(shapeOf(read.target()), read.field()))
                             .call(calls.of(RuntimeAbi.RECORD_GET));
                 }
+                case Core.ListLit made -> {
+                    int list = scratch();
+                    out.constant(shapes.of(made.type()))
+                            .constant(made.elements().size())
+                            .call(calls.of(RuntimeAbi.LIST))
+                            .localSet(list);
+                    for (int i = 0; i < made.elements().size(); i++) {
+                        out.localGet(list).constant(i);
+                        value(out, made.elements().get(i));
+                        out.call(calls.of(RuntimeAbi.LIST_SET));
+                    }
+                    out.localGet(list);
+                }
+                case Core.OptionSome some -> {
+                    value(out, some.value());
+                    out.call(calls.of(RuntimeAbi.SOME));
+                }
+                case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {

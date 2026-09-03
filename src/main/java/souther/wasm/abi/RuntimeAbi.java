@@ -159,6 +159,24 @@ public final class RuntimeAbi {
     /** {@code (i32 descriptor) -> i32}: the one value of a type that has one. */
     public static final String UNIT = "__souther_unit";
 
+    /** {@code (i32 descriptor, i32 length) -> i32}: a list of that many, its places empty. */
+    public static final String LIST = "__souther_list";
+
+    /** {@code (i32 cell, i32 index, i32 value) -> ()}: puts a value at a position of a list. */
+    public static final String LIST_SET = "__souther_list_set";
+
+    /** {@code (i32 cell) -> i32}: how many elements a list holds. */
+    public static final String LIST_LENGTH = "__souther_list_length";
+
+    /** {@code (i32 cell, i32 index) -> i32}: the value at a position of a list. */
+    public static final String LIST_GET = "__souther_list_get";
+
+    /** {@code (i32 value) -> i32}: an option holding that. */
+    public static final String SOME = "__souther_some";
+
+    /** {@code () -> i32}: an option holding nothing. */
+    public static final String NONE = "__souther_none";
+
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
 

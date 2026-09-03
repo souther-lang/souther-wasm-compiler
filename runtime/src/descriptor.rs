@@ -22,7 +22,14 @@
 //! kind SUM
 //! +4  u32 how many cases
 //! +8  per case: u32 where its tag is, u32 how long, u32 the case's own descriptor
+//!
+//! kind LIST / OPTION
+//! +4  u32 one
+//! +8  u32 nothing, u32 nothing, u32 the descriptor of what it holds
 //! ```
+//!
+//! A list and an option are written with one member so that everything with members is read the
+//! same way. What their member is called is nothing, because nothing names it.
 //!
 //! A unit carries its descriptor in its cell and a product carries its own, so which case of a sum
 //! a value is can be asked of the value: the case whose descriptor the cell holds.
@@ -39,6 +46,10 @@ pub const KIND_UNIT: u32 = 3;
 pub const KIND_PRODUCT: u32 = 4;
 /// A type written as cases.
 pub const KIND_SUM: u32 = 5;
+/// A list, whose one member is what its elements are.
+pub const KIND_LIST: u32 = 6;
+/// An option, whose one member is what it holds when it holds one.
+pub const KIND_OPTION: u32 = 7;
 
 /// What kind of type a descriptor describes.
 pub unsafe fn kind(descriptor: u32) -> u32 {
