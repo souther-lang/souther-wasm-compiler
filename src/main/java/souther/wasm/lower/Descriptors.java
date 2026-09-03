@@ -40,6 +40,7 @@ final class Descriptors {
     private static final int KIND_SET = 8;
     private static final int KIND_MAP = 9;
     private static final int KIND_ENUMERATION = 10;
+    private static final int KIND_TUPLE = 11;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -78,6 +79,13 @@ final class Descriptors {
             case Type.ListOf list -> holding(KIND_LIST, list.element());
             case Type.OptionOf option -> holding(KIND_OPTION, option.element());
             case Type.SetOf set -> holding(KIND_SET, set.element());
+            case Type.TupleOf together -> {
+                List<int[]> places = new ArrayList<>();
+                for (Type each : together.elements()) {
+                    places.add(new int[] {0, 0, of(each)});
+                }
+                yield written(KIND_TUPLE, null, places);
+            }
             case Type.Union union -> alternatives(null, List.copyOf(union.members()));
             case Type.MapOf map -> {
                 // A key is written as the name of an object's member, so only a type that is

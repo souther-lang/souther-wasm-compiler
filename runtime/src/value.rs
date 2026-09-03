@@ -28,7 +28,7 @@
 
 use crate::descriptor::{
     self, KIND_BOOL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT,
-    KIND_SET, KIND_STRING, KIND_SUM, KIND_UNIT,
+    KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
 };
 use crate::order;
 use crate::issues::{
@@ -59,6 +59,12 @@ pub const TAG_MAP: u32 = 8;
 /// A block written where a value goes. `+4` is the table slot its body sits in and `+8` is what it
 /// was written among — the values it reads that were bound outside it.
 pub const TAG_CLOSURE: u32 = 9;
+/// Values written together. `+4` is how many, and the pointers follow.
+///
+/// Nothing names them and nothing outside the program sees one: a tuple is how a body carries two
+/// things where one goes, and what crosses a boundary is a shape whose fields have names.
+pub const TAG_TUPLE: u32 = 11;
+
 /// A list still being grown. Not a list: what it holds is followed by room it does not, so a
 /// reader taking it for one would read past what is there.
 pub const TAG_BUILDER: u32 = 10;
@@ -335,6 +341,26 @@ unsafe fn map_of_length(cell: u32, entries: u32) {
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
 }
 
+/// Values written together, with nothing in them yet.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_tuple(held: u32) -> u32 {
+    let cell = header(TAG_TUPLE, held);
+    let _ = alloc(4 * held);
+    cell
+}
+
+/// Puts a value at a place of a tuple.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_tuple_set(cell: u32, index: u32, value: u32) {
+    core::ptr::write_unaligned((cell as usize + HEADER + 4 * index as usize) as *mut u32, value);
+}
+
+/// What a tuple holds at a place.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_tuple_get(cell: u32, index: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER + 4 * index as usize) as *const u32)
+}
+
 /// A block as a value: where its body is, and what it reads from around it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_closure(slot: u32, captured: u32) -> u32 {
@@ -499,6 +525,9 @@ pub unsafe extern "C" fn __souther_read(
         KIND_PRODUCT => product(value, descriptor, path, path_length),
         KIND_SUM => sum(value, descriptor, path, path_length),
         KIND_ENUMERATION => enumeration(value, descriptor, path, path_length),
+        // A tuple is how a body carries two things where one goes. Nothing outside the program is
+        // shown one, so nothing outside writes one either.
+        KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, 0),
         KIND_LIST => list(value, descriptor, path, path_length, false),
         KIND_SET => list(value, descriptor, path, path_length, true),
         KIND_MAP => map(value, descriptor, path, path_length),
@@ -940,6 +969,7 @@ unsafe fn written(cell: u32, descriptor: u32) {
         KIND_PRODUCT => fields(cell, descriptor, false),
         KIND_SUM => tagged(cell, descriptor),
         KIND_ENUMERATION => named(cell, descriptor),
+        KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, cell as u64),
         KIND_LIST | KIND_SET => {
             write(b"[");
             let element = descriptor::member(descriptor, 0);

@@ -19,7 +19,7 @@
 
 use crate::descriptor::{
     self, KIND_BOOL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT,
-    KIND_SET, KIND_STRING, KIND_SUM, KIND_UNIT,
+    KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
 };
 use crate::value;
 
@@ -50,6 +50,19 @@ pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
             } else {
                 ranked(left, right, descriptor::member(descriptor, a))
             }
+        }
+        KIND_TUPLE => {
+            for i in 0..descriptor::arity(descriptor) {
+                let each = ranked(
+                    value::__souther_tuple_get(left, i),
+                    value::__souther_tuple_get(right, i),
+                    descriptor::member(descriptor, i),
+                );
+                if each != 0 {
+                    return each;
+                }
+            }
+            0
         }
         KIND_PRODUCT => {
             for i in 0..descriptor::arity(descriptor) {
@@ -142,6 +155,7 @@ unsafe fn rank(cell: u32, descriptor: u32) -> i32 {
         }
         // An alternative that carries nothing is written as its name, which is a string.
         KIND_ENUMERATION => RANK_STRING,
+        KIND_TUPLE => RANK_ARRAY,
         KIND_UNIT | KIND_PRODUCT | KIND_SUM | KIND_MAP => RANK_OBJECT,
         _ => RANK_OBJECT,
     }

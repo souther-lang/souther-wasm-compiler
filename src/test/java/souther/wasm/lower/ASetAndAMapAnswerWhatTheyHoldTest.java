@@ -132,6 +132,37 @@ class ASetAndAMapAnswerWhatTheyHoldTest {
     }
 
     @Test
+    void goesOutToPairsAndComesBackFromThem() {
+        Running module = compiled("""
+                module counting
+
+                data Tally = { by: Map<String, Int> }
+
+                behavior halved : (t: Tally) -> Tally
+
+                let halved (t) = Tally { by = Map.fromList(
+                    List.map(pair -> {
+                        let (k, n) = pair
+                        (k, n + n)
+                    }, Map.toList(t.by))) }
+
+                behavior first : (t: Tally) -> String
+
+                let first (t) = match List.get(0, Map.toList(t.by)) with
+                    | Some pair -> {
+                        let (k, _) = pair
+                        k
+                    }
+                    | None -> ""
+                """);
+
+        assertThat(answerOf(module, "counting.halved", "[{\"by\":{\"b\":2,\"a\":1}}]"))
+                .isEqualTo("{\"value\":{\"by\":{\"a\":2,\"b\":4}}}");
+        assertThat(answerOf(module, "counting.first", "[{\"by\":{\"b\":2,\"a\":1}}]"))
+                .isEqualTo("{\"value\":\"a\"}");
+    }
+
+    @Test
     void answersWhatAMapHoldsAtAKey() {
         Running module = compiled(MAPS);
 

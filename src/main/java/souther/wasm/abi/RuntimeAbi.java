@@ -159,6 +159,15 @@ public final class RuntimeAbi {
     /** {@code (i32 descriptor) -> i32}: the one value of a type that has one. */
     public static final String UNIT = "__souther_unit";
 
+    /** {@code (i32 held) -> i32}: values written together, with nothing in them yet. */
+    public static final String TUPLE = "__souther_tuple";
+
+    /** {@code (i32 cell, i32 index, i32 value) -> ()}: puts a value at a place of a tuple. */
+    public static final String TUPLE_SET = "__souther_tuple_set";
+
+    /** {@code (i32 cell, i32 index) -> i32}: what a tuple holds at a place. */
+    public static final String TUPLE_GET = "__souther_tuple_get";
+
     /** {@code (i32 slot, i32 captured) -> i32}: a block as a value. */
     public static final String CLOSURE = "__souther_closure";
 
@@ -376,6 +385,10 @@ public final class RuntimeAbi {
         public static final String MAP_INSERT = "__souther_map_insert";
         /** {@code (i32 key, i32 m, i32 descriptor) -> i32}. */
         public static final String MAP_REMOVE = "__souther_map_remove";
+        /** {@code (i32 m, i32 descriptor) -> i32}. */
+        public static final String MAP_TO_LIST = "__souther_map_to_list";
+        /** {@code (i32 entries, i32 descriptor) -> i32}. */
+        public static final String MAP_FROM_LIST = "__souther_map_from_list";
     }
 
     /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */

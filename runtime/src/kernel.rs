@@ -1055,6 +1055,36 @@ pub unsafe extern "C" fn __souther_map_insert(
     out
 }
 
+/// `Map.toList(m)`: a pair per entry, in the order the map holds them.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_to_list(map: u32, descriptor: u32) -> u32 {
+    let held = value::__souther_map_length(map);
+    let out = __souther_list(descriptor, held);
+    for i in 0..held {
+        let pair = value::__souther_tuple(2);
+        value::__souther_tuple_set(pair, 0, value::__souther_map_key(map, i));
+        value::__souther_tuple_set(pair, 1, value::__souther_map_value(map, i));
+        __souther_list_set(out, i, pair);
+    }
+    out
+}
+
+/// `Map.fromList(entries)`: what the pairs say, the last of two at one key standing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_from_list(list: u32, descriptor: u32) -> u32 {
+    let mut out = __souther_map_empty(descriptor);
+    for i in 0..__souther_list_length(list) {
+        let pair = __souther_list_get(list, i);
+        out = __souther_map_insert(
+            value::__souther_tuple_get(pair, 0),
+            value::__souther_tuple_get(pair, 1),
+            out,
+            descriptor,
+        );
+    }
+    out
+}
+
 /// `Map.remove(key, m)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_remove(key: u32, map: u32, descriptor: u32) -> u32 {

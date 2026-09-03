@@ -433,6 +433,22 @@ public final class WasmCompiler {
                     locals.put(bound.binder().binding(), local);
                     value(out, bound.body());
                 }
+                case Core.Tuple together -> {
+                    int pair = scratch();
+                    out.constant(together.elements().size())
+                            .call(calls.of(RuntimeAbi.TUPLE))
+                            .localSet(pair);
+                    for (int i = 0; i < together.elements().size(); i++) {
+                        out.localGet(pair).constant(i);
+                        value(out, together.elements().get(i));
+                        out.call(calls.of(RuntimeAbi.TUPLE_SET));
+                    }
+                    out.localGet(pair);
+                }
+                case Core.TupleGet place -> {
+                    value(out, place.tuple());
+                    out.constant(place.index()).call(calls.of(RuntimeAbi.TUPLE_GET));
+                }
                 case Core.Match chosen -> match(out, chosen);
                 case Core.Block block -> closure(out, block);
                 case Core.Apply applied -> apply(out, applied);
@@ -704,6 +720,8 @@ public final class WasmCompiler {
                 case MAP_SINGLETON -> RuntimeAbi.Kernels.MAP_SINGLETON;
                 case MAP_INSERT -> RuntimeAbi.Kernels.MAP_INSERT;
                 case MAP_REMOVE -> RuntimeAbi.Kernels.MAP_REMOVE;
+                case MAP_TO_LIST -> RuntimeAbi.Kernels.MAP_TO_LIST;
+                case MAP_FROM_LIST -> RuntimeAbi.Kernels.MAP_FROM_LIST;
                 default -> throw new NotLowered(writing + " reaches " + kernel
                         + ", which this backend does not write yet");
             };
@@ -777,7 +795,7 @@ public final class WasmCompiler {
                 Kernel.SET_UNION, Kernel.SET_INTERSECTION, Kernel.SET_DIFFERENCE,
                 Kernel.SET_TO_LIST, Kernel.SET_FROM_LIST,
                 Kernel.MAP_EMPTY, Kernel.MAP_KEYS, Kernel.MAP_VALUES, Kernel.MAP_SINGLETON,
-                Kernel.MAP_INSERT, Kernel.MAP_REMOVE);
+                Kernel.MAP_INSERT, Kernel.MAP_REMOVE, Kernel.MAP_TO_LIST, Kernel.MAP_FROM_LIST);
 
         /**
          * A match, as one condition per arm over the value it is given.
