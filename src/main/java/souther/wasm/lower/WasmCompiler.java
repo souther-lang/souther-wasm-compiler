@@ -358,7 +358,7 @@ public final class WasmCompiler {
                     out.call(calls.of(RuntimeAbi.SOME));
                 }
                 case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
-                case Core.UnitValue only -> out.constant(shapes.ofDeclared(asDeclared(only.data())))
+                case Core.UnitValue only -> out.constant(shapes.ofMember(only.data()))
                         .call(calls.of(RuntimeAbi.UNIT));
                 case Core.Construct made -> {
                     int record = scratch();
@@ -403,6 +403,10 @@ public final class WasmCompiler {
                     value(out, read.target());
                     out.constant(shapes.positionOf(shapeOf(read.target()), read.field()))
                             .call(calls.of(RuntimeAbi.RECORD_GET));
+                }
+                case Core.Neg opposite -> {
+                    value(out, opposite.operand());
+                    out.call(calls.of(RuntimeAbi.NEGATE));
                 }
                 case Core.Binary binary -> binary(out, binary);
                 case Core.If chosen -> {
@@ -502,6 +506,9 @@ public final class WasmCompiler {
                 case INT_MULTIPLY -> RuntimeAbi.Kernels.INT_MULTIPLY;
                 case INT_COMPARE -> RuntimeAbi.Kernels.INT_COMPARE;
                 case INT_FLOOR_MOD -> RuntimeAbi.Kernels.INT_FLOOR_MOD;
+                case INT_DIVIDE -> RuntimeAbi.Kernels.INT_DIVIDE;
+                case INT_TRUNCATING_REMAINDER -> RuntimeAbi.Kernels.INT_TRUNCATING_REMAINDER;
+                case STRING_TO_INT -> RuntimeAbi.Kernels.STRING_TO_INT;
                 case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
                 case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
                 case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
@@ -516,7 +523,36 @@ public final class WasmCompiler {
             if (BUILDS_A_LIST.contains(kernel)) {
                 out.constant(shapes.of(call.type()));
             }
+            String absent = ANSWERS_A_CASE.get(kernel);
+            if (absent != null) {
+                out.constant(shapes.ofMember(caseNamed(call.type(), absent)));
+            }
             out.call(calls.of(operation));
+        }
+
+        /**
+         * The kernels that answer either a value or a named case, and which case each names.
+         *
+         * <p>Written down because the library's own signature writes it: {@code Int.divide} answers
+         * {@code Int | DivisionByZero} and the case is that one. Reading it off the result type as
+         * "the member that is not the value" would be working out what the declaration already
+         * says, and would say something else the day a kernel answers two cases.
+         */
+        private static final Map<Kernel, String> ANSWERS_A_CASE = Map.of(
+                Kernel.INT_DIVIDE, "DivisionByZero",
+                Kernel.INT_TRUNCATING_REMAINDER, "DivisionByZero",
+                Kernel.STRING_TO_INT, "NotANumber");
+
+        /** The alternative of a set that goes by a name. */
+        private static TypeSymbol caseNamed(souther.compiler.types.Type answered, String name) {
+            if (answered instanceof souther.compiler.types.Type.Union alternatives) {
+                for (TypeSymbol member : alternatives.members()) {
+                    if (member.name().equals(name)) {
+                        return member;
+                    }
+                }
+            }
+            throw new NotLowered("a kernel answering " + name + " was typed as " + answered);
         }
 
         /** The kernels answering a list, which are the ones told what list to build. */
@@ -584,7 +620,7 @@ public final class WasmCompiler {
             }
             for (int i = 0; i < atoms.size(); i++) {
                 out.localGet(subject)
-                        .constant(shapes.ofDeclared(asDeclared(atoms.get(i))))
+                        .constant(shapes.ofMember(atoms.get(i)))
                         .call(calls.of(RuntimeAbi.IS));
                 if (i > 0) {
                     // Either of them: an or-pattern answers for each of the leaves it names.
@@ -608,13 +644,6 @@ public final class WasmCompiler {
             }
             out.localSet(local);
             locals.put(arm.binder().binding(), local);
-        }
-
-        private static TypeSymbol.AtModule asDeclared(TypeSymbol name) {
-            if (name instanceof TypeSymbol.AtModule named) {
-                return named;
-            }
-            throw new NotLowered(name + " selects an arm and is not declared by a module");
         }
 
         /**

@@ -186,6 +186,9 @@ public final class RuntimeAbi {
     /** {@code (i32 left, i32 right) -> i32}: the {@code -} operator on {@code Int}. */
     public static final String SUBTRACT = "__souther_subtract";
 
+    /** {@code (i32 cell) -> i32}: the unary {@code -} on {@code Int}. */
+    public static final String NEGATE = "__souther_negate";
+
     /** {@code (i32 left, i32 right) -> i32}: the {@code *} operator on {@code Int}. */
     public static final String MULTIPLY = "__souther_multiply";
 
@@ -271,6 +274,12 @@ public final class RuntimeAbi {
         public static final String INT_COMPARE = "__souther_int_compare";
         /** {@code (i32 dividend, i32 divisor) -> i32}. */
         public static final String INT_FLOOR_MOD = "__souther_int_floor_mod";
+        /** {@code (i32 dividend, i32 divisor, i32 absent) -> i32}. */
+        public static final String INT_DIVIDE = "__souther_int_divide";
+        /** {@code (i32 dividend, i32 divisor, i32 absent) -> i32}. */
+        public static final String INT_TRUNCATING_REMAINDER = "__souther_int_remainder";
+        /** {@code (i32 s, i32 absent) -> i32}. */
+        public static final String STRING_TO_INT = "__souther_string_to_int";
         /** {@code (i32 xs) -> i32}. */
         public static final String LIST_LENGTH = "__souther_list_size";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */

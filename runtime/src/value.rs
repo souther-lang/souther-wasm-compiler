@@ -174,13 +174,23 @@ pub unsafe extern "C" fn __souther_list_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 + 4 * index as usize) as *const u32)
 }
 
-/// Whether a value was made as the type a descriptor describes.
+/// Whether a value is one of the type a descriptor describes.
 ///
-/// A cell holds the descriptor of the type it was made as, and a sum's cases are its leaves, so
-/// which arm of a match a value takes is this asked of each in turn.
+/// A value of a declared type holds the descriptor it was made as, and is that type where the two
+/// are the same one. A scalar holds no descriptor — an `Int` is an `Int` and there is only one —
+/// so it is that type where its tag says so.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
-    u32::from(core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor)
+    let tag = core::ptr::read_unaligned(cell as usize as *const u32);
+    u32::from(match descriptor::kind(descriptor) {
+        KIND_INT => tag == TAG_INT,
+        KIND_BOOL => tag == TAG_BOOL,
+        KIND_STRING => tag == TAG_STRING,
+        KIND_LIST | KIND_SET => tag == TAG_LIST,
+        KIND_MAP => tag == TAG_MAP,
+        KIND_OPTION => tag == TAG_SOME || tag == TAG_NONE,
+        _ => core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor,
+    })
 }
 
 /// Whether an option holds something.
@@ -204,6 +214,17 @@ pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
     match a.checked_add(b) {
         Some(sum) => __souther_int(sum),
         None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+    }
+}
+
+/// The unary `-` on `Int`. Only the sign moves, and the one number that has no opposite an `Int`
+/// holds ends the call rather than coming back as itself.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_negate(cell: u32) -> u32 {
+    let held = __souther_int_value(cell);
+    match held.checked_neg() {
+        Some(opposite) => __souther_int(opposite),
+        None => abort(REASON_INT_OVERFLOW, 0, held as u64, 0),
     }
 }
 

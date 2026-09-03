@@ -305,6 +305,74 @@ pub unsafe extern "C" fn __souther_int_compare(left: u32, right: u32) -> u32 {
     })
 }
 
+/// `Int.divide(dividend, divisor)`: the quotient, or the case a zero divisor is.
+///
+/// A zero divisor is a business case here rather than a model bug — that is what the declaration's
+/// type says — so it is answered with, not aborted on. Told which case by the caller, because
+/// which one the library names is the declaration's answer and not a value's.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_divide(dividend: u32, divisor: u32, absent: u32) -> u32 {
+    let (a, b) = (__souther_int_value(dividend), __souther_int_value(divisor));
+    if b == 0 {
+        return value::__souther_unit(absent);
+    }
+    match a.checked_div(b) {
+        Some(quotient) => __souther_int(quotient),
+        None => abort(crate::REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+    }
+}
+
+/// `Int.truncatingRemainder(dividend, divisor)`: the remainder of a truncating division, so its
+/// sign is the dividend's, or the case a zero divisor is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_remainder(dividend: u32, divisor: u32, absent: u32) -> u32 {
+    let (a, b) = (__souther_int_value(dividend), __souther_int_value(divisor));
+    if b == 0 {
+        return value::__souther_unit(absent);
+    }
+    match a.checked_rem(b) {
+        Some(rest) => __souther_int(rest),
+        None => abort(crate::REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+    }
+}
+
+/// `String.toInt(s)`: the whole number the text is, or the case it is not one.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_string_to_int(text: u32, absent: u32) -> u32 {
+    let bytes = __souther_string_bytes(text);
+    let length = __souther_string_length(text);
+    if length == 0 {
+        return value::__souther_unit(absent);
+    }
+    let negative = core::ptr::read(bytes as *const u8) == b'-';
+    let positive = core::ptr::read(bytes as *const u8) == b'+';
+    let mut at = u32::from(negative || positive);
+    if at == length {
+        return value::__souther_unit(absent);
+    }
+    let mut magnitude: u128 = 0;
+    while at < length {
+        let digit = core::ptr::read((bytes + at) as *const u8);
+        if !digit.is_ascii_digit() {
+            return value::__souther_unit(absent);
+        }
+        magnitude = magnitude * 10 + (digit - b'0') as u128;
+        if magnitude > 1u128 << 63 {
+            return value::__souther_unit(absent);
+        }
+        at += 1;
+    }
+    let limit = if negative { 1u128 << 63 } else { i64::MAX as u128 };
+    if magnitude > limit {
+        return value::__souther_unit(absent);
+    }
+    if negative {
+        __souther_int((magnitude as i128).wrapping_neg() as i64)
+    } else {
+        __souther_int(magnitude as i64)
+    }
+}
+
 /// `Int.floorMod`: the remainder of a floored division, so its sign is the divisor's.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_int_floor_mod(dividend: u32, divisor: u32) -> u32 {

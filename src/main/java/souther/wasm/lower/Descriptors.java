@@ -45,6 +45,7 @@ final class Descriptors {
     private final WasmFragment fragment;
     private final Map<Type, Integer> placed = new HashMap<>();
     private final Map<TypeSymbol.AtModule, Integer> byName = new HashMap<>();
+    private final Map<String, Integer> languageCases = new HashMap<>();
 
     private final ToIntFunction<TypeSymbol.AtModule> checks;
 
@@ -110,6 +111,31 @@ final class Descriptors {
         return product(name).positionOf(field);
     }
 
+    /**
+     * The descriptor of whatever a name in a set of alternatives names.
+     *
+     * <p>A member may be a type of the model, a scalar the language declares, or a case the
+     * language declares on its own — the absence a kernel answers with. The last has no
+     * declaration to read, and is a type with one value by being one.
+     */
+    int ofMember(TypeSymbol name) {
+        return switch (name) {
+            case TypeSymbol.AtModule declared -> ofDeclared(declared);
+            case TypeSymbol.Primitive scalar -> of(scalarNamed(scalar.name()));
+            default -> languageCases.computeIfAbsent(name.name(), each -> scalar(KIND_UNIT));
+        };
+    }
+
+    private static Type scalarNamed(String written) {
+        return switch (written) {
+            case "Int" -> Type.Prim.INT;
+            case "Bool" -> Type.Prim.BOOL;
+            case "String" -> Type.Prim.STRING;
+            default -> throw new NotLowered("a " + written
+                    + " among alternatives, which this backend does not write yet");
+        };
+    }
+
     /** The descriptor of a declared type, by its name. */
     int ofDeclared(TypeSymbol.AtModule name) {
         Integer already = byName.get(name);
@@ -146,9 +172,12 @@ final class Descriptors {
         boolean carriesNothing = !members.isEmpty() && members.stream().allMatch(
                 each -> each instanceof TypeSymbol.AtModule declared
                         && program.declaration(declared).data() instanceof CheckedData.Unit);
-        return composite(carriesNothing ? KIND_ENUMERATION : KIND_SUM, name, members.stream()
-                .map(each -> new Member(each.name(), new Type.Ref(each)))
-                .toList());
+        List<int[]> described = new ArrayList<>();
+        for (TypeSymbol member : members) {
+            byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
+            described.add(new int[] {fragment.place(utf8), utf8.length, ofMember(member)});
+        }
+        return written(carriesNothing ? KIND_ENUMERATION : KIND_SUM, name, described);
     }
 
     /** A field of a shape, or a case of a sum: what it is called and what it holds. */
@@ -200,22 +229,35 @@ final class Descriptors {
      * descriptor being described and neither would ever have an address.
      */
     private int composite(int kind, TypeSymbol.AtModule name, List<Member> members) {
-        // A product carries its own name and the slot of what checks it, after its fields.
-        boolean product = kind == KIND_PRODUCT;
-        int descriptor = fragment.reserve(4 + 4 + 12 * members.size() + (product ? 12 : 0));
-        if (name != null) {
-            byName.put(name, descriptor);
-        }
-
+        int descriptor = reserveFor(kind, name, members.size());
         List<int[]> written = new ArrayList<>();
         for (Member member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
             written.add(new int[] {fragment.place(utf8), utf8.length, of(member.type())});
         }
+        return filled(kind, name, descriptor, written);
+    }
 
+    /** A set of alternatives whose members were described before the descriptor was reserved. */
+    private int written(int kind, TypeSymbol.AtModule name, List<int[]> members) {
+        int descriptor = reserveFor(kind, name, members.size());
+        return filled(kind, name, descriptor, members);
+    }
+
+    private int reserveFor(int kind, TypeSymbol.AtModule name, int members) {
+        // A product carries its own name and the slot of what checks it, after its fields.
+        int descriptor = fragment.reserve(4 + 4 + 12 * members + (kind == KIND_PRODUCT ? 12 : 0));
+        if (name != null) {
+            byName.put(name, descriptor);
+        }
+        return descriptor;
+    }
+
+    private int filled(int kind, TypeSymbol.AtModule name, int descriptor, List<int[]> written) {
+        boolean product = kind == KIND_PRODUCT;
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         WasmWriter out = new WasmWriter(table);
-        out.writeLittleEndian4(kind).writeLittleEndian4(members.size());
+        out.writeLittleEndian4(kind).writeLittleEndian4(written.size());
         for (int[] member : written) {
             out.writeLittleEndian4(member[0])
                     .writeLittleEndian4(member[1])

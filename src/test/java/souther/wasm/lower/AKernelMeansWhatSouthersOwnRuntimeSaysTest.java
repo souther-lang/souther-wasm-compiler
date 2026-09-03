@@ -231,6 +231,34 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     }
 
     @Test
+    void answersTheCaseAKernelNamesWhereItHasNoValue() {
+        Running module = compiled("""
+                module counting
+
+                behavior halved : (a: Int, b: Int) -> Int
+
+                let halved (a, b) = match Int.divide(a, b) with
+                    | Int as q -> q
+                    | DivisionByZero -> 0
+
+                behavior read : (s: String) -> Int
+
+                let read (s) = match String.toInt(s) with
+                    | Int as n -> n
+                    | NotANumber -> -1
+                """);
+
+        assertThat(answerOf(module, "counting.halved", "[7,2]")).isEqualTo(value("3"));
+        assertThat(answerOf(module, "counting.halved", "[7,0]")).isEqualTo(value("0"));
+        for (String text : new String[] {"12", "-12", "+12", "", "x", "1x", "-", "999999999999999999999"}) {
+            Object parsed = Strings.toInt(text);
+            assertThat(answerOf(module, "counting.read", array(quoted(text))))
+                    .describedAs(text)
+                    .isEqualTo(value(parsed instanceof Long held ? held.toString() : "-1"));
+        }
+    }
+
+    @Test
     void saysSoForAnIntrinsicItDoesNotWriteYet() {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module wording
