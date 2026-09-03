@@ -18,8 +18,8 @@
 //! not write, which is the whole thing this order exists to stop.
 
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING,
-    KIND_SUM, KIND_UNIT,
+    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET,
+    KIND_STRING, KIND_SUM, KIND_UNIT,
 };
 use crate::value;
 
@@ -77,7 +77,7 @@ unsafe fn rank(cell: u32, descriptor: u32) -> i32 {
                 rank(held(cell), descriptor::member(descriptor, 0))
             }
         }
-        KIND_UNIT | KIND_PRODUCT | KIND_SUM => RANK_OBJECT,
+        KIND_UNIT | KIND_PRODUCT | KIND_SUM | KIND_MAP => RANK_OBJECT,
         _ => RANK_OBJECT,
     }
 }
@@ -92,6 +92,10 @@ unsafe fn held(cell: u32) -> u32 {
 }
 
 /// Two strings by UTF-16 code unit, which is what a JVM string compares by.
+pub unsafe fn compare_text(left: u32, right: u32) -> i32 {
+    text(left, right)
+}
+
 unsafe fn text(left: u32, right: u32) -> i32 {
     let mut a = Units::over(
         value::__souther_string_bytes(left),
@@ -144,6 +148,9 @@ unsafe fn members(left: u32, right: u32, descriptor: u32) -> i32 {
     if descriptor::kind(descriptor) == KIND_UNIT {
         return 0;
     }
+    if descriptor::kind(descriptor) == KIND_MAP {
+        return entries(left, right, descriptor);
+    }
     if descriptor::kind(descriptor) == KIND_SUM {
         // A sum's members are the tag and then the case's own, so which case each is decides
         // first — by the tag, which is a string like any other.
@@ -167,6 +174,39 @@ unsafe fn members(left: u32, right: u32, descriptor: u32) -> i32 {
         }
     }
     0
+}
+
+/// Two maps: their entries read in key order, key against key and then value against value, with
+/// the one holding fewer first where everything they share agrees.
+unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
+    let values = descriptor::member(descriptor, 1);
+    let a = value::__souther_map_length(left);
+    let b = value::__souther_map_length(right);
+    let shorter = if a < b { a } else { b };
+    for i in 0..shorter {
+        let by_key = text(
+            value::__souther_map_key(left, i),
+            value::__souther_map_key(right, i),
+        );
+        if by_key != 0 {
+            return by_key;
+        }
+        let by_value = compare(
+            value::__souther_map_value(left, i),
+            value::__souther_map_value(right, i),
+            values,
+        );
+        if by_value != 0 {
+            return by_value;
+        }
+    }
+    if a < b {
+        -1
+    } else if a > b {
+        1
+    } else {
+        0
+    }
 }
 
 unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {

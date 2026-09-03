@@ -36,6 +36,7 @@ final class Descriptors {
     private static final int KIND_LIST = 6;
     private static final int KIND_OPTION = 7;
     private static final int KIND_SET = 8;
+    private static final int KIND_MAP = 9;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -69,6 +70,16 @@ final class Descriptors {
             case Type.ListOf list -> holding(KIND_LIST, list.element());
             case Type.OptionOf option -> holding(KIND_OPTION, option.element());
             case Type.SetOf set -> holding(KIND_SET, set.element());
+            case Type.MapOf map -> {
+                // A key is written as the name of an object's member, so only a type that is
+                // already text is one this backend writes. What a date or a declared key is
+                // written as is a rule of its own and is not read off the key's type.
+                if (map.key() != Type.Prim.STRING) {
+                    throw new NotLowered("a map keyed by " + map.key()
+                            + ", and this backend writes one keyed by a String");
+                }
+                yield pair(KIND_MAP, map.key(), map.value());
+            }
             default -> throw new NotLowered("a " + type
                     + ", which this backend does not write yet — it writes a scalar, a shape and a sum");
         };
@@ -130,6 +141,19 @@ final class Descriptors {
                 .writeLittleEndian4(0)
                 .writeLittleEndian4(0)
                 .writeLittleEndian4(member);
+        return fragment.place(table.toByteArray());
+    }
+
+    /** A descriptor for a type with two unnamed members: a map's keys and its values. */
+    private int pair(int kind, Type first, Type second) {
+        int keys = of(first);
+        int values = of(second);
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        new WasmWriter(table)
+                .writeLittleEndian4(kind)
+                .writeLittleEndian4(2)
+                .writeLittleEndian4(0).writeLittleEndian4(0).writeLittleEndian4(keys)
+                .writeLittleEndian4(0).writeLittleEndian4(0).writeLittleEndian4(values);
         return fragment.place(table.toByteArray());
     }
 

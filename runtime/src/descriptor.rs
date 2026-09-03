@@ -52,6 +52,8 @@ pub const KIND_LIST: u32 = 6;
 pub const KIND_OPTION: u32 = 7;
 /// A set, whose one member is what its elements are.
 pub const KIND_SET: u32 = 8;
+/// A map, whose two members are what its keys are and what its values are.
+pub const KIND_MAP: u32 = 9;
 
 /// What kind of type a descriptor describes.
 pub unsafe fn kind(descriptor: u32) -> u32 {

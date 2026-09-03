@@ -27,8 +27,8 @@
 //! before it runs, so what a refused place leaves behind is never stood in for.
 
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING,
-    KIND_SUM, KIND_UNIT,
+    self, KIND_BOOL, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET,
+    KIND_STRING, KIND_SUM, KIND_UNIT,
 };
 use crate::order;
 use crate::issues::{
@@ -54,6 +54,8 @@ pub const TAG_LIST: u32 = 5;
 pub const TAG_SOME: u32 = 6;
 /// An option holding nothing.
 pub const TAG_NONE: u32 = 7;
+/// A map. `+8` is how many entries, and a key pointer and a value pointer follow per entry.
+pub const TAG_MAP: u32 = 8;
 
 const HEADER: usize = 8;
 
@@ -172,6 +174,45 @@ pub unsafe extern "C" fn __souther_list_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 + 4 * index as usize) as *const u32)
 }
 
+/// A map of that many entries, with nothing in them yet.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map(descriptor: u32, entries: u32) -> u32 {
+    let cell = header(TAG_MAP, descriptor);
+    let _ = alloc(4 + 8 * entries);
+    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
+    cell
+}
+
+/// How many entries a map holds.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_length(cell: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
+}
+
+/// The key of one of a map's entries.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_key(cell: u32, index: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER + 4 + 8 * index as usize) as *const u32)
+}
+
+/// The value of one of a map's entries.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_value(cell: u32, index: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER + 8 + 8 * index as usize) as *const u32)
+}
+
+/// Puts an entry at a position of a map.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_set(cell: u32, index: u32, key: u32, value: u32) {
+    core::ptr::write_unaligned((cell as usize + HEADER + 4 + 8 * index as usize) as *mut u32, key);
+    core::ptr::write_unaligned((cell as usize + HEADER + 8 + 8 * index as usize) as *mut u32, value);
+}
+
+/// Shortens a map to the entries it kept.
+unsafe fn map_of_length(cell: u32, entries: u32) {
+    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
+}
+
 /// An option holding a value.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_some(value: u32) -> u32 {
@@ -235,6 +276,7 @@ pub unsafe extern "C" fn __souther_read(
         KIND_SUM => sum(value, descriptor, path, path_length),
         KIND_LIST => list(value, descriptor, path, path_length, false),
         KIND_SET => list(value, descriptor, path, path_length, true),
+        KIND_MAP => map(value, descriptor, path, path_length),
         KIND_OPTION => option(value, descriptor, path, path_length),
         // Nothing a caller wrote reaches this: a descriptor is placed by the emitter, so a kind
         // no one knows means this compiler wrote it rather than that a document said something.
@@ -421,6 +463,74 @@ unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
     out
 }
 
+/// A map is written as an object, its keys the keys and its entries in ascending order of them.
+///
+/// A key written twice names one entry, and the one that stands is the last written: what reaches
+/// a decoder is what the document says at that key, and a document says it last.
+unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_OBJECT {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        return 0;
+    }
+    let held = json::__souther_json_length(value);
+    let cell = __souther_map(descriptor, held);
+    let values = descriptor::member(descriptor, 1);
+    let mut whole = true;
+    let mut kept = 0;
+    for i in 0..held {
+        let written = json::__souther_json_key(value, i);
+        let name = json::__souther_json_bytes(written);
+        let name_length = json::__souther_json_length(written);
+        let (at, at_length) = below(path, path_length, (name, name_length));
+        let read = __souther_read(json::__souther_json_value(value, i), values, at, at_length);
+        if read == 0 {
+            whole = false;
+        }
+        let key = __souther_string(name, name_length);
+        let mut over = kept;
+        for j in 0..kept {
+            let existing = __souther_map_key(cell, j);
+            if same(
+                __souther_string_bytes(existing),
+                __souther_string_length(existing),
+                name,
+                name_length,
+            ) {
+                over = j;
+                break;
+            }
+        }
+        __souther_map_set(cell, over, key, read);
+        if over == kept {
+            kept += 1;
+        }
+    }
+    map_of_length(cell, kept);
+    if !whole {
+        return 0;
+    }
+    sorted_by_key(cell);
+    cell
+}
+
+/// A map's entries, ascending by key.
+unsafe fn sorted_by_key(cell: u32) {
+    let held = __souther_map_length(cell);
+    for i in 1..held {
+        let mut j = i;
+        while j > 0
+            && order::compare_text(__souther_map_key(cell, j - 1), __souther_map_key(cell, j)) > 0
+        {
+            let key = __souther_map_key(cell, j - 1);
+            let held_value = __souther_map_value(cell, j - 1);
+            __souther_map_set(cell, j - 1, __souther_map_key(cell, j), __souther_map_value(cell, j));
+            __souther_map_set(cell, j, key, held_value);
+            j -= 1;
+        }
+    }
+}
+
 /// Where there is no key to be missing, `null` is the whole of what absence is.
 unsafe fn option(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     if json::__souther_json_tag(value) == json::TAG_NULL {
@@ -557,6 +667,23 @@ unsafe fn written(cell: u32, descriptor: u32) {
                 written(__souther_list_get(cell, i), element);
             }
             write(b"]");
+        }
+        KIND_MAP => {
+            write(b"{");
+            let values = descriptor::member(descriptor, 1);
+            for i in 0..__souther_map_length(cell) {
+                if i > 0 {
+                    write(b",");
+                }
+                let key = __souther_map_key(cell, i);
+                json::__souther_json_write_string(
+                    __souther_string_bytes(key),
+                    __souther_string_length(key),
+                );
+                write(b":");
+                written(__souther_map_value(cell, i), values);
+            }
+            write(b"}");
         }
         KIND_OPTION => {
             if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
