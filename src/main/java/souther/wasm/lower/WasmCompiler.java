@@ -492,20 +492,7 @@ public final class WasmCompiler {
                 case Core.UnitValue only -> out.constant(shapes.ofMember(only.data()))
                         .call(calls.of(RuntimeAbi.UNIT));
                 case Core.Construct made -> {
-                    int record = scratch();
-                    out.constant(shapes.ofDeclared(made.typeName()))
-                            .call(calls.of(RuntimeAbi.RECORD))
-                            .localSet(record);
-                    // The list is the order the fields are evaluated in. Which slot each goes in
-                    // is asked of the shape rather than taken from that order: the two agree in
-                    // what this compiler is handed today, and one of them is the answer to the
-                    // question being asked.
-                    for (Core.FieldValue field : made.values()) {
-                        out.localGet(record)
-                                .constant(shapes.positionOf(made.typeName(), field.field()));
-                        value(out, field.value());
-                        out.call(calls.of(RuntimeAbi.RECORD_SET));
-                    }
+                    int record = constructed(out, made);
                     // Construction re-checks what must hold. Here the value is the body's own, so
                     // a violation is a model bug rather than something a caller wrote, and it ends
                     // the call: there is no case for it and no value to answer with.
@@ -530,6 +517,18 @@ public final class WasmCompiler {
                     }
                     out.localGet(record);
                 }
+                case Core.Unreachable nothing -> {
+                    // The reason lives in static memory, so a host reading the record after the
+                    // arena has been reset still has it.
+                    byte[] why = nothing.reason().getBytes(StandardCharsets.UTF_8);
+                    out.constant(AbortReason.NOTHING_TO_ANSWER_WITH.code())
+                            .constant(0)
+                            .constant((long) fragment.place(why))
+                            .constant((long) why.length)
+                            .call(calls.of(RuntimeAbi.ABORT))
+                            .unreachable();
+                }
+                case Core.IfConstructed attempted -> attempt(out, attempted);
                 case Core.FieldAccess read -> {
                     value(out, read.target());
                     out.constant(shapes.positionOf(shapeOf(read.target()), read.field()))
@@ -981,6 +980,97 @@ public final class WasmCompiler {
                 Kernel.SET_TO_LIST, Kernel.SET_FROM_LIST,
                 Kernel.MAP_EMPTY, Kernel.MAP_KEYS, Kernel.MAP_VALUES, Kernel.MAP_SINGLETON,
                 Kernel.MAP_INSERT, Kernel.MAP_REMOVE, Kernel.MAP_TO_LIST, Kernel.MAP_FROM_LIST);
+
+        /**
+         * A value of a declared shape, with its fields filled and nothing checked.
+         *
+         * <p>The list is the order the fields are evaluated in. Which slot each goes in is asked of
+         * the shape rather than taken from that order: the two agree in what this compiler is
+         * handed today, and one of them is the answer to the question being asked.
+         */
+        private int constructed(BodyWriter out, Core.Construct made) {
+            int record = scratch();
+            out.constant(shapes.ofDeclared(made.typeName()))
+                    .call(calls.of(RuntimeAbi.RECORD))
+                    .localSet(record);
+            for (Core.FieldValue field : made.values()) {
+                out.localGet(record).constant(shapes.positionOf(made.typeName(), field.field()));
+                value(out, field.value());
+                out.call(calls.of(RuntimeAbi.RECORD_SET));
+            }
+            return record;
+        }
+
+        /**
+         * An attempted construction: what must hold of the value decides which way the body goes.
+         *
+         * <p>The same check the construction would have ended the call on, read as an answer
+         * instead. Which departure a failure takes is settled by the clause that failed, and a
+         * departure naming no clause takes any — the checker has established that one always
+         * matches, so what follows every arm is the end of a call nothing written reaches.
+         */
+        private void attempt(BodyWriter out, Core.IfConstructed attempted) {
+            Core.Construct made = attempted.construct();
+            TypeSymbol.AtModule name = made.typeName();
+            int record = constructed(out, made);
+            int broken = scratch();
+            int answer = scratch();
+            out.localGet(record)
+                    .constant(shapes.ofDeclared(name))
+                    .call(calls.of(RuntimeAbi.CHECK_INVARIANTS))
+                    .localSet(broken);
+
+            out.localGet(broken).constant(-1).compares(BodyWriter.Comparison.EQUAL).ifNotZero();
+            locals.put(attempted.binder().binding(), record);
+            value(out, attempted.then());
+            out.localSet(answer).otherwise();
+
+            List<ValueShape.Invariant> clauses = shapes.invariantsOf(name);
+            int opened = 0;
+            for (Core.ElseArm arm : attempted.els()) {
+                if (arm.clause().isEmpty()) {
+                    continue;
+                }
+                out.localGet(broken)
+                        .constant(placeOf(clauses, arm.clause().get(), name))
+                        .compares(BodyWriter.Comparison.EQUAL)
+                        .ifNotZero();
+                opened++;
+                value(out, arm.body());
+                out.localSet(answer).otherwise();
+            }
+            // What is left is the departure naming no clause, which any failure takes. Where there
+            // is none the checker has established that a named one always matches, so nothing
+            // written reaches what stands here.
+            Optional<Core.ElseArm> any = attempted.els().stream()
+                    .filter(arm -> arm.clause().isEmpty())
+                    .findFirst();
+            if (any.isPresent()) {
+                value(out, any.get().body());
+                out.localSet(answer);
+            } else {
+                out.constant(AbortReason.NO_ARM.code())
+                        .constant(shapes.ofDeclared(name))
+                        .constant(0L)
+                        .constant(0L)
+                        .call(calls.of(RuntimeAbi.ABORT))
+                        .unreachable();
+            }
+            for (int i = 0; i < opened; i++) {
+                out.end();
+            }
+            out.end().localGet(answer);
+        }
+
+        /** Which of a shape's clauses goes by a name. */
+        private int placeOf(List<ValueShape.Invariant> clauses, String named, Object shape) {
+            for (int i = 0; i < clauses.size(); i++) {
+                if (clauses.get(i).name().map(named::equals).orElse(false)) {
+                    return i;
+                }
+            }
+            throw new NotLowered(shape + " has no clause called " + named);
+        }
 
         /**
          * A match, as one condition per arm over the value it is given.

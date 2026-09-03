@@ -232,8 +232,12 @@ pub const REASON_DIVISION_BY_ZERO: u32 = 6;
 /// A value was made inside a behavior that its type says nothing may be. `aux0` is which of the
 /// type's invariants it breaks.
 pub const REASON_INVARIANT_VIOLATION: u32 = 8;
+/// A position the program said gets no value. `aux0` is where the reason it was written with is
+/// and `aux1` how long it is — in static memory, so it is there after the arena has been reset.
+/// Raised by generated code and named here so that the numbers are all in one list.
+pub const REASON_NOTHING_TO_ANSWER_WITH: u32 = 9;
 /// An index or a count outside what the operation admits. `aux0` is what was asked for.
-pub const REASON_OUT_OF_RANGE: u32 = 9;
+pub const REASON_OUT_OF_RANGE: u32 = 10;
 /// A match ran out of arms. The checker settles that one always answers, so reaching this means
 /// the emitter tested for the wrong thing rather than that the model left a case out.
 pub const REASON_NO_ARM: u32 = 7;

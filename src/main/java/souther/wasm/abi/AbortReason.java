@@ -44,13 +44,25 @@ public enum AbortReason {
     NO_ARM(7),
 
     /**
+     * A position the program said gets no value.
+     *
+     * <p>{@code aux0} is where the reason it was written with is and {@code aux1} how long it is.
+     * In static memory rather than the arena, so a host reading the record after a reset still has
+     * it.
+     */
+    NOTHING_TO_ANSWER_WITH(9),
+
+    /**
      * A value was made inside a behavior that its type says nothing may be.
      *
      * <p>{@code aux0} is which of the type's invariants it breaks. At the boundary the same thing
      * is bad input and comes back as an issue; here there is no case for it and no value to answer
      * with, so the call ends.
      */
-    INVARIANT_VIOLATION(8);
+    INVARIANT_VIOLATION(8),
+
+    /** An index or a count outside what the operation admits. {@code aux0} is what was asked for. */
+    OUT_OF_RANGE(10);
 
     private final int code;
 
