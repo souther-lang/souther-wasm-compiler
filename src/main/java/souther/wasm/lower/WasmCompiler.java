@@ -8,7 +8,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import souther.compiler.core.Core;
-import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
@@ -17,8 +16,8 @@ import souther.compiler.types.BindingId;
 import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
 import souther.wasm.abi.RuntimeAbi;
-import souther.wasm.link.LinkPlan;
 import souther.wasm.emit.Type;
+import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
 import souther.wasm.link.WasmFragment;
 
@@ -164,9 +163,15 @@ public final class WasmCompiler {
             for (int i = 0; i < arity; i++) {
                 int local = out.narrow();
                 locals.put(parameters.get(i).binding(), local);
-                out.localGet(document).constant(i).call(calls.of(RuntimeAbi.ARGUMENT));
-                read(out, takes.get(i), "/" + i);
-                out.localSet(local);
+                byte[] path = ("/" + i).getBytes(StandardCharsets.UTF_8);
+                out.localGet(document)
+                        .constant(i)
+                        .call(calls.of(RuntimeAbi.ARGUMENT))
+                        .constant(shapes.of(takes.get(i)))
+                        .constant(fragment.place(path))
+                        .constant(path.length)
+                        .call(calls.of(RuntimeAbi.READ))
+                        .localSet(local);
             }
             out.end();
 
@@ -177,7 +182,8 @@ public final class WasmCompiler {
                     .localSet(packed)
                     .otherwise();
             value(out, body);
-            out.call(calls.of(RuntimeAbi.WRITE))
+            out.constant(shapes.of(behavior.signature().answers()))
+                    .call(calls.of(RuntimeAbi.WRITE))
                     .localSet(packed)
                     .end();
 
@@ -202,7 +208,7 @@ public final class WasmCompiler {
                 }
                 case Core.Construct made -> {
                     int record = scratch();
-                    out.constant(shapes.of(made.typeName()))
+                    out.constant(shapes.ofDeclared(made.typeName()))
                             .call(calls.of(RuntimeAbi.RECORD))
                             .localSet(record);
                     // The list is the order the fields are evaluated in. Which slot each goes in
@@ -250,73 +256,6 @@ public final class WasmCompiler {
             }
             throw new NotLowered(behavior.name() + " reads a field off a "
                     + expression.type() + ", and this backend reads one off a shape");
-        }
-
-        /**
-         * Reads the JSON on the stack as a declared type, leaving the value it is.
-         *
-         * <p>Asked for by the declaration rather than settled by what the document looks like: a
-         * place declared {@code Int} holding a string is bad input, and a reader picked from the
-         * input would call it a string and be right about nothing.
-         *
-         * @param path the JSON pointer of the place, which an issue about it is reported at
-         */
-        private void read(BodyWriter out, souther.compiler.types.Type declared, String path) {
-            byte[] where = path.getBytes(StandardCharsets.UTF_8);
-            int wherePlaced = fragment.place(where);
-            switch (declared) {
-                case souther.compiler.types.Type.Prim.INT ->
-                        out.constant(wherePlaced).constant(where.length)
-                                .call(calls.of(RuntimeAbi.READ_INT));
-                case souther.compiler.types.Type.Prim.BOOL ->
-                        out.constant(wherePlaced).constant(where.length)
-                                .call(calls.of(RuntimeAbi.READ_BOOL));
-                case souther.compiler.types.Type.Prim.STRING ->
-                        out.constant(wherePlaced).constant(where.length)
-                                .call(calls.of(RuntimeAbi.READ_STRING));
-                case souther.compiler.types.Type.Ref reference
-                        when reference.name() instanceof TypeSymbol.AtModule named ->
-                        readShape(out, named, path, wherePlaced, where.length);
-                default -> throw new NotLowered(behavior.name() + " meets a " + declared
-                        + ", and this backend reads a scalar or a shape");
-            }
-        }
-
-        /**
-         * Reads an object as a value of a declared shape, one declared field at a time.
-         *
-         * <p>Every field is read, including the ones after a field that was refused, so that a
-         * caller is told everything wrong with its document rather than the first thing.
-         */
-        private void readShape(BodyWriter out, TypeSymbol.AtModule name, String path,
-                int wherePlaced, int whereLength) {
-            int object = scratch();
-            int record = scratch();
-            out.constant(wherePlaced).constant(whereLength)
-                    .call(calls.of(RuntimeAbi.READ_OBJECT))
-                    .localSet(object)
-                    .constant(shapes.of(name))
-                    .call(calls.of(RuntimeAbi.RECORD))
-                    .localSet(record);
-
-            List<ValueShape.Field> fields = shapes.fieldsOf(name);
-            for (int i = 0; i < fields.size(); i++) {
-                ValueShape.Field field = fields.get(i);
-                byte[] fieldName = field.name().getBytes(StandardCharsets.UTF_8);
-                String at = path + "/" + field.name();
-                byte[] atBytes = at.getBytes(StandardCharsets.UTF_8);
-                out.localGet(record)
-                        .constant(i)
-                        .localGet(object)
-                        .constant(fragment.place(fieldName))
-                        .constant(fieldName.length)
-                        .constant(fragment.place(atBytes))
-                        .constant(atBytes.length)
-                        .call(calls.of(RuntimeAbi.FIELD));
-                read(out, field.type(), at);
-                out.call(calls.of(RuntimeAbi.RECORD_SET));
-            }
-            out.localGet(record);
         }
 
         /** A local nothing else is using, for a value that outlives one instruction. */

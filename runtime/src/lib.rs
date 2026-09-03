@@ -24,6 +24,7 @@
 
 #![no_std]
 
+mod descriptor;
 mod issues;
 mod json;
 mod value;

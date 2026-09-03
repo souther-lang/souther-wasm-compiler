@@ -25,6 +25,8 @@ pub const CODE_OUT_OF_RANGE: &[u8] = b"out_of_range";
 pub const CODE_INVALID_SIZE: &[u8] = b"invalid_size";
 /// A shape was written without one of its fields.
 pub const CODE_MISSING_FIELD: &[u8] = b"missing_field";
+/// What was written is not one of the ones the declaration offers.
+pub const CODE_NOT_ALLOWED: &[u8] = b"not_allowed";
 
 /// The first issue this call found, or zero.
 static mut FIRST: u32 = 0;

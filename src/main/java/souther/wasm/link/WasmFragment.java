@@ -3,8 +3,10 @@ package souther.wasm.link;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import souther.wasm.emit.Type;
 import souther.wasm.emit.WasmWriter;
 
@@ -30,6 +32,7 @@ public final class WasmFragment {
     private final List<byte[]> bodies = new ArrayList<>();
     private final Map<String, Integer> exports = new LinkedHashMap<>();
     private final List<Segment> data = new ArrayList<>();
+    private final Set<Integer> reserved = new LinkedHashSet<>();
     private int staticTop;
 
     /** A run of bytes the link places in static memory, at an address it has settled. */
@@ -114,6 +117,43 @@ public final class WasmFragment {
         return address;
     }
 
+    /**
+     * Takes an address for bytes that are not settled yet, and answers where they will go.
+     *
+     * <p>For a value that has to know its own address before it can be written — a descriptor of a
+     * type holding a value of itself is one. Nothing reads what is there until {@link #fill} puts
+     * it there, and a link refuses to finish while anything reserved is still empty.
+     */
+    public int reserve(int length) {
+        int address = staticTop;
+        data.add(new Segment(address, new byte[length]));
+        reserved.add(address);
+        staticTop = align(address + length);
+        return address;
+    }
+
+    /**
+     * Puts the bytes of something reserved where they were promised.
+     *
+     * @param address what {@link #reserve} answered
+     * @param bytes exactly as many as were reserved
+     */
+    public void fill(int address, byte[] bytes) {
+        for (int i = 0; i < data.size(); i++) {
+            Segment segment = data.get(i);
+            if (segment.address() == address) {
+                if (segment.bytes().length != bytes.length) {
+                    throw new IllegalArgumentException(
+                            "what was reserved at " + address + " is not as long as what was written for it");
+                }
+                data.set(i, new Segment(address, bytes.clone()));
+                reserved.remove(address);
+                return;
+            }
+        }
+        throw new IllegalArgumentException("nothing was reserved at " + address);
+    }
+
     /** The first byte no generated data occupies, which is where the arena will start. */
     public int staticEnd() {
         return staticTop;
@@ -136,6 +176,10 @@ public final class WasmFragment {
     }
 
     List<Segment> dataSegments() {
+        if (!reserved.isEmpty()) {
+            throw new IllegalStateException(
+                    "a link would place empty bytes where something was reserved: " + reserved);
+        }
         return List.copyOf(data);
     }
 

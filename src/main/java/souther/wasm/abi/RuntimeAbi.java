@@ -141,23 +141,11 @@ public final class RuntimeAbi {
     /** {@code (i32 document, i32 index) -> i32}: one argument of a call. */
     public static final String ARGUMENT = "__souther_argument";
 
-    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as an {@code Int}, or nothing. */
-    public static final String READ_INT = "__souther_read_int";
-
-    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as a {@code Bool}, or nothing. */
-    public static final String READ_BOOL = "__souther_read_bool";
-
-    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as a {@code String}, or nothing. */
-    public static final String READ_STRING = "__souther_read_string";
-
-    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as an object, or nothing. */
-    public static final String READ_OBJECT = "__souther_read_object";
-
     /**
-     * {@code (i32 object, i32 name, i32 nameLength, i32 path, i32 pathLength) -> i32}: what an
-     * object wrote at a field, or nothing where it wrote no such field.
+     * {@code (i32 json, i32 descriptor, i32 path, i32 pathLength) -> i32}: a JSON value read as a
+     * value of the type a descriptor describes, or nothing where it could not be.
      */
-    public static final String FIELD = "__souther_field";
+    public static final String READ = "__souther_read";
 
     /** {@code (i32 descriptor) -> i32}: a cell of a declared shape, its fields not yet filled. */
     public static final String RECORD = "__souther_record";
@@ -167,6 +155,9 @@ public final class RuntimeAbi {
 
     /** {@code (i32 cell, i32 index) -> i32}: the value in one of a record's fields. */
     public static final String RECORD_GET = "__souther_record_get";
+
+    /** {@code (i32 descriptor) -> i32}: the one value of a type that has one. */
+    public static final String UNIT = "__souther_unit";
 
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
@@ -186,7 +177,14 @@ public final class RuntimeAbi {
     /** {@code (i32 ptr, i32 len) -> i32}: a cell holding a {@code String}. */
     public static final String STRING = "__souther_string";
 
-    /** {@code (i32 cell) -> i64}: a value written as JSON, answered packed. */
+    /**
+     * {@code (i32 cell, i32 descriptor) -> i64}: a value written as the answer a caller reads,
+     * answered packed.
+     *
+     * <p>Against the declared type and not against the value alone: the tag saying which case a
+     * value is belongs where a sum was declared and nowhere else, and what a cell holds cannot say
+     * whether the place it fills was declared as the sum or as the case.
+     */
     public static final String WRITE = "__souther_write";
 
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */

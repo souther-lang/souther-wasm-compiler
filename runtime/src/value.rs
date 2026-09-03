@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! +0  u32 tag
-//! +4  u32 length    bytes, for a value that carries bytes
+//! +4  u32 length for a String, the descriptor for a record or a unit, nothing otherwise
 //! +8  payload
 //! ```
 //!
@@ -16,35 +16,35 @@
 //! at every one of those edges. So the box comes first and unboxing a local is something to add
 //! against a measurement, not before one.
 //!
-//! # Reading
+//! # Reading and writing
 //!
-//! What a place holds is decided by what was declared, not by what the document happens to look
-//! like. So a reader is asked for by name — read this as an `Int` — and the JSON is what it checks
-//! against, rather than the JSON being asked what it is.
+//! Both are walks of a declared type against a document, in step. What a place holds is decided by
+//! the declaration: reading asks the JSON to be what was declared rather than asking the JSON what
+//! it is, and writing puts a tag on a value exactly where the place it fills is a sum.
 //!
 //! A reader that cannot read what it was handed records an issue and answers nothing. Nothing is a
-//! null pointer here, and no body ever reads one: the generated code asks whether any issue was
-//! found before it runs, so what a refused place leaves behind is never stood in for.
+//! null pointer, and no body ever reads one: the generated code asks whether anything was refused
+//! before it runs, so what a refused place leaves behind is never stood in for.
 
+use crate::descriptor::{
+    self, KIND_BOOL, KIND_INT, KIND_PRODUCT, KIND_STRING, KIND_SUM, KIND_UNIT,
+};
 use crate::issues::{
-    self, CODE_INVALID_SIZE, CODE_MISSING_FIELD, CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH,
+    self, CODE_INVALID_SIZE, CODE_MISSING_FIELD, CODE_NOT_ALLOWED, CODE_OUT_OF_RANGE,
+    CODE_TYPE_MISMATCH,
 };
 use crate::json;
 use crate::{abort, alloc, REASON_NOT_A_VALUE};
 
-/// The one value a type with a single value has.
+/// The one value a type with a single value has. `+4` is which type.
 pub const TAG_UNIT: u32 = 0;
 /// An `Int`, whose payload is sixty-four bits.
 pub const TAG_INT: u32 = 1;
 /// A `Bool`, whose payload is one or zero.
 pub const TAG_BOOL: u32 = 2;
-/// A `String`, whose payload is its UTF-8 bytes.
+/// A `String`, whose payload is its UTF-8 bytes and whose `+4` is how many.
 pub const TAG_STRING: u32 = 3;
-/// A value of a declared shape, whose payload is one pointer per field.
-///
-/// What the fields are called is not in the cell. A shape's field names are the same for every
-/// value of it, so they are written once, in a descriptor the link places in static memory, and
-/// the cell holds where that is. `+4` is that address rather than a length.
+/// A value written as fields. `+4` is which shape, and the payload is one pointer per field.
 pub const TAG_RECORD: u32 = 4;
 
 const HEADER: usize = 8;
@@ -104,6 +104,12 @@ pub unsafe extern "C" fn __souther_string(pointer: u32, length: u32) -> u32 {
     cell
 }
 
+/// The one value of a type that has one.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_unit(descriptor: u32) -> u32 {
+    header(TAG_UNIT, descriptor)
+}
+
 /// A cell of a declared shape, with room for its fields and nothing in them yet.
 ///
 /// Nothing in them because a field is filled once it has been read, and a field that was refused
@@ -112,7 +118,7 @@ pub unsafe extern "C" fn __souther_string(pointer: u32, length: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_record(descriptor: u32) -> u32 {
     let cell = header(TAG_RECORD, descriptor);
-    let _ = alloc(4 * descriptor_fields(descriptor));
+    let _ = alloc(4 * descriptor::arity(descriptor));
     cell
 }
 
@@ -128,76 +134,6 @@ pub unsafe extern "C" fn __souther_record_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 * index as usize) as *const u32)
 }
 
-/// The JSON written at a field of an object, or nothing where the object has no such field.
-///
-/// Nothing is reported once, here, as a missing field. A reader handed nothing answers nothing
-/// without saying anything more: what went wrong has been said, and saying it again per reader
-/// would count one absence as many.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_field(
-    object: u32,
-    name: u32,
-    name_length: u32,
-    path: u32,
-    path_length: u32,
-) -> u32 {
-    if object == 0 {
-        return 0;
-    }
-    let held = json::__souther_json_length(object);
-    for i in 0..held {
-        let key = json::__souther_json_key(object, i);
-        if same(json::__souther_json_bytes(key), json::__souther_json_length(key), name, name_length)
-        {
-            return json::__souther_json_value(object, i);
-        }
-    }
-    issues::issue(CODE_MISSING_FIELD, path, path_length, b"nothing", b"a field");
-    0
-}
-
-/// Reads a JSON value as an object, which is what a shape is written as.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_read_object(value: u32, path: u32, path_length: u32) -> u32 {
-    if value == 0 {
-        return 0;
-    }
-    let tag = json::__souther_json_tag(value);
-    if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind(tag), b"an object");
-        return 0;
-    }
-    value
-}
-
-unsafe fn same(left: u32, left_length: u32, right: u32, right_length: u32) -> bool {
-    if left_length != right_length {
-        return false;
-    }
-    for i in 0..left_length as usize {
-        if core::ptr::read((left as usize + i) as *const u8)
-            != core::ptr::read((right as usize + i) as *const u8)
-        {
-            return false;
-        }
-    }
-    true
-}
-
-/// How many fields a shape's descriptor names.
-unsafe fn descriptor_fields(descriptor: u32) -> u32 {
-    core::ptr::read_unaligned(descriptor as usize as *const u32)
-}
-
-/// Where a field's name is, and how long it is.
-unsafe fn descriptor_name(descriptor: u32, index: u32) -> (u32, u32) {
-    let at = descriptor as usize + 4 + 8 * index as usize;
-    (
-        core::ptr::read_unaligned(at as *const u32),
-        core::ptr::read_unaligned((at + 4) as *const u32),
-    )
-}
-
 /// Checks that what a caller handed in is a call of a behavior taking this many parameters.
 ///
 /// A call's arguments are one JSON array, in the order the behavior declares its parameters.
@@ -207,7 +143,7 @@ unsafe fn descriptor_name(descriptor: u32, index: u32) -> (u32, u32) {
 pub unsafe extern "C" fn __souther_check_arguments(document: u32, expected: u32) {
     let tag = json::__souther_json_tag(document);
     if tag != json::TAG_ARRAY {
-        issues::issue(CODE_TYPE_MISMATCH, 0, 0, kind(tag), b"arguments");
+        issues::issue(CODE_TYPE_MISMATCH, 0, 0, kind_of(tag), b"arguments");
         return;
     }
     let held = json::__souther_json_length(document);
@@ -222,18 +158,38 @@ pub unsafe extern "C" fn __souther_argument(document: u32, index: u32) -> u32 {
     json::__souther_json_element(document, index)
 }
 
-/// Reads a JSON value as an `Int`.
+/// Reads a JSON value as a value of a declared type.
 ///
-/// A whole number and nothing else. Digits after a point are a `Decimal`'s and not something to
-/// round away here, and a number outside what sixty-four bits hold is not an `Int` at all.
+/// Answers nothing where it could not, having said why and where. Every place is read, including
+/// the ones after a place that was refused: a caller told about one field at a time is made to ask
+/// as many times as its document had mistakes.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_read_int(value: u32, path: u32, path_length: u32) -> u32 {
+pub unsafe extern "C" fn __souther_read(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
     if value == 0 {
         return 0;
     }
+    match descriptor::kind(descriptor) {
+        KIND_INT => integer(value, path, path_length),
+        KIND_BOOL => boolean(value, path, path_length),
+        KIND_STRING => text(value, path, path_length),
+        KIND_UNIT => unit(value, descriptor, path, path_length),
+        KIND_PRODUCT => product(value, descriptor, path, path_length),
+        KIND_SUM => sum(value, descriptor, path, path_length),
+        // Nothing a caller wrote reaches this: a descriptor is placed by the emitter, so a kind
+        // no one knows means this compiler wrote it rather than that a document said something.
+        other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, 0),
+    }
+}
+
+unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind(tag), b"Int");
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"Int");
         return 0;
     }
     let bytes = json::__souther_json_bytes(value) as usize;
@@ -267,31 +223,21 @@ pub unsafe extern "C" fn __souther_read_int(value: u32, path: u32, path_length: 
     }
 }
 
-/// Reads a JSON value as a `Bool`.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_read_bool(value: u32, path: u32, path_length: u32) -> u32 {
-    if value == 0 {
-        return 0;
-    }
+unsafe fn boolean(value: u32, path: u32, path_length: u32) -> u32 {
     match json::__souther_json_tag(value) {
         json::TAG_TRUE => __souther_bool(1),
         json::TAG_FALSE => __souther_bool(0),
         other => {
-            issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind(other), b"Bool");
+            issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(other), b"Bool");
             0
         }
     }
 }
 
-/// Reads a JSON value as a `String`.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_read_string(value: u32, path: u32, path_length: u32) -> u32 {
-    if value == 0 {
-        return 0;
-    }
+unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_STRING {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind(tag), b"String");
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"String");
         return 0;
     }
     __souther_string(
@@ -300,50 +246,214 @@ pub unsafe extern "C" fn __souther_read_string(value: u32, path: u32, path_lengt
     )
 }
 
+/// A type with one value is written as an empty object: there is nothing to say about which one it
+/// is, and a document that says something is saying something the type has no room for.
+unsafe fn unit(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_OBJECT {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        return 0;
+    }
+    __souther_unit(descriptor)
+}
+
+unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_OBJECT {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        return 0;
+    }
+    let cell = __souther_record(descriptor);
+    let mut whole = true;
+    for i in 0..descriptor::arity(descriptor) {
+        let (field, field_length) = descriptor::name(descriptor, i);
+        let (at, at_length) = below(path, path_length, field, field_length);
+        let written = entry(value, field, field_length);
+        if written == 0 {
+            issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a field");
+            whole = false;
+            continue;
+        }
+        let read = __souther_read(written, descriptor::member(descriptor, i), at, at_length);
+        if read == 0 {
+            whole = false;
+        }
+        __souther_record_set(cell, i, read);
+    }
+    if whole {
+        cell
+    } else {
+        0
+    }
+}
+
+/// A value of a sum is written as its case, with the case's name under `type`.
+unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_OBJECT {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        return 0;
+    }
+    let written = entry(value, DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32);
+    if written == 0 {
+        let (at, at_length) = below(
+            path,
+            path_length,
+            DISCRIMINATOR.as_ptr() as u32,
+            DISCRIMINATOR.len() as u32,
+        );
+        issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a case");
+        return 0;
+    }
+    if json::__souther_json_tag(written) != json::TAG_STRING {
+        let (at, at_length) = below(
+            path,
+            path_length,
+            DISCRIMINATOR.as_ptr() as u32,
+            DISCRIMINATOR.len() as u32,
+        );
+        issues::issue(
+            CODE_TYPE_MISMATCH,
+            at,
+            at_length,
+            kind_of(json::__souther_json_tag(written)),
+            b"a case",
+        );
+        return 0;
+    }
+    let held = json::__souther_json_bytes(written);
+    let held_length = json::__souther_json_length(written);
+    for i in 0..descriptor::arity(descriptor) {
+        let (case, case_length) = descriptor::name(descriptor, i);
+        if same(case, case_length, held, held_length) {
+            return __souther_read(value, descriptor::member(descriptor, i), path, path_length);
+        }
+    }
+    let (at, at_length) = below(
+        path,
+        path_length,
+        DISCRIMINATOR.as_ptr() as u32,
+        DISCRIMINATOR.len() as u32,
+    );
+    issues::issue_of(
+        CODE_NOT_ALLOWED,
+        at,
+        at_length,
+        (held, held_length),
+        (b"a case".as_ptr() as u32, 6),
+    );
+    0
+}
+
+/// The key a sum's case is named under. ADR-0004's derived discriminator, which is what the JVM
+/// backend's derived codec reads and writes.
+const DISCRIMINATOR: &[u8] = b"type";
+
+/// What an object wrote at a key, or nothing.
+unsafe fn entry(object: u32, name: u32, name_length: u32) -> u32 {
+    for i in 0..json::__souther_json_length(object) {
+        let key = json::__souther_json_key(object, i);
+        if same(
+            json::__souther_json_bytes(key),
+            json::__souther_json_length(key),
+            name,
+            name_length,
+        ) {
+            return json::__souther_json_value(object, i);
+        }
+    }
+    0
+}
+
+/// The JSON pointer of a place inside another, written into the arena.
+unsafe fn below(path: u32, path_length: u32, step: u32, step_length: u32) -> (u32, u32) {
+    let total = path_length + 1 + step_length;
+    let at = alloc(total);
+    core::ptr::copy_nonoverlapping(path as *const u8, at as *mut u8, path_length as usize);
+    core::ptr::write((at + path_length) as *mut u8, b'/');
+    core::ptr::copy_nonoverlapping(
+        step as *const u8,
+        (at + path_length + 1) as *mut u8,
+        step_length as usize,
+    );
+    (at, total)
+}
+
 /// Writes a value as the answer a caller reads, answering the pointer and the length packed.
+///
+/// Against the declared type, not against the value alone: the tag saying which case a value is
+/// belongs where a sum was declared and nowhere else, and what a cell holds cannot say whether the
+/// place it fills was declared as the sum or as the case.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_write(cell: u32) -> u64 {
+pub unsafe extern "C" fn __souther_write(cell: u32, descriptor: u32) -> u64 {
     let out = crate::next_free();
     write(b"{\"value\":");
-    written(cell);
+    written(cell, descriptor);
     write(b"}");
     json::packed(out, crate::next_free() - out)
 }
 
-/// Appends a value's JSON to the run being written.
-unsafe fn written(cell: u32) {
-    match core::ptr::read_unaligned(cell as usize as *const u32) {
-        TAG_INT => {
+unsafe fn written(cell: u32, descriptor: u32) {
+    match descriptor::kind(descriptor) {
+        KIND_INT => {
             json::__souther_json_write_int(__souther_int_value(cell));
         }
-        TAG_BOOL => {
+        KIND_BOOL => {
             json::__souther_json_write_bool(__souther_bool_value(cell));
         }
-        TAG_STRING => {
+        KIND_STRING => {
             json::__souther_json_write_string(
                 __souther_string_bytes(cell),
                 __souther_string_length(cell),
             );
         }
-        TAG_RECORD => {
-            let descriptor = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-            write(b"{");
-            for i in 0..descriptor_fields(descriptor) {
-                if i > 0 {
-                    write(b",");
-                }
-                let (name, name_length) = descriptor_name(descriptor, i);
-                json::__souther_json_write_string(name, name_length);
-                write(b":");
-                written(__souther_record_get(cell, i));
-            }
-            write(b"}");
-        }
-        TAG_UNIT => write(b"null"),
-        // Nothing a decoder was handed reaches here: a value whose tag this does not know is one
-        // the emitter made, so it is this compiler that is wrong rather than the input.
-        other => abort(REASON_NOT_A_VALUE, 0, other as u64, cell as u64),
+        KIND_UNIT => write(b"{}"),
+        KIND_PRODUCT => fields(cell, descriptor, false),
+        KIND_SUM => tagged(cell, descriptor),
+        other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
     }
+}
+
+/// A value of a sum, under the tag of the case it is.
+///
+/// Which case is asked of the value: a cell holds the descriptor of the type it was made as, and
+/// that is one of the cases the place's own type offers.
+unsafe fn tagged(cell: u32, descriptor: u32) {
+    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+    for i in 0..descriptor::arity(descriptor) {
+        let case = descriptor::member(descriptor, i);
+        if case == held {
+            let (tag, tag_length) = descriptor::name(descriptor, i);
+            write(b"{\"");
+            write(DISCRIMINATOR);
+            write(b"\":");
+            json::__souther_json_write_string(tag, tag_length);
+            if descriptor::kind(case) == KIND_PRODUCT {
+                fields(cell, case, true);
+            } else {
+                write(b"}");
+            }
+            return;
+        }
+    }
+    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64);
+}
+
+/// A record's fields, either as the whole object or as the rest of one already opened by a tag.
+unsafe fn fields(cell: u32, descriptor: u32, opened: bool) {
+    if !opened {
+        write(b"{");
+    }
+    for i in 0..descriptor::arity(descriptor) {
+        if opened || i > 0 {
+            write(b",");
+        }
+        let (field, field_length) = descriptor::name(descriptor, i);
+        json::__souther_json_write_string(field, field_length);
+        write(b":");
+        written(__souther_record_get(cell, i), descriptor::member(descriptor, i));
+    }
+    write(b"}");
 }
 
 unsafe fn write(bytes: &[u8]) {
@@ -351,8 +461,22 @@ unsafe fn write(bytes: &[u8]) {
     core::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len());
 }
 
+unsafe fn same(left: u32, left_length: u32, right: u32, right_length: u32) -> bool {
+    if left_length != right_length {
+        return false;
+    }
+    for i in 0..left_length as usize {
+        if core::ptr::read((left as usize + i) as *const u8)
+            != core::ptr::read((right as usize + i) as *const u8)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// What a JSON value is, in the words an issue reports it with.
-fn kind(tag: u32) -> &'static [u8] {
+fn kind_of(tag: u32) -> &'static [u8] {
     match tag {
         json::TAG_NULL => b"null",
         json::TAG_FALSE | json::TAG_TRUE => b"boolean",
@@ -388,9 +512,9 @@ unsafe fn decimal(value: u32) -> (u32, u32) {
     (at, written as u32)
 }
 
-unsafe fn header(tag: u32, length: u32) -> u32 {
+unsafe fn header(tag: u32, second: u32) -> u32 {
     let cell = alloc(HEADER as u32);
     core::ptr::write_unaligned(cell as usize as *mut u32, tag);
-    core::ptr::write_unaligned((cell as usize + 4) as *mut u32, length);
+    core::ptr::write_unaligned((cell as usize + 4) as *mut u32, second);
     cell
 }

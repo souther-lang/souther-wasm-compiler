@@ -2,37 +2,42 @@ package souther.wasm.lower;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedProgram;
-import souther.compiler.program.Declared;
+import souther.compiler.types.Type;
 import souther.compiler.types.TypeSymbol;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
 
 /**
- * What every value of a declared shape has in common, written once in static memory.
+ * Every declared type, written once in static memory for the runtime to walk.
  *
- * <p>A shape's field names are the same for every value of it, so a cell carries where they are
- * rather than carrying them. That is what lets the runtime write a value it has never been told
- * anything about: it reads the names out of the descriptor the cell points at.
+ * <p>Reading and writing are driven by the declaration rather than by the value or the document,
+ * and a descriptor is the whole of what the emitter says about a type. It places one per type and
+ * passes its address; nothing else about the shape of a value crosses into a generated body.
  *
- * <p>In static memory, so it outlives every arena the calls run in and is there before the first
- * call. A descriptor is:
- *
- * <pre>{@code
- * +0   u32 how many fields
- * +4   per field, in the order the shape declares them: u32 where the name is, u32 how long
- * }</pre>
+ * <p>Placing one is what discovers what this backend cannot write yet, so the refusals live here:
+ * met while the type is being described rather than while a body is being emitted, which is where
+ * the question is actually asked.
  */
 final class Descriptors {
 
+    /** What kind of type a descriptor describes, as the runtime reads it. */
+    private static final int KIND_INT = 0;
+    private static final int KIND_BOOL = 1;
+    private static final int KIND_STRING = 2;
+    private static final int KIND_UNIT = 3;
+    private static final int KIND_PRODUCT = 4;
+    private static final int KIND_SUM = 5;
+
     private final CheckedProgram program;
     private final WasmFragment fragment;
-    private final Map<TypeSymbol.AtModule, Integer> placed = new HashMap<>();
+    private final Map<Type, Integer> placed = new HashMap<>();
+    private final Map<TypeSymbol.AtModule, Integer> byName = new HashMap<>();
 
     Descriptors(CheckedProgram program, WasmFragment fragment) {
         this.program = program;
@@ -40,66 +45,109 @@ final class Descriptors {
     }
 
     /**
-     * The descriptor of a declared shape, placing it if this is the first value of it to be built.
+     * The descriptor of a type, placing it if this is the first place to want one.
      *
-     * <p>Kept, so that a shape used in many places is written down once. What a descriptor holds
-     * is the same every time — a shape's field names do not depend on where a value of it is made
-     * — so a second copy would be the same bytes again and nothing else.
+     * <p>Kept, so that a type used in many places is written down once. What a descriptor holds is
+     * the same every time, and a value's cell carries its address, so a second copy would make one
+     * type look like two to whatever compares them — which is how a sum decides which of its cases
+     * a value it is handed is.
      */
-    int of(TypeSymbol.AtModule name) {
-        Integer already = placed.get(name);
+    int of(Type type) {
+        Integer already = placed.get(type);
         if (already != null) {
             return already;
         }
-        List<ValueShape.Field> fields = shape(name).fields();
-
-        // The names first, so that the table pointing at them is written against addresses that
-        // are already settled.
-        int[] addresses = new int[fields.size()];
-        int[] lengths = new int[fields.size()];
-        for (int i = 0; i < fields.size(); i++) {
-            byte[] utf8 = fields.get(i).name().getBytes(StandardCharsets.UTF_8);
-            addresses[i] = fragment.place(utf8);
-            lengths[i] = utf8.length;
-        }
-
-        ByteArrayOutputStream table = new ByteArrayOutputStream();
-        WasmWriter out = new WasmWriter(table);
-        out.writeLittleEndian4(fields.size());
-        for (int i = 0; i < fields.size(); i++) {
-            out.writeLittleEndian4(addresses[i]).writeLittleEndian4(lengths[i]);
-        }
-        int descriptor = fragment.place(table.toByteArray());
-        placed.put(name, descriptor);
+        int descriptor = switch (type) {
+            case Type.Prim.INT -> scalar(KIND_INT);
+            case Type.Prim.BOOL -> scalar(KIND_BOOL);
+            case Type.Prim.STRING -> scalar(KIND_STRING);
+            case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule named ->
+                    ofDeclared(named);
+            default -> throw new NotLowered("a " + type
+                    + ", which this backend does not write yet — it writes a scalar, a shape and a sum");
+        };
+        placed.put(type, descriptor);
         return descriptor;
-    }
-
-    /** The fields of a declared shape, in the order it declares them. */
-    List<ValueShape.Field> fieldsOf(TypeSymbol.AtModule name) {
-        return shape(name).fields();
     }
 
     /** Which field of a shape a name is, by the shape's own ordering. */
     int positionOf(TypeSymbol.AtModule name, String field) {
-        return shape(name).positionOf(field);
+        return product(name).positionOf(field);
+    }
+
+    /** The descriptor of a declared type, by its name. */
+    int ofDeclared(TypeSymbol.AtModule name) {
+        Integer already = byName.get(name);
+        if (already != null) {
+            return already;
+        }
+        CheckedData data = program.declaration(name).data();
+        return switch (data) {
+            case CheckedData.Unit ignored -> {
+                int descriptor = scalar(KIND_UNIT);
+                byName.put(name, descriptor);
+                yield descriptor;
+            }
+            case CheckedData.Product shape -> {
+                if (!shape.invariants().isEmpty()) {
+                    throw new NotLowered(
+                            name + " has an invariant, and this backend does not check one yet");
+                }
+                yield composite(KIND_PRODUCT, name, shape.fields().stream()
+                        .map(field -> new Member(field.name(), field.type()))
+                        .toList());
+            }
+            // A sum's cases are its leaves: a case written as another sum is carried here as the
+            // cases under it, so nothing nested reaches this and the tag always names a leaf.
+            case CheckedData.Sum choice -> composite(KIND_SUM, name, choice.cases().stream()
+                    .map(each -> new Member(each.name(), new Type.Ref(each)))
+                    .toList());
+        };
+    }
+
+    /** A field of a shape, or a case of a sum: what it is called and what it holds. */
+    private record Member(String name, Type type) {
+    }
+
+    private int scalar(int kind) {
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        new WasmWriter(table).writeLittleEndian4(kind);
+        return fragment.place(table.toByteArray());
     }
 
     /**
-     * The shape a name declares.
+     * A descriptor for a type whose members have descriptors of their own.
      *
-     * <p>Refused where it is anything else this backend does not write yet, by what it is: a sum
-     * and a shape with an invariant are different things to add, and one message about both would
-     * name neither.
+     * <p>Its address is taken and remembered before its members are described, because a type may
+     * hold a value of itself. Left the other way round, describing the member would ask for the
+     * descriptor being described and neither would ever have an address.
      */
-    private CheckedData.Product shape(TypeSymbol.AtModule name) {
-        Declared declared = program.declaration(name);
-        CheckedData data = declared.data();
-        if (!(data instanceof CheckedData.Product found)) {
-            throw new NotLowered(name + " is not written as fields, and this backend writes a shape");
+    private int composite(int kind, TypeSymbol.AtModule name, List<Member> members) {
+        int descriptor = fragment.reserve(4 + 4 + 12 * members.size());
+        byName.put(name, descriptor);
+
+        List<int[]> written = new ArrayList<>();
+        for (Member member : members) {
+            byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
+            written.add(new int[] {fragment.place(utf8), utf8.length, of(member.type())});
         }
-        if (!found.invariants().isEmpty()) {
-            throw new NotLowered(name + " has an invariant, and this backend does not check one yet");
+
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        WasmWriter out = new WasmWriter(table);
+        out.writeLittleEndian4(kind).writeLittleEndian4(members.size());
+        for (int[] member : written) {
+            out.writeLittleEndian4(member[0])
+                    .writeLittleEndian4(member[1])
+                    .writeLittleEndian4(member[2]);
         }
-        return found;
+        fragment.fill(descriptor, table.toByteArray());
+        return descriptor;
+    }
+
+    private CheckedData.Product product(TypeSymbol.AtModule name) {
+        if (program.declaration(name).data() instanceof CheckedData.Product found) {
+            return found;
+        }
+        throw new NotLowered(name + " is not written as fields, and a field is read off one that is");
     }
 }

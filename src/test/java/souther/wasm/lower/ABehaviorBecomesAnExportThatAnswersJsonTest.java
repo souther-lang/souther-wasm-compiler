@@ -233,7 +233,7 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("reads a scalar or a shape");
+                .hasMessageContaining("does not write yet");
     }
 
     /** The reason a call ended, for input the behavior refuses. */
