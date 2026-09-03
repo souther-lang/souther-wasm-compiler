@@ -150,6 +150,24 @@ public final class RuntimeAbi {
     /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as a {@code String}, or nothing. */
     public static final String READ_STRING = "__souther_read_string";
 
+    /** {@code (i32 json, i32 path, i32 pathLength) -> i32}: read as an object, or nothing. */
+    public static final String READ_OBJECT = "__souther_read_object";
+
+    /**
+     * {@code (i32 object, i32 name, i32 nameLength, i32 path, i32 pathLength) -> i32}: what an
+     * object wrote at a field, or nothing where it wrote no such field.
+     */
+    public static final String FIELD = "__souther_field";
+
+    /** {@code (i32 descriptor) -> i32}: a cell of a declared shape, its fields not yet filled. */
+    public static final String RECORD = "__souther_record";
+
+    /** {@code (i32 cell, i32 index, i32 value) -> ()}: puts a value in one of a record's fields. */
+    public static final String RECORD_SET = "__souther_record_set";
+
+    /** {@code (i32 cell, i32 index) -> i32}: the value in one of a record's fields. */
+    public static final String RECORD_GET = "__souther_record_get";
+
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
 

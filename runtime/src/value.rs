@@ -26,7 +26,9 @@
 //! null pointer here, and no body ever reads one: the generated code asks whether any issue was
 //! found before it runs, so what a refused place leaves behind is never stood in for.
 
-use crate::issues::{self, CODE_INVALID_SIZE, CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH};
+use crate::issues::{
+    self, CODE_INVALID_SIZE, CODE_MISSING_FIELD, CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH,
+};
 use crate::json;
 use crate::{abort, alloc, REASON_NOT_A_VALUE};
 
@@ -38,6 +40,12 @@ pub const TAG_INT: u32 = 1;
 pub const TAG_BOOL: u32 = 2;
 /// A `String`, whose payload is its UTF-8 bytes.
 pub const TAG_STRING: u32 = 3;
+/// A value of a declared shape, whose payload is one pointer per field.
+///
+/// What the fields are called is not in the cell. A shape's field names are the same for every
+/// value of it, so they are written once, in a descriptor the link places in static memory, and
+/// the cell holds where that is. `+4` is that address rather than a length.
+pub const TAG_RECORD: u32 = 4;
 
 const HEADER: usize = 8;
 
@@ -96,6 +104,100 @@ pub unsafe extern "C" fn __souther_string(pointer: u32, length: u32) -> u32 {
     cell
 }
 
+/// A cell of a declared shape, with room for its fields and nothing in them yet.
+///
+/// Nothing in them because a field is filled once it has been read, and a field that was refused
+/// is left as it started. No body runs while anything was refused, so what a hole holds is never
+/// asked.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_record(descriptor: u32) -> u32 {
+    let cell = header(TAG_RECORD, descriptor);
+    let _ = alloc(4 * descriptor_fields(descriptor));
+    cell
+}
+
+/// Puts a value in one of a record's fields.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_record_set(cell: u32, index: u32, value: u32) {
+    core::ptr::write_unaligned((cell as usize + HEADER + 4 * index as usize) as *mut u32, value);
+}
+
+/// The value in one of a record's fields.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_record_get(cell: u32, index: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + HEADER + 4 * index as usize) as *const u32)
+}
+
+/// The JSON written at a field of an object, or nothing where the object has no such field.
+///
+/// Nothing is reported once, here, as a missing field. A reader handed nothing answers nothing
+/// without saying anything more: what went wrong has been said, and saying it again per reader
+/// would count one absence as many.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_field(
+    object: u32,
+    name: u32,
+    name_length: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    if object == 0 {
+        return 0;
+    }
+    let held = json::__souther_json_length(object);
+    for i in 0..held {
+        let key = json::__souther_json_key(object, i);
+        if same(json::__souther_json_bytes(key), json::__souther_json_length(key), name, name_length)
+        {
+            return json::__souther_json_value(object, i);
+        }
+    }
+    issues::issue(CODE_MISSING_FIELD, path, path_length, b"nothing", b"a field");
+    0
+}
+
+/// Reads a JSON value as an object, which is what a shape is written as.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_object(value: u32, path: u32, path_length: u32) -> u32 {
+    if value == 0 {
+        return 0;
+    }
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_OBJECT {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind(tag), b"an object");
+        return 0;
+    }
+    value
+}
+
+unsafe fn same(left: u32, left_length: u32, right: u32, right_length: u32) -> bool {
+    if left_length != right_length {
+        return false;
+    }
+    for i in 0..left_length as usize {
+        if core::ptr::read((left as usize + i) as *const u8)
+            != core::ptr::read((right as usize + i) as *const u8)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// How many fields a shape's descriptor names.
+unsafe fn descriptor_fields(descriptor: u32) -> u32 {
+    core::ptr::read_unaligned(descriptor as usize as *const u32)
+}
+
+/// Where a field's name is, and how long it is.
+unsafe fn descriptor_name(descriptor: u32, index: u32) -> (u32, u32) {
+    let at = descriptor as usize + 4 + 8 * index as usize;
+    (
+        core::ptr::read_unaligned(at as *const u32),
+        core::ptr::read_unaligned((at + 4) as *const u32),
+    )
+}
+
 /// Checks that what a caller handed in is a call of a behavior taking this many parameters.
 ///
 /// A call's arguments are one JSON array, in the order the behavior declares its parameters.
@@ -126,6 +228,9 @@ pub unsafe extern "C" fn __souther_argument(document: u32, index: u32) -> u32 {
 /// round away here, and a number outside what sixty-four bits hold is not an `Int` at all.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_read_int(value: u32, path: u32, path_length: u32) -> u32 {
+    if value == 0 {
+        return 0;
+    }
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
         issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind(tag), b"Int");
@@ -165,6 +270,9 @@ pub unsafe extern "C" fn __souther_read_int(value: u32, path: u32, path_length: 
 /// Reads a JSON value as a `Bool`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_read_bool(value: u32, path: u32, path_length: u32) -> u32 {
+    if value == 0 {
+        return 0;
+    }
     match json::__souther_json_tag(value) {
         json::TAG_TRUE => __souther_bool(1),
         json::TAG_FALSE => __souther_bool(0),
@@ -178,6 +286,9 @@ pub unsafe extern "C" fn __souther_read_bool(value: u32, path: u32, path_length:
 /// Reads a JSON value as a `String`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_read_string(value: u32, path: u32, path_length: u32) -> u32 {
+    if value == 0 {
+        return 0;
+    }
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_STRING {
         issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind(tag), b"String");
@@ -194,6 +305,13 @@ pub unsafe extern "C" fn __souther_read_string(value: u32, path: u32, path_lengt
 pub unsafe extern "C" fn __souther_write(cell: u32) -> u64 {
     let out = crate::next_free();
     write(b"{\"value\":");
+    written(cell);
+    write(b"}");
+    json::packed(out, crate::next_free() - out)
+}
+
+/// Appends a value's JSON to the run being written.
+unsafe fn written(cell: u32) {
     match core::ptr::read_unaligned(cell as usize as *const u32) {
         TAG_INT => {
             json::__souther_json_write_int(__souther_int_value(cell));
@@ -207,13 +325,25 @@ pub unsafe extern "C" fn __souther_write(cell: u32) -> u64 {
                 __souther_string_length(cell),
             );
         }
+        TAG_RECORD => {
+            let descriptor = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+            write(b"{");
+            for i in 0..descriptor_fields(descriptor) {
+                if i > 0 {
+                    write(b",");
+                }
+                let (name, name_length) = descriptor_name(descriptor, i);
+                json::__souther_json_write_string(name, name_length);
+                write(b":");
+                written(__souther_record_get(cell, i));
+            }
+            write(b"}");
+        }
         TAG_UNIT => write(b"null"),
         // Nothing a decoder was handed reaches here: a value whose tag this does not know is one
         // the emitter made, so it is this compiler that is wrong rather than the input.
         other => abort(REASON_NOT_A_VALUE, 0, other as u64, cell as u64),
     }
-    write(b"}");
-    json::packed(out, crate::next_free() - out)
 }
 
 unsafe fn write(bytes: &[u8]) {

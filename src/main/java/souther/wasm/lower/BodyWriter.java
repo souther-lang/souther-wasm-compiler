@@ -9,37 +9,53 @@ import souther.wasm.emit.WasmWriter;
  * <p>Small on purpose. What is here is what a body of this backend's writes today; an instruction
  * this class does not name is one nothing emits yet, so a reader can see the whole of what a
  * generated body can do by reading this.
+ *
+ * <p>Locals are taken as they turn out to be needed, because how many a body wants is not known
+ * until it has been written — reading a shape wants one per shape it meets, nested. The sixty-four
+ * bit locals come first in the numbering so that taking another thirty-two bit one moves nothing
+ * that was already written.
  */
 final class BodyWriter {
 
     private static final int OPCODE_END = 0x0b;
     private static final int OPCODE_IF = 0x04;
     private static final int OPCODE_ELSE = 0x05;
-    private static final int OPCODE_I32_EQZ = 0x45;
-    private static final int BLOCK_TYPE_EMPTY = 0x40;
     private static final int OPCODE_CALL = 0x10;
     private static final int OPCODE_LOCAL_GET = 0x20;
     private static final int OPCODE_LOCAL_SET = 0x21;
     private static final int OPCODE_I32_CONST = 0x41;
     private static final int OPCODE_I64_CONST = 0x42;
+    private static final int OPCODE_I32_EQZ = 0x45;
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
     private static final int OPCODE_I64_SHR_U = 0x88;
 
     private static final int TYPE_I32 = 0x7f;
     private static final int TYPE_I64 = 0x7e;
+    private static final int BLOCK_TYPE_EMPTY = 0x40;
 
     private final ByteArrayOutputStream instructions = new ByteArrayOutputStream();
     private final WasmWriter writer = new WasmWriter(instructions);
-    private final int extraI32Locals;
-    private final int extraI64Locals;
+    private final int parameters;
+    private final int wideLocals;
+    private int narrowLocals;
 
     /**
-     * @param extraI32Locals how many {@code i32} locals the body needs past its parameters
-     * @param extraI64Locals how many {@code i64} locals it needs, which come after those
+     * @param parameters how many the function's type declares, which take the first indices
+     * @param wideLocals how many {@code i64} locals it wants, which take the next
      */
-    BodyWriter(int extraI32Locals, int extraI64Locals) {
-        this.extraI32Locals = extraI32Locals;
-        this.extraI64Locals = extraI64Locals;
+    BodyWriter(int parameters, int wideLocals) {
+        this.parameters = parameters;
+        this.wideLocals = wideLocals;
+    }
+
+    /** The index of one of the function's {@code i64} locals. */
+    int wide(int which) {
+        return parameters + which;
+    }
+
+    /** Takes another {@code i32} local and answers its index. */
+    int narrow() {
+        return parameters + wideLocals + narrowLocals++;
     }
 
     BodyWriter localGet(int index) {
@@ -108,13 +124,13 @@ final class BodyWriter {
     byte[] body() {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         WasmWriter out = new WasmWriter(body);
-        int groups = (extraI32Locals > 0 ? 1 : 0) + (extraI64Locals > 0 ? 1 : 0);
+        int groups = (wideLocals > 0 ? 1 : 0) + (narrowLocals > 0 ? 1 : 0);
         out.writeUnsignedLeb128(groups);
-        if (extraI32Locals > 0) {
-            out.writeUnsignedLeb128(extraI32Locals).write((byte) TYPE_I32);
+        if (wideLocals > 0) {
+            out.writeUnsignedLeb128(wideLocals).write((byte) TYPE_I64);
         }
-        if (extraI64Locals > 0) {
-            out.writeUnsignedLeb128(extraI64Locals).write((byte) TYPE_I64);
+        if (narrowLocals > 0) {
+            out.writeUnsignedLeb128(narrowLocals).write((byte) TYPE_I32);
         }
         out.write(instructions.toByteArray()).write((byte) OPCODE_END);
         return body.toByteArray();
