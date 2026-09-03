@@ -1,0 +1,22 @@
+souther-wasm-compiler
+Copyright the Souther contributors
+
+This product is licensed under the Eclipse Public License 2.0, except for the
+files noted below.
+
+---
+
+src/main/java/souther/wasm/emit/
+
+  A copy of the package am.ik.wasm from rontolisp, at commit
+  e599ae10bd377e673263ec4e99e3e13d0639015a.
+
+    rontolisp
+    https://github.com/making/rontolisp
+    Copyright Toshiaki Maki
+    Licensed under the Apache License, Version 2.0
+
+  The package declaration was rewritten from am.ik.wasm to souther.wasm.emit.
+  Nothing else was changed on the way in, so a later upstream fix reads as a
+  diff against that commit. These files stay under the Apache License 2.0; a
+  copy is in LICENSE-APACHE-2.0.
