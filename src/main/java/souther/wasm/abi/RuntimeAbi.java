@@ -135,6 +135,30 @@ public final class RuntimeAbi {
     /** {@code (i32 ptr, i32 len) -> i64}: a string quoted and escaped, answered packed. */
     public static final String JSON_WRITE_STRING = "__souther_json_write_string";
 
+    /** {@code (i32 document, i32 index, i32 expected) -> i32}: one argument of a call. */
+    public static final String ARGUMENT = "__souther_argument";
+
+    /** {@code (i32 json) -> i32}: a JSON value read as the {@code Int} the place was declared. */
+    public static final String READ_INT = "__souther_read_int";
+
+    /** {@code (i32 json) -> i32}: a JSON value read as a {@code Bool}. */
+    public static final String READ_BOOL = "__souther_read_bool";
+
+    /** {@code (i32 json) -> i32}: a JSON value read as a {@code String}. */
+    public static final String READ_STRING = "__souther_read_string";
+
+    /** {@code (i64 value) -> i32}: a cell holding an {@code Int}. */
+    public static final String INT = "__souther_int";
+
+    /** {@code (i32 value) -> i32}: a cell holding a {@code Bool}. */
+    public static final String BOOL = "__souther_bool";
+
+    /** {@code (i32 ptr, i32 len) -> i32}: a cell holding a {@code String}. */
+    public static final String STRING = "__souther_string";
+
+    /** {@code (i32 cell) -> i64}: a value written as JSON, answered packed. */
+    public static final String WRITE = "__souther_write";
+
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */
     public static final String START_THUNK = "__souther_start";
 

@@ -18,7 +18,20 @@ public enum AbortReason {
     BAD_MARK(2),
 
     /** What was handed in is not one JSON document. {@code aux0} is where the reading stopped. */
-    MALFORMED_JSON(3);
+    MALFORMED_JSON(3),
+
+    /**
+     * What was written is not what the place was declared to hold.
+     *
+     * <p>{@code aux0} is what was there and {@code aux1} what was asked for. Not where this is
+     * going: input a decoder refuses is an expected outcome and belongs in the answer as the
+     * issues it found, at their paths, rather than as a trap. What that needs is a value this
+     * runtime has not got yet.
+     */
+    NOT_WHAT_WAS_DECLARED(4),
+
+    /** A whole number outside what an {@code Int} holds. */
+    NUMBER_OUT_OF_RANGE(5);
 
     private final int code;
 

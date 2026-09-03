@@ -3,11 +3,15 @@ package souther.wasm.lower;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Running;
+import souther.wasm.abi.AbortReason;
+import souther.wasm.abi.RuntimeAbi;
 
 /**
  * A Souther source compiled to wasm and called.
@@ -95,6 +99,71 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
     }
 
     @Test
+    void answersTheArgumentABehaviorWasHanded() {
+        Running module = compiled("""
+                module echoing
+
+                behavior echo : (n: Int) -> Int
+
+                let echo (n) = n
+                """);
+
+        assertThat(answerOf(module, "echoing.echo", "[7]")).isEqualTo("7");
+        assertThat(answerOf(module, "echoing.echo", "[-9007199254740993]"))
+                .isEqualTo("-9007199254740993");
+    }
+
+    @Test
+    void takesItsArgumentsInTheOrderTheBehaviorDeclaresThem() {
+        Running module = compiled("""
+                module picking
+
+                behavior second : (a: String, b: String) -> String
+
+                let second (a, b) = b
+                """);
+
+        assertThat(answerOf(module, "picking.second", "[\"one\", \"two\"]")).isEqualTo("\"two\"");
+    }
+
+    @Test
+    void readsEachArgumentAsTheTypeItWasDeclared() {
+        Running module = compiled("""
+                module mixing
+
+                behavior flag : (n: Int, on: Bool, tag: String) -> Bool
+
+                let flag (n, on, tag) = on
+                """);
+
+        assertThat(answerOf(module, "mixing.flag", "[1, true, \"x\"]")).isEqualTo("true");
+        assertThat(answerOf(module, "mixing.flag", "[1, false, \"x\"]")).isEqualTo("false");
+    }
+
+    @Test
+    void endsTheCallWhenTheInputIsNotWhatWasDeclared() {
+        Running module = compiled("""
+                module strict
+
+                behavior echo : (n: Int) -> Int
+
+                let echo (n) = n
+                """);
+
+        assertThat(refusalFor(module, "strict.echo", "[\"7\"]"))
+                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
+        assertThat(refusalFor(module, "strict.echo", "[1.5]"))
+                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
+        assertThat(refusalFor(module, "strict.echo", "[1, 2]"))
+                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
+        assertThat(refusalFor(module, "strict.echo", "7"))
+                .contains(AbortReason.NOT_WHAT_WAS_DECLARED);
+        assertThat(refusalFor(module, "strict.echo", "[99999999999999999999]"))
+                .contains(AbortReason.NUMBER_OUT_OF_RANGE);
+        assertThat(refusalFor(module, "strict.echo", "[1")).contains(AbortReason.MALFORMED_JSON);
+    }
+
+    @Test
     void saysWhatItMetRatherThanEmittingSomethingThatWouldAnswerWrongly() {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module adding
@@ -106,7 +175,36 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
                 .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("takes an input");
+                .hasMessageContaining("Binary");
+    }
+
+    @Test
+    void saysSoForATypeItCannotReadAnArgumentAs() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module pricing
+
+                behavior same : (amount: Decimal) -> Decimal
+
+                let same (amount) = amount
+                """));
+
+        assertThatThrownBy(() -> WasmCompiler.compile(program))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("reads only a scalar");
+    }
+
+    /** The reason a call ended, for input the behavior refuses. */
+    private static Optional<AbortReason> refusalFor(Running module, String export, String arguments) {
+        int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
+        int mark = module.call(RuntimeAbi.ALLOC_MARK);
+        try {
+            answerOf(module, export, arguments);
+            throw new AssertionError(export + " answered " + arguments + " rather than refusing it");
+        } catch (ChicoryException trapped) {
+            var record = module.failureRecord();
+            module.call(RuntimeAbi.ALLOC_RESET, mark);
+            return record.describesTrapAfter(snapshot) ? record.namedReason() : Optional.empty();
+        }
     }
 
     private static Running compiled(String... sources) {
@@ -114,7 +212,13 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
     }
 
     private static String answerOf(Running module, String export) {
-        long[] answer = module.callWithString(export, 0, 0);
+        return answerOf(module, export, "[]");
+    }
+
+    private static String answerOf(Running module, String export, String arguments) {
+        int address = module.staged(arguments);
+        long[] answer = module.callWithString(
+                export, address, arguments.getBytes(StandardCharsets.UTF_8).length);
         return new String(module.read((int) answer[0], (int) answer[1]), StandardCharsets.UTF_8);
     }
 }

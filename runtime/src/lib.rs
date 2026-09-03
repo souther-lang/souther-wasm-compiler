@@ -25,6 +25,7 @@
 #![no_std]
 
 mod json;
+mod value;
 
 use core::panic::PanicInfo;
 
@@ -198,6 +199,11 @@ pub const REASON_OUT_OF_MEMORY: u32 = 1;
 pub const REASON_BAD_MARK: u32 = 2;
 /// What was handed in is not one JSON document. `aux0` is where the reading stopped.
 pub const REASON_MALFORMED_JSON: u32 = 3;
+/// What was written is not what the place was declared to hold. `aux0` is what was there and
+/// `aux1` what was asked for.
+pub const REASON_NOT_WHAT_WAS_DECLARED: u32 = 4;
+/// A whole number outside what an `Int` holds.
+pub const REASON_NUMBER_OUT_OF_RANGE: u32 = 5;
 
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says
