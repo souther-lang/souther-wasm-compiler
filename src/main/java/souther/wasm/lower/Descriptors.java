@@ -42,6 +42,9 @@ final class Descriptors {
     private static final int KIND_ENUMERATION = 10;
     private static final int KIND_TUPLE = 11;
     private static final int KIND_DECIMAL = 12;
+    private static final int KIND_DATE = 13;
+    private static final int KIND_TIME = 14;
+    private static final int KIND_DATE_TIME = 15;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -76,6 +79,9 @@ final class Descriptors {
             case Type.Prim.BOOL -> scalar(KIND_BOOL);
             case Type.Prim.STRING -> scalar(KIND_STRING);
             case Type.Prim.DECIMAL -> scalar(KIND_DECIMAL);
+            case Type.Prim.DATE -> scalar(KIND_DATE);
+            case Type.Prim.TIME -> scalar(KIND_TIME);
+            case Type.Prim.DATETIME -> scalar(KIND_DATE_TIME);
             case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule named ->
                     ofDeclared(named);
             case Type.ListOf list -> holding(KIND_LIST, list.element());
@@ -159,6 +165,9 @@ final class Descriptors {
             case "Bool" -> Type.Prim.BOOL;
             case "String" -> Type.Prim.STRING;
             case "Decimal" -> Type.Prim.DECIMAL;
+            case "Date" -> Type.Prim.DATE;
+            case "Time" -> Type.Prim.TIME;
+            case "DateTime" -> Type.Prim.DATETIME;
             default -> throw new NotLowered("a " + written
                     + " among alternatives, which this backend does not write yet");
         };

@@ -224,11 +224,11 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
     @Test
     void saysSoForATypeItCannotReadAnArgumentAs() {
         CheckedProgram program = CheckedProgram.of(List.of("""
-                module diary
+                module wording
 
-                behavior same : (d: Date) -> Date
+                behavior matching : (s: String) -> Bool
 
-                let same (d) = d
+                let matching (s) = String.matches("a+", s)
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))

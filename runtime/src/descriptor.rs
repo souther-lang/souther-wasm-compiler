@@ -43,6 +43,12 @@ pub const KIND_BOOL: u32 = 1;
 pub const KIND_STRING: u32 = 2;
 /// A `Decimal`.
 pub const KIND_DECIMAL: u32 = 12;
+/// A `Date`.
+pub const KIND_DATE: u32 = 13;
+/// A `Time`.
+pub const KIND_TIME: u32 = 14;
+/// A `DateTime`.
+pub const KIND_DATE_TIME: u32 = 15;
 /// A type with one value.
 pub const KIND_UNIT: u32 = 3;
 /// A type written as fields.

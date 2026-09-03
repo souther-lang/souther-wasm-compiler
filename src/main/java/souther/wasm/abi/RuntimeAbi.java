@@ -367,6 +367,32 @@ public final class RuntimeAbi {
         public static final String DECIMAL_COMPARE = "__souther_decimal_compare";
         /** {@code (i32 cell) -> i32}: the unary {@code -} on an amount. */
         public static final String DECIMAL_NEGATE = "__souther_decimal_negate";
+        /** {@code (i32 days, i32 d) -> i32}. */
+        public static final String DATE_ADD_DAYS = "__souther_date_add_days";
+        /** {@code (i32 months, i32 d) -> i32}. */
+        public static final String DATE_ADD_MONTHS = "__souther_date_add_months";
+        /** {@code (i32 years, i32 d) -> i32}. */
+        public static final String DATE_ADD_YEARS = "__souther_date_add_years";
+        /** {@code (i32 from, i32 to) -> i32}. */
+        public static final String DATE_DAYS_BETWEEN = "__souther_date_days_between";
+        /** {@code (i32 d, i32 which) -> i32}: the year, the month or the day. */
+        public static final String DATE_PART = "__souther_date_part";
+        /** {@code (i32 year, i32 month, i32 day, i32 absent) -> i32}. */
+        public static final String DATE_FROM_PARTS = "__souther_date_from_parts";
+        /** {@code (i32 hour, i32 minute, i32 second, i32 absent) -> i32}. */
+        public static final String TIME_FROM_PARTS = "__souther_time_from_parts";
+        /** {@code (i32 t, i32 which) -> i32}: the hour, the minute or the second. */
+        public static final String TIME_PART = "__souther_time_part";
+        /** {@code (i32 by, i32 dt, i32 seconds) -> i32}. */
+        public static final String DATETIME_ADD = "__souther_datetime_add";
+        /** {@code (i32 from, i32 to) -> i32}. */
+        public static final String DATETIME_MINUTES_BETWEEN = "__souther_datetime_minutes_between";
+        /** {@code (i32 dt) -> i32}. */
+        public static final String DATETIME_TO_DATE = "__souther_datetime_to_date";
+        /** {@code (i32 dt) -> i32}. */
+        public static final String DATETIME_TO_TIME = "__souther_datetime_to_time";
+        /** {@code (i32 d, i32 t) -> i32}. */
+        public static final String DATETIME_FROM_PARTS = "__souther_datetime_from_parts";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */
         public static final String LIST_SORT = "__souther_list_sort";
         /** {@code (i32 key, i32 xs, i32 descriptor, i32 keys) -> i32}. */

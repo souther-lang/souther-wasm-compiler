@@ -28,9 +28,11 @@
 
 use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_DECIMAL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION,
-    KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
+    self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INT,
+    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
+    KIND_TUPLE, KIND_UNIT,
 };
+use crate::temporal;
 use crate::order;
 use crate::issues::{
     self, CODE_INVALID_SIZE, CODE_INVARIANT_VIOLATION, CODE_MISSING_FIELD, CODE_NOT_ALLOWED,
@@ -201,6 +203,9 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
         KIND_BOOL => tag == TAG_BOOL,
         KIND_STRING => tag == TAG_STRING,
         KIND_DECIMAL => tag == TAG_DECIMAL,
+        KIND_DATE => tag == TAG_DATE,
+        KIND_TIME => tag == TAG_TIME,
+        KIND_DATE_TIME => tag == TAG_DATE_TIME,
         KIND_LIST | KIND_SET => tag == TAG_LIST,
         KIND_MAP => tag == TAG_MAP,
         KIND_OPTION => tag == TAG_SOME || tag == TAG_NONE,
@@ -412,6 +417,12 @@ pub unsafe extern "C" fn __souther_arguments_length(document: u32) -> u32 {
 pub const TAG_ARGUMENTS: u32 = 12;
 /// An amount and how it was written. See `decimal` for what it holds.
 pub const TAG_DECIMAL: u32 = 13;
+/// A day. See `temporal` for what it holds.
+pub const TAG_DATE: u32 = 14;
+/// A time of day.
+pub const TAG_TIME: u32 = 15;
+/// A day and a time of day.
+pub const TAG_DATE_TIME: u32 = 16;
 
 /// Values written together, with nothing in them yet.
 #[no_mangle]
@@ -594,6 +605,9 @@ pub unsafe extern "C" fn __souther_read(
         KIND_BOOL => boolean(value, path, path_length),
         KIND_STRING => text(value, path, path_length),
         KIND_DECIMAL => amount(value, path, path_length),
+        KIND_DATE | KIND_TIME | KIND_DATE_TIME => {
+            when(value, descriptor::kind(descriptor), path, path_length)
+        }
         KIND_UNIT => unit(value, descriptor, path, path_length),
         KIND_PRODUCT => product(value, descriptor, path, path_length),
         KIND_SUM => sum(value, descriptor, path, path_length),
@@ -687,6 +701,34 @@ unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
         return 0;
     }
     held
+}
+
+/// A day, a time of day, or the two together, read as a calendar and a clock write them.
+unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    let wanted: &[u8] = match kind {
+        KIND_DATE => b"Date",
+        KIND_TIME => b"Time",
+        _ => b"DateTime",
+    };
+    if tag != json::TAG_STRING {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), wanted);
+        return 0;
+    }
+    let at = json::__souther_json_bytes(value);
+    let length = json::__souther_json_length(value);
+    let held = match kind {
+        KIND_DATE => temporal::read_day(at, length).map(|d| (TAG_DATE, d, 0)),
+        KIND_TIME => temporal::read_time(at, length).map(|s| (TAG_TIME, 0, s)),
+        _ => temporal::read_both(at, length).map(|(d, s)| (TAG_DATE_TIME, d, s)),
+    };
+    match held {
+        Some((tag, day, second)) => temporal::made(tag, day, second),
+        None => {
+            issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"string", wanted);
+            0
+        }
+    }
 }
 
 /// A type with one value is written as an empty object: there is nothing to say about which one it
@@ -1055,6 +1097,16 @@ unsafe fn written(cell: u32, descriptor: u32) {
             // The one form of the amount, so that two ways of writing it are one document.
             let (at, length) = decimal::written(decimal::canonical(cell));
             text::push(at, length);
+        }
+        KIND_DATE | KIND_TIME | KIND_DATE_TIME => {
+            let (at, length) = match descriptor::kind(descriptor) {
+                KIND_DATE => temporal::written_day(cell),
+                KIND_TIME => temporal::written_time(cell),
+                _ => temporal::written_both(cell),
+            };
+            write(b"\"");
+            text::push(at, length);
+            write(b"\"");
         }
         KIND_UNIT => write(b"{}"),
         KIND_PRODUCT => fields(cell, descriptor, false),

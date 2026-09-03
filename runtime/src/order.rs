@@ -19,9 +19,11 @@
 
 use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_DECIMAL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION,
-    KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
+    self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INT,
+    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
+    KIND_TUPLE, KIND_UNIT,
 };
+use crate::temporal;
 use crate::value;
 
 const RANK_NULL: i32 = 0;
@@ -137,7 +139,20 @@ pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
                 0
             }
         }
-        RANK_STRING => text(left, right),
+        RANK_STRING => match descriptor::kind(descriptor) {
+            KIND_DATE | KIND_TIME | KIND_DATE_TIME => {
+                let a = temporal::moment(left);
+                let b = temporal::moment(right);
+                if a < b {
+                    -1
+                } else if a > b {
+                    1
+                } else {
+                    0
+                }
+            }
+            _ => text(left, right),
+        },
         RANK_ARRAY => elements(left, right, descriptor),
         _ => members(left, right, descriptor),
     }
@@ -154,7 +169,8 @@ unsafe fn rank(cell: u32, descriptor: u32) -> i32 {
             }
         }
         KIND_INT | KIND_DECIMAL => RANK_NUMBER,
-        KIND_STRING => RANK_STRING,
+        // A day and a time of day cross as the text a calendar and a clock write them as.
+        KIND_STRING | KIND_DATE | KIND_TIME | KIND_DATE_TIME => RANK_STRING,
         KIND_LIST | KIND_SET => RANK_ARRAY,
         KIND_OPTION => {
             if held(cell) == 0 {
