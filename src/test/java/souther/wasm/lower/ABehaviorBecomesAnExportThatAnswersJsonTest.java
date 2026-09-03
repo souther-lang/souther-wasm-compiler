@@ -209,17 +209,16 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
     @Test
     void saysWhatItMetRatherThanEmittingSomethingThatWouldAnswerWrongly() {
         CheckedProgram program = CheckedProgram.of(List.of("""
-                module pricing
+                module wording
 
-                data Money = { amount: Decimal }
+                behavior matching : (s: String) -> Bool
 
-                behavior doubled : (m: Money) -> Money
-
-                let doubled (m) = Money { amount = m.amount + m.amount }
+                let matching (s) = String.matches("a+", s)
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class);
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("STRING_MATCHES");
     }
 
     @Test

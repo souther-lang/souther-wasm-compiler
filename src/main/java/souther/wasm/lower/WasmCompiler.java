@@ -476,8 +476,11 @@ public final class WasmCompiler {
                             .call(calls.of(RuntimeAbi.RECORD_GET));
                 }
                 case Core.Neg opposite -> {
+                    boolean amount = opposite.operand().type()
+                            == souther.compiler.types.Type.Prim.DECIMAL;
                     value(out, opposite.operand());
-                    out.call(calls.of(RuntimeAbi.NEGATE));
+                    out.call(calls.of(amount
+                            ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
                 }
                 case Core.Binary binary -> binary(out, binary);
                 case Core.If chosen -> {
@@ -756,6 +759,14 @@ public final class WasmCompiler {
                 case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
                 case LIST_GET -> RuntimeAbi.Kernels.LIST_GET;
                 case LIST_FIND -> RuntimeAbi.Kernels.LIST_FIND;
+                case DECIMAL_ADD -> RuntimeAbi.Kernels.DECIMAL_ADD;
+                case DECIMAL_SUBTRACT -> RuntimeAbi.Kernels.DECIMAL_SUBTRACT;
+                case DECIMAL_MULTIPLY -> RuntimeAbi.Kernels.DECIMAL_MULTIPLY;
+                case DECIMAL_DIVIDE -> RuntimeAbi.Kernels.DECIMAL_DIVIDE;
+                case DECIMAL_ROUND -> RuntimeAbi.Kernels.DECIMAL_ROUND;
+                case DECIMAL_TO_INT -> RuntimeAbi.Kernels.DECIMAL_TO_INT;
+                case DECIMAL_FROM_INT -> RuntimeAbi.Kernels.DECIMAL_FROM_INT;
+                case DECIMAL_COMPARE -> RuntimeAbi.Kernels.DECIMAL_COMPARE;
                 case LIST_SORT -> RuntimeAbi.Kernels.LIST_SORT;
                 case LIST_SORT_BY -> RuntimeAbi.Kernels.LIST_SORT_BY;
                 case LIST_MAX, LIST_MIN -> RuntimeAbi.Kernels.LIST_FURTHEST;
@@ -788,8 +799,15 @@ public final class WasmCompiler {
                 default -> throw new NotLowered(writing + " reaches " + kernel
                         + ", which this backend does not write yet");
             };
-            for (Core argument : call.args()) {
-                value(out, argument);
+            Integer rounds = TAKES_A_MODE.get(kernel);
+            for (int i = 0; i < call.args().size(); i++) {
+                value(out, call.args().get(i));
+                // A way of rounding goes over as its place among the ones the language declares.
+                // Which argument that is comes from the operation's own declaration: a value of
+                // one of them is typed as the case it is, not as the set it belongs to.
+                if (rounds != null && rounds == i) {
+                    out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
+                }
             }
             if (BUILDS_A_LIST.contains(kernel)) {
                 out.constant(shapes.of(call.type()));
@@ -820,6 +838,7 @@ public final class WasmCompiler {
         private static final Map<Kernel, String> ANSWERS_A_CASE = Map.of(
                 Kernel.INT_DIVIDE, "DivisionByZero",
                 Kernel.INT_TRUNCATING_REMAINDER, "DivisionByZero",
+                Kernel.DECIMAL_DIVIDE, "DivisionByZero",
                 Kernel.STRING_TO_INT, "NotANumber");
 
         /** What a sort's key answers, which is what its order is asked of. */
@@ -829,6 +848,12 @@ public final class WasmCompiler {
             }
             throw new NotLowered(writing + " sorts by something that is not written as a function");
         }
+
+        /** The operations told a way of rounding, and which of their arguments says it. */
+        private static final Map<Kernel, Integer> TAKES_A_MODE = Map.of(
+                Kernel.DECIMAL_TO_INT, 0,
+                Kernel.DECIMAL_ROUND, 1,
+                Kernel.DECIMAL_DIVIDE, 3);
 
         /** The alternative of a set that goes by a name. */
         private static TypeSymbol caseNamed(souther.compiler.types.Type answered, String name) {
@@ -958,11 +983,15 @@ public final class WasmCompiler {
          */
         private void binary(BodyWriter out, Core.Binary binary) {
             switch (binary.op()) {
-                case ADD -> arithmetic(out, binary, RuntimeAbi.ADD);
-                case SUB -> arithmetic(out, binary, RuntimeAbi.SUBTRACT);
-                case MUL -> arithmetic(out, binary, RuntimeAbi.MULTIPLY);
-                case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE);
-                case CONCAT -> arithmetic(out, binary, RuntimeAbi.CONCAT);
+                case ADD -> arithmetic(out, binary, RuntimeAbi.ADD,
+                        RuntimeAbi.Kernels.DECIMAL_ADD);
+                case SUB -> arithmetic(out, binary, RuntimeAbi.SUBTRACT,
+                        RuntimeAbi.Kernels.DECIMAL_SUBTRACT);
+                case MUL -> arithmetic(out, binary, RuntimeAbi.MULTIPLY,
+                        RuntimeAbi.Kernels.DECIMAL_MULTIPLY);
+                case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE,
+                        RuntimeAbi.Kernels.DECIMAL_DIVIDE_BY);
+                case CONCAT -> arithmetic(out, binary, RuntimeAbi.CONCAT, null);
                 case EQ -> comparison(out, binary, BodyWriter.Comparison.EQUAL);
                 case NE -> comparison(out, binary, BodyWriter.Comparison.UNEQUAL);
                 case LT -> comparison(out, binary, BodyWriter.Comparison.LESS);
@@ -996,14 +1025,15 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.BOOL));
         }
 
-        private void arithmetic(BodyWriter out, Core.Binary binary, String operation) {
-            if (binary.left().type() == souther.compiler.types.Type.Prim.DECIMAL) {
-                throw new NotLowered(writing + " works out an amount with " + binary.op()
-                        + ", and this backend carries a Decimal without working one out yet");
+        private void arithmetic(
+                BodyWriter out, Core.Binary binary, String whole, String amount) {
+            boolean amounts = binary.left().type() == souther.compiler.types.Type.Prim.DECIMAL;
+            if (amounts && amount == null) {
+                throw new NotLowered(writing + " works out an amount with " + binary.op());
             }
             value(out, binary.left());
             value(out, binary.right());
-            out.call(calls.of(operation));
+            out.call(calls.of(amounts ? amount : whole));
         }
 
         /**

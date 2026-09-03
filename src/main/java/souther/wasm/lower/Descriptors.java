@@ -111,9 +111,26 @@ final class Descriptors {
         return product(name).fields();
     }
 
+    /**
+     * The set of ways to round, which the language declares.
+     *
+     * <p>An operation that rounds is told which way as a place among these, because what it does
+     * with it is pick one of that many ways — and a value of one of the cases is typed as that
+     * case, so the set it belongs to is asked of the language rather than of the value.
+     */
+    int roundingModes() {
+        for (CheckedData each : program.languageDeclarations()) {
+            if (each instanceof CheckedData.Sum held && held.name().name().equals("RoundingMode")) {
+                return ofDeclared(held.name());
+            }
+        }
+        throw new NotLowered("the language declares no set of ways to round");
+    }
+
     /** What a declared shape says must hold of its values. */
     List<ValueShape.Invariant> invariantsOf(TypeSymbol.AtModule name) {
-        return product(name).invariants();
+        return declared(name) instanceof CheckedData.Product found
+                ? found.invariants() : List.of();
     }
 
     /** Which field of a shape a name is, by the shape's own ordering. */
@@ -153,7 +170,7 @@ final class Descriptors {
         if (already != null) {
             return already;
         }
-        CheckedData data = program.declaration(name).data();
+        CheckedData data = declared(name);
         return switch (data) {
             case CheckedData.Unit ignored -> {
                 int descriptor = scalar(KIND_UNIT);
@@ -181,8 +198,8 @@ final class Descriptors {
      */
     private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members) {
         boolean carriesNothing = !members.isEmpty() && members.stream().allMatch(
-                each -> each instanceof TypeSymbol.AtModule declared
-                        && program.declaration(declared).data() instanceof CheckedData.Unit);
+                each -> each instanceof TypeSymbol.AtModule held
+                        && declared(held) instanceof CheckedData.Unit);
         List<int[]> described = new ArrayList<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
@@ -284,8 +301,29 @@ final class Descriptors {
         return descriptor;
     }
 
+    /**
+     * What a name declares, whether the model declared it or the language did.
+     *
+     * <p>A rounding mode is the language's, and a body that names one is naming a type like any
+     * other — so it is found where it is declared rather than only where a module would put it.
+     */
+    private CheckedData declared(TypeSymbol.AtModule name) {
+        for (CheckedData each : program.languageDeclarations()) {
+            if (each instanceof CheckedData.Product held && held.name().equals(name)) {
+                return held;
+            }
+            if (each instanceof CheckedData.Sum held && held.name().equals(name)) {
+                return held;
+            }
+            if (each instanceof CheckedData.Unit held && held.name().equals(name)) {
+                return held;
+            }
+        }
+        return program.declaration(name).data();
+    }
+
     private CheckedData.Product product(TypeSymbol.AtModule name) {
-        if (program.declaration(name).data() instanceof CheckedData.Product found) {
+        if (declared(name) instanceof CheckedData.Product found) {
             return found;
         }
         throw new NotLowered(name + " is not written as fields, and a field is read off one that is");

@@ -200,11 +200,24 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
         KIND_INT => tag == TAG_INT,
         KIND_BOOL => tag == TAG_BOOL,
         KIND_STRING => tag == TAG_STRING,
+        KIND_DECIMAL => tag == TAG_DECIMAL,
         KIND_LIST | KIND_SET => tag == TAG_LIST,
         KIND_MAP => tag == TAG_MAP,
         KIND_OPTION => tag == TAG_SOME || tag == TAG_NONE,
         _ => core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor,
     })
+}
+
+/// Which of a set's alternatives a value is, as its place in what declared it.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_case_of(cell: u32, descriptor: u32) -> u32 {
+    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+    for i in 0..descriptor::arity(descriptor) {
+        if descriptor::member(descriptor, i) == held {
+            return i;
+        }
+    }
+    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64)
 }
 
 /// Whether an option holds something.

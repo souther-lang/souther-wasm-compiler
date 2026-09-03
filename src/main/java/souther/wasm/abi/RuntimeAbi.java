@@ -261,6 +261,9 @@ public final class RuntimeAbi {
     /** {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. */
     public static final String IS = "__souther_is";
 
+    /** {@code (i32 cell, i32 descriptor) -> i32}: a value's place among a set's alternatives. */
+    public static final String CASE_OF = "__souther_case_of";
+
     /** {@code (i32 cell) -> i32}: whether an option holds something. */
     public static final String IS_SOME = "__souther_is_some";
 
@@ -344,6 +347,26 @@ public final class RuntimeAbi {
         public static final String LIST_GET = "__souther_list_at";
         /** {@code (i32 p, i32 xs) -> i32}. */
         public static final String LIST_FIND = "__souther_list_find";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String DECIMAL_ADD = "__souther_decimal_add";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String DECIMAL_SUBTRACT = "__souther_decimal_subtract";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String DECIMAL_MULTIPLY = "__souther_decimal_multiply";
+        /** {@code (i32 a, i32 b) -> i32}: the {@code /} operator. */
+        public static final String DECIMAL_DIVIDE_BY = "__souther_decimal_divide_by";
+        /** {@code (i32 a, i32 b, i32 scale, i32 mode, i32 absent) -> i32}. */
+        public static final String DECIMAL_DIVIDE = "__souther_decimal_divide";
+        /** {@code (i32 scale, i32 mode, i32 d) -> i32}. */
+        public static final String DECIMAL_ROUND = "__souther_decimal_round";
+        /** {@code (i32 mode, i32 d) -> i32}. */
+        public static final String DECIMAL_TO_INT = "__souther_decimal_to_int";
+        /** {@code (i32 n) -> i32}. */
+        public static final String DECIMAL_FROM_INT = "__souther_decimal_from_int";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String DECIMAL_COMPARE = "__souther_decimal_compare";
+        /** {@code (i32 cell) -> i32}: the unary {@code -} on an amount. */
+        public static final String DECIMAL_NEGATE = "__souther_decimal_negate";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */
         public static final String LIST_SORT = "__souther_list_sort";
         /** {@code (i32 key, i32 xs, i32 descriptor, i32 keys) -> i32}. */
