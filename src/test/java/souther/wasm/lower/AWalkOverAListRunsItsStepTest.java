@@ -102,6 +102,38 @@ class AWalkOverAListRunsItsStepTest {
     }
 
     @Test
+    void growsAMapOutOfAList() {
+        Running module = compiled("""
+                module counting
+
+                behavior byName : (xs: List<Int>) -> Map<String, Int>
+
+                let byName (xs) = List.fold(
+                    (acc, x) -> Map.insert(String.fromInt(x), x, acc), Map.empty, xs)
+                """);
+
+        assertThat(answerOf(module, "counting.byName", "[[2,1]]"))
+                .isEqualTo("{\"value\":{\"1\":1,\"2\":2}}");
+        assertThat(answerOf(module, "counting.byName", "[[]]")).isEqualTo("{\"value\":{}}");
+    }
+
+    @Test
+    void findsTheFirstElementAStepHoldsFor() {
+        Running module = compiled("""
+                module counting
+
+                behavior firstOver : (n: Int, xs: List<Int>) -> Int
+
+                let firstOver (n, xs) = match List.find(x -> x > n, xs) with
+                    | Some found -> found
+                    | None -> -1
+                """);
+
+        assertThat(answerOf(module, "counting.firstOver", "[2,[1,3,4]]")).isEqualTo("{\"value\":3}");
+        assertThat(answerOf(module, "counting.firstOver", "[9,[1,3,4]]")).isEqualTo("{\"value\":-1}");
+    }
+
+    @Test
     void walksAListOfShapes() {
         Running module = compiled("""
                 module drawing

@@ -306,6 +306,8 @@ public final class RuntimeAbi {
         public static final String STRING_TO_INT = "__souther_string_to_int";
         /** {@code (i32 index, i32 xs) -> i32}. */
         public static final String LIST_GET = "__souther_list_at";
+        /** {@code (i32 p, i32 xs) -> i32}. */
+        public static final String LIST_FIND = "__souther_list_find";
         /** {@code (i32 xs) -> i32}. */
         public static final String LIST_LENGTH = "__souther_list_size";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */

@@ -407,6 +407,21 @@ pub unsafe extern "C" fn __souther_list_at(index: u32, list: u32) -> u32 {
     value::__souther_some(__souther_list_get(list, at as u32))
 }
 
+/// `List.find(p, xs)`: the first element the block holds for, or nothing.
+///
+/// Written here rather than as a walk in the generated body, because the block is a value by then
+/// and calling one is the same wherever it is done.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_find(kept: u32, list: u32) -> u32 {
+    for i in 0..__souther_list_length(list) {
+        let each = __souther_list_get(list, i);
+        if value::__souther_bool_value(crate::__souther_call_block(kept, each)) != 0 {
+            return value::__souther_some(each);
+        }
+    }
+    value::__souther_none()
+}
+
 /// `List.reverse`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_reverse(list: u32, descriptor: u32) -> u32 {

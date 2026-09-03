@@ -211,14 +211,14 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
         CheckedProgram program = CheckedProgram.of(List.of("""
                 module counting
 
-                behavior grouped : (xs: List<Int>) -> Map<String, Int>
+                behavior ordered : (xs: List<Int>) -> List<Int>
 
-                let grouped (xs) = List.fold((acc, x) -> Map.insert(String.fromInt(x), x, acc),
-                    Map.empty, xs)
+                let ordered (xs) = List.sort(xs)
                 """));
 
         assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class);
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("LIST_SORT");
     }
 
     @Test

@@ -183,6 +183,17 @@ pub unsafe extern "C" fn __souther_host_call(behavior_id: u32, in_ptr: u32, in_l
     }
 }
 
+/// Applies a block to one value, from inside this crate.
+///
+/// A block is a function taking what it was written among ahead of what it is applied to, so what
+/// goes through the table is the pair.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_call_block(closure: u32, argument: u32) -> u32 {
+    let target: extern "C" fn(u32, u32) -> u32 =
+        core::mem::transmute(value::__souther_closure_slot(closure) as usize);
+    target(value::__souther_closure_captured(closure), argument)
+}
+
 /// Reaches a generated function through the module's function table.
 ///
 /// The table is the one thing a generated definition and this crate both write into — a closure's

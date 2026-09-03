@@ -579,14 +579,29 @@ public final class WasmCompiler {
                     value(out, call.args().get(1));
                     out.call(calls.of(RuntimeAbi.GROW));
                 }
-                case BUILD_LIST -> buildList(out, call);
+                case BUILD_LIST -> walk(out, call, RuntimeAbi.BUILDER, RuntimeAbi.SEALED);
+                case PUT_MAP -> {
+                    // The walk carries the map it is growing first; the operation that grows one
+                    // takes it last, after what is being put in it.
+                    value(out, call.args().get(1));
+                    value(out, call.args().get(2));
+                    value(out, call.args().get(0));
+                    out.constant(shapes.of(call.type())).call(calls.of(RuntimeAbi.Kernels.MAP_INSERT));
+                }
+                case BUILD_MAP -> walk(out, call, RuntimeAbi.Kernels.MAP_EMPTY, null);
                 default -> throw new NotLowered(writing + " reaches " + operation
                         + ", which this backend does not write yet");
             }
         }
 
-        /** {@code $build(step, xs, from)}: the walk that grows a list and seals it. */
-        private void buildList(BodyWriter out, Core.Call call) {
+        /**
+         * {@code $build(step, xs, from)}: the walk that grows a collection out of a list.
+         *
+         * @param start what makes the empty one the walk begins with
+         * @param finish what turns what the walk grew into what it answers, or null where the walk
+         *     grew the answer itself
+         */
+        private void walk(BodyWriter out, Core.Call call, String start, String finish) {
             int step = scratch();
             int over = scratch();
             int at = scratch();
@@ -600,7 +615,7 @@ public final class WasmCompiler {
             value(out, call.args().get(2));
             out.call(calls.of(RuntimeAbi.INT_VALUE)).wrap().localSet(at);
             out.localGet(over).call(calls.of(RuntimeAbi.LIST_LENGTH_OF)).localSet(held);
-            out.constant(shapes.of(call.type())).call(calls.of(RuntimeAbi.BUILDER)).localSet(builder);
+            out.constant(shapes.of(call.type())).call(calls.of(start)).localSet(builder);
 
             out.block().loop()
                     .localGet(at).localGet(held).compares(BodyWriter.Comparison.AT_LEAST).leaveIf(1);
@@ -613,7 +628,10 @@ public final class WasmCompiler {
             out.localGet(at).constant(1).add().localSet(at).leave(0);
             out.end().end();
 
-            out.localGet(builder).call(calls.of(RuntimeAbi.SEALED));
+            out.localGet(builder);
+            if (finish != null) {
+                out.call(calls.of(finish));
+            }
         }
 
         /**
@@ -652,6 +670,7 @@ public final class WasmCompiler {
                 case STRING_TO_INT -> RuntimeAbi.Kernels.STRING_TO_INT;
                 case LIST_LENGTH -> RuntimeAbi.Kernels.LIST_LENGTH;
                 case LIST_GET -> RuntimeAbi.Kernels.LIST_GET;
+                case LIST_FIND -> RuntimeAbi.Kernels.LIST_FIND;
                 case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
                 case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
                 case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
