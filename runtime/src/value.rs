@@ -26,9 +26,10 @@
 //! null pointer, and no body ever reads one: the generated code asks whether anything was refused
 //! before it runs, so what a refused place leaves behind is never stood in for.
 
+use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT,
-    KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
+    self, KIND_BOOL, KIND_DECIMAL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION,
+    KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
 };
 use crate::order;
 use crate::issues::{
@@ -36,6 +37,7 @@ use crate::issues::{
     CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH,
 };
 use crate::json;
+use crate::text;
 use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_INT_OVERFLOW, REASON_NOT_A_VALUE};
 
 /// The one value a type with a single value has. `+4` is which type.
@@ -350,9 +352,7 @@ pub unsafe extern "C" fn __souther_arguments(held: u32) -> u32 {
     let cell = header(TAG_ARGUMENTS, 0);
     let _ = alloc(4);
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, held);
-    // Where the run starts is where the arena is once this cell is out of the way, so it is taken
-    // after the cell rather than as it is made.
-    core::ptr::write_unaligned((cell as usize + 4) as *mut u32, crate::next_free());
+    text::begin();
     write(b"[");
     cell
 }
@@ -377,8 +377,9 @@ pub unsafe extern "C" fn __souther_argument_written(document: u32, value: u32, d
 #[no_mangle]
 pub unsafe extern "C" fn __souther_arguments_sealed(document: u32) -> u32 {
     write(b"]");
-    let from = core::ptr::read_unaligned((document as usize + 4) as *const u32);
-    core::ptr::write_unaligned((document as usize + HEADER) as *mut u32, crate::next_free() - from);
+    let (at, length) = text::ended();
+    core::ptr::write_unaligned((document as usize + 4) as *mut u32, at);
+    core::ptr::write_unaligned((document as usize + HEADER) as *mut u32, length);
     document
 }
 
@@ -396,6 +397,8 @@ pub unsafe extern "C" fn __souther_arguments_length(document: u32) -> u32 {
 
 /// An array of arguments being written. `+4` is where its bytes start.
 pub const TAG_ARGUMENTS: u32 = 12;
+/// An amount and how it was written. See `decimal` for what it holds.
+pub const TAG_DECIMAL: u32 = 13;
 
 /// Values written together, with nothing in them yet.
 #[no_mangle]
@@ -577,6 +580,7 @@ pub unsafe extern "C" fn __souther_read(
         KIND_INT => integer(value, path, path_length),
         KIND_BOOL => boolean(value, path, path_length),
         KIND_STRING => text(value, path, path_length),
+        KIND_DECIMAL => amount(value, path, path_length),
         KIND_UNIT => unit(value, descriptor, path, path_length),
         KIND_PRODUCT => product(value, descriptor, path, path_length),
         KIND_SUM => sum(value, descriptor, path, path_length),
@@ -652,6 +656,24 @@ unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
         json::__souther_json_bytes(value),
         json::__souther_json_length(value),
     )
+}
+
+/// A number is read as the amount it names, keeping the digits it was written with.
+unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
+    let tag = json::__souther_json_tag(value);
+    if tag != json::TAG_NUMBER {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"Decimal");
+        return 0;
+    }
+    let held = decimal::parse(
+        json::__souther_json_bytes(value),
+        json::__souther_json_length(value),
+    );
+    if held == 0 {
+        issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"number", b"Decimal");
+        return 0;
+    }
+    held
 }
 
 /// A type with one value is written as an empty object: there is nothing to say about which one it
@@ -1000,26 +1022,26 @@ unsafe fn below(path: u32, path_length: u32, step: (u32, u32)) -> (u32, u32) {
 /// place it fills was declared as the sum or as the case.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_write(cell: u32, descriptor: u32) -> u64 {
-    let out = crate::next_free();
-    write(b"{\"value\":");
+    text::begin();
+    text::put(b"{\"value\":");
     written(cell, descriptor);
-    write(b"}");
-    json::packed(out, crate::next_free() - out)
+    text::put(b"}");
+    let (at, length) = text::ended();
+    json::packed(at, length)
 }
 
 unsafe fn written(cell: u32, descriptor: u32) {
     match descriptor::kind(descriptor) {
-        KIND_INT => {
-            json::__souther_json_write_int(__souther_int_value(cell));
-        }
-        KIND_BOOL => {
-            json::__souther_json_write_bool(__souther_bool_value(cell));
-        }
-        KIND_STRING => {
-            json::__souther_json_write_string(
-                __souther_string_bytes(cell),
-                __souther_string_length(cell),
-            );
+        KIND_INT => copied(json::__souther_json_write_int(__souther_int_value(cell))),
+        KIND_BOOL => copied(json::__souther_json_write_bool(__souther_bool_value(cell))),
+        KIND_STRING => copied(json::__souther_json_write_string(
+            __souther_string_bytes(cell),
+            __souther_string_length(cell),
+        )),
+        KIND_DECIMAL => {
+            // The one form of the amount, so that two ways of writing it are one document.
+            let (at, length) = decimal::written(decimal::canonical(cell));
+            text::push(at, length);
         }
         KIND_UNIT => write(b"{}"),
         KIND_PRODUCT => fields(cell, descriptor, false),
@@ -1045,10 +1067,10 @@ unsafe fn written(cell: u32, descriptor: u32) {
                     write(b",");
                 }
                 let key = __souther_map_key(cell, i);
-                json::__souther_json_write_string(
+                copied(json::__souther_json_write_string(
                     __souther_string_bytes(key),
                     __souther_string_length(key),
-                );
+                ));
                 write(b":");
                 written(__souther_map_value(cell, i), values);
             }
@@ -1081,7 +1103,7 @@ unsafe fn tagged(cell: u32, descriptor: u32) {
             write(b"{\"");
             write(DISCRIMINATOR);
             write(b"\":");
-            json::__souther_json_write_string(tag, tag_length);
+            copied(json::__souther_json_write_string(tag, tag_length));
             if descriptor::kind(case) == KIND_PRODUCT {
                 fields(cell, case, true);
             } else {
@@ -1099,7 +1121,7 @@ unsafe fn named(cell: u32, descriptor: u32) {
     for i in 0..descriptor::arity(descriptor) {
         if descriptor::member(descriptor, i) == held {
             let (tag, tag_length) = descriptor::name(descriptor, i);
-            json::__souther_json_write_string(tag, tag_length);
+            copied(json::__souther_json_write_string(tag, tag_length));
             return;
         }
     }
@@ -1127,7 +1149,7 @@ unsafe fn fields(cell: u32, descriptor: u32, opened: bool) {
         }
         written_any = true;
         let (field, field_length) = descriptor::name(descriptor, i);
-        json::__souther_json_write_string(field, field_length);
+        copied(json::__souther_json_write_string(field, field_length));
         write(b":");
         written(held, member);
     }
@@ -1135,8 +1157,7 @@ unsafe fn fields(cell: u32, descriptor: u32, opened: bool) {
 }
 
 unsafe fn write(bytes: &[u8]) {
-    let at = alloc(bytes.len() as u32);
-    core::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len());
+    text::put(bytes);
 }
 
 unsafe fn same(left: u32, left_length: u32, right: u32, right_length: u32) -> bool {
@@ -1151,6 +1172,11 @@ unsafe fn same(left: u32, left_length: u32, right: u32, right_length: u32) -> bo
         }
     }
     true
+}
+
+/// Adds to the run what a writer answered as a pointer and a length.
+unsafe fn copied(answer: u64) {
+    text::push(answer as u32, (answer >> 32) as u32);
 }
 
 /// What a JSON value is, in the words an issue reports it with.

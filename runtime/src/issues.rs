@@ -15,7 +15,8 @@
 //! JVM decoder's issues writes them for these.
 
 use crate::json::packed;
-use crate::{alloc, next_free};
+use crate::text;
+use crate::alloc;
 
 /// A place held something other than what it was declared to hold.
 pub const CODE_TYPE_MISMATCH: &[u8] = b"type_mismatch";
@@ -134,7 +135,7 @@ pub unsafe fn issue_of(
 /// The issues as the JSON a caller reads, answered as a pointer and a length packed.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_issues_written() -> u64 {
-    let out = next_free();
+    text::begin();
     write(b"{\"issues\":[");
     let mut record = FIRST;
     let mut first = true;
@@ -155,7 +156,8 @@ pub unsafe extern "C" fn __souther_issues_written() -> u64 {
         record = get(record, OFF_NEXT);
     }
     write(b"]}");
-    packed(out, next_free() - out)
+    let (at, length) = text::ended();
+    packed(at, length)
 }
 
 /// Appends bytes to the run being written at the arena's top.
@@ -164,14 +166,14 @@ pub unsafe extern "C" fn __souther_issues_written() -> u64 {
 /// allocates between the first byte and the last, so what the arena hands out each time is where
 /// the previous piece ended, and the pieces are one run.
 unsafe fn write(bytes: &[u8]) {
-    let at = alloc(bytes.len() as u32);
-    core::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len());
+    text::put(bytes);
 }
 
 /// Appends text as a quoted JSON string. What it answers is where it put the bytes, which is the
 /// end of the run so far and so already known.
 unsafe fn quoted(pointer: u32, length: u32) {
-    crate::json::__souther_json_write_string(pointer, length);
+    let written = crate::json::__souther_json_write_string(pointer, length);
+    text::push(written as u32, (written >> 32) as u32);
 }
 
 unsafe fn get(record: u32, offset: usize) -> u32 {

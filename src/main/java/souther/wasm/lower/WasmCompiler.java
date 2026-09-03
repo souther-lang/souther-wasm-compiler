@@ -997,6 +997,10 @@ public final class WasmCompiler {
         }
 
         private void arithmetic(BodyWriter out, Core.Binary binary, String operation) {
+            if (binary.left().type() == souther.compiler.types.Type.Prim.DECIMAL) {
+                throw new NotLowered(writing + " works out an amount with " + binary.op()
+                        + ", and this backend carries a Decimal without working one out yet");
+            }
             value(out, binary.left());
             value(out, binary.right());
             out.call(calls.of(operation));

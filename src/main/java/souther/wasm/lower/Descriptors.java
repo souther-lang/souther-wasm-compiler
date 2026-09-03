@@ -41,6 +41,7 @@ final class Descriptors {
     private static final int KIND_MAP = 9;
     private static final int KIND_ENUMERATION = 10;
     private static final int KIND_TUPLE = 11;
+    private static final int KIND_DECIMAL = 12;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -74,6 +75,7 @@ final class Descriptors {
             case Type.Prim.INT -> scalar(KIND_INT);
             case Type.Prim.BOOL -> scalar(KIND_BOOL);
             case Type.Prim.STRING -> scalar(KIND_STRING);
+            case Type.Prim.DECIMAL -> scalar(KIND_DECIMAL);
             case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule named ->
                     ofDeclared(named);
             case Type.ListOf list -> holding(KIND_LIST, list.element());
@@ -139,6 +141,7 @@ final class Descriptors {
             case "Int" -> Type.Prim.INT;
             case "Bool" -> Type.Prim.BOOL;
             case "String" -> Type.Prim.STRING;
+            case "Decimal" -> Type.Prim.DECIMAL;
             default -> throw new NotLowered("a " + written
                     + " among alternatives, which this backend does not write yet");
         };

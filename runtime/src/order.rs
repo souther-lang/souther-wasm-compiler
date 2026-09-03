@@ -17,9 +17,10 @@
 //! before it by code unit. Comparing the bytes would put a set in an order the JVM backend does
 //! not write, which is the whole thing this order exists to stop.
 
+use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT,
-    KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
+    self, KIND_BOOL, KIND_DECIMAL, KIND_ENUMERATION, KIND_INT, KIND_LIST, KIND_MAP, KIND_OPTION,
+    KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TUPLE, KIND_UNIT,
 };
 use crate::value;
 
@@ -117,6 +118,15 @@ pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
     match a {
         RANK_NULL | RANK_FALSE | RANK_TRUE => 0,
         RANK_NUMBER => {
+            if descriptor::kind(descriptor) == KIND_DECIMAL {
+                // The amount decides, and where it cannot, the way it is written does: two that
+                // differ only in scale are one amount and two documents.
+                let by_amount = decimal::compare(left, right);
+                if by_amount != 0 {
+                    return by_amount;
+                }
+                return written_forms(left, right);
+            }
             let x = value::__souther_int_value(left);
             let y = value::__souther_int_value(right);
             if x < y {
@@ -143,7 +153,7 @@ unsafe fn rank(cell: u32, descriptor: u32) -> i32 {
                 RANK_FALSE
             }
         }
-        KIND_INT => RANK_NUMBER,
+        KIND_INT | KIND_DECIMAL => RANK_NUMBER,
         KIND_STRING => RANK_STRING,
         KIND_LIST | KIND_SET => RANK_ARRAY,
         KIND_OPTION => {
@@ -292,6 +302,13 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
 unsafe fn tags(left: u32, right: u32, descriptor: u32) -> i32 {
     let (a, a_length) = descriptor::name(descriptor, case_of(left, descriptor));
     let (b, b_length) = descriptor::name(descriptor, case_of(right, descriptor));
+    bytes_as_units(a, a_length, b, b_length)
+}
+
+/// Two amounts of one size, by the text each is written as.
+unsafe fn written_forms(left: u32, right: u32) -> i32 {
+    let (a, a_length) = decimal::written(left);
+    let (b, b_length) = decimal::written(right);
     bytes_as_units(a, a_length, b, b_length)
 }
 

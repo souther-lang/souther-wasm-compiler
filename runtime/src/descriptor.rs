@@ -41,6 +41,8 @@ pub const KIND_INT: u32 = 0;
 pub const KIND_BOOL: u32 = 1;
 /// A `String`.
 pub const KIND_STRING: u32 = 2;
+/// A `Decimal`.
+pub const KIND_DECIMAL: u32 = 12;
 /// A type with one value.
 pub const KIND_UNIT: u32 = 3;
 /// A type written as fields.

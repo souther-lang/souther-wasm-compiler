@@ -24,11 +24,13 @@
 
 #![no_std]
 
+mod decimal;
 mod descriptor;
 mod issues;
 mod kernel;
 mod json;
 mod order;
+mod text;
 mod value;
 
 use core::panic::PanicInfo;
