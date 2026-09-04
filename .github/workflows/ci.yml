@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  # Every branch. Work happens on a feature branch here, so naming two would mean the build ran
+  # on nothing that was being worked on.
   push:
-    branches: [ main, develop ]
   pull_request:
 
 permissions:
