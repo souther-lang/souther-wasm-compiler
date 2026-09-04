@@ -1,0 +1,43 @@
+module cart
+
+// 買い物かごの値付け。規則はここにしか書かれていない。
+// 下（wasm）にも上（React）にも、写しは一つも無い。
+
+// 商品コードは書式が決まっている。決まっているなら、それは型が持つ。
+data Sku = String
+    invariant written = String.matches("[A-Z]{3}-[0-9]{4}", value)
+
+// 一行。数量は一以上で、単価は正。ゼロ個の行や値段のない行は
+// 「答えが出せない」のではなく「書き間違い」なので、境界で断る。
+data Line = { sku: Sku, quantity: Int, unitPrice: Decimal }
+    invariant atLeastOne = quantity >= 1
+    invariant priced = unitPrice > 0.00m
+
+data Membership = Standard | Premium
+
+data Cart = { lines: List<Line>, member: Membership }
+
+data Priced = { subtotal: Decimal, discount: Decimal, shipping: Decimal, total: Decimal }
+
+// かごが空なのは書き間違いではない。答えが値段でないだけ。
+data EmptyCart
+
+behavior price : (cart: Cart) -> Priced | EmptyCart
+    constructs Priced
+
+let lineTotal (line: Line): Decimal = Decimal.fromInt(line.quantity) * line.unitPrice
+
+let price (cart) = {
+    guard List.length(cart.lines) >= 1 else EmptyCart
+    let subtotal: Decimal = List.sum(List.map(lineTotal, cart.lines))
+    let discount: Decimal = match cart.member with
+        | Premium -> Decimal.round(2, HALF_UP, subtotal * 0.10m)
+        | Standard -> 0.00m
+    let after: Decimal = subtotal - discount
+    let shipping: Decimal = if after >= 5000.00m then 0.00m else 500.00m
+    Priced { subtotal = subtotal
+           , discount = discount
+           , shipping = shipping
+           , total = after + shipping
+           }
+}

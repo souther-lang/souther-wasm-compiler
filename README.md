@@ -105,6 +105,14 @@ a list and settling a set have not gone back to asking every part about every ot
 three of them were doing while every other test passed. A test that hands over three of something
 cannot tell the two shapes apart.
 
+## Calling one from JavaScript
+
+A core module is what a browser reads, so a program compiled here is loaded with
+`WebAssembly.instantiateStreaming` and called with no toolchain in between.
+[`examples/react-cart`](examples/react-cart) is a domain model priced from a React form: the rules
+are in the Souther source and nowhere else, and where the boundary will not read what it was given
+it says which field, as a JSON Pointer into the arguments.
+
 ## What it has been run against
 
 Every project in [souther-lang/examples](https://github.com/souther-lang/examples) compiles. A

@@ -2,3 +2,7 @@ target/
 runtime/target/
 *.iml
 .idea/
+
+examples/**/node_modules/
+examples/**/dist/
+examples/**/public/*.wasm
