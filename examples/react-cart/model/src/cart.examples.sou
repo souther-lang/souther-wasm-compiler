@@ -1,0 +1,18 @@
+examples for cart
+
+// The rows somebody writes first, having read what the rules are meant to say. What each answer is
+// is theirs to decide. A row that stops holding says either that a rule changed or that something
+// changed which was not meant to.
+example price
+    | "an empty basket has no price" :
+        (Cart { lines = [], member = Standard }) -> EmptyCart
+    | "under five thousand pays for shipping" :
+        (Cart { lines = [ Line { sku = Sku("ABC-1234"), quantity = 2, unitPrice = 1500.00m } ]
+              , member = Standard })
+            -> Priced { subtotal = 3000.00m, discount = 0.00m
+                      , shipping = 500.00m, total = 3500.00m }
+    | "a member's tenth comes off first, and what is left ships free" :
+        (Cart { lines = [ Line { sku = Sku("ABC-1234"), quantity = 2, unitPrice = 3000.00m } ]
+              , member = Premium })
+            -> Priced { subtotal = 6000.00m, discount = 600.00m
+                      , shipping = 0.00m, total = 5400.00m }

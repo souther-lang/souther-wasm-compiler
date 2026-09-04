@@ -1,0 +1,44 @@
+module cart
+
+// What a basket costs. The rules are written here and nowhere else — not below in the wasm, and
+// not above in the form.
+
+// A product code has a shape. Where it has one, the type is what holds it.
+data Sku = String
+    invariant written = String.matches("[A-Z]{3}-[0-9]{4}", value)
+
+// One line: at least one of something, at a price above nothing. A line of none, or a line at no
+// price, is not an answer nobody can work out — it is something written down wrong, so the
+// boundary refuses it rather than pricing it.
+data Line = { sku: Sku, quantity: Int, unitPrice: Decimal }
+    invariant atLeastOne = quantity >= 1
+    invariant priced = unitPrice > 0.00m
+
+data Membership = Standard | Premium
+
+data Cart = { lines: List<Line>, member: Membership }
+
+data Priced = { subtotal: Decimal, discount: Decimal, shipping: Decimal, total: Decimal }
+
+// An empty basket is not written down wrong. The answer is simply not a price.
+data EmptyCart
+
+behavior price : (cart: Cart) -> Priced | EmptyCart
+    constructs Priced
+
+let lineTotal (line: Line): Decimal = Decimal.fromInt(line.quantity) * line.unitPrice
+
+let price (cart) = {
+    guard List.length(cart.lines) >= 1 else EmptyCart
+    let subtotal: Decimal = List.sum(List.map(lineTotal, cart.lines))
+    let discount: Decimal = match cart.member with
+        | Premium -> Decimal.round(2, HALF_UP, subtotal * 0.10m)
+        | Standard -> 0.00m
+    let after: Decimal = subtotal - discount
+    let shipping: Decimal = if after >= 5000.00m then 0.00m else 500.00m
+    Priced { subtotal = subtotal
+           , discount = discount
+           , shipping = shipping
+           , total = after + shipping
+           }
+}

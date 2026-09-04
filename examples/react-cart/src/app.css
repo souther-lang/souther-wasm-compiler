@@ -1,0 +1,131 @@
+:root {
+  color-scheme: light dark;
+  --line: color-mix(in srgb, currentColor 15%, transparent);
+  --quiet: color-mix(in srgb, currentColor 60%, transparent);
+  --wrong: #b3261e;
+  font-family: ui-sans-serif, system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+  line-height: 1.7;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+
+h2 {
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  margin: 2rem 0 0.5rem;
+}
+
+.note {
+  color: var(--quiet);
+  font-size: 0.875rem;
+  margin-top: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  font-size: 0.75rem;
+  color: var(--quiet);
+  font-weight: 500;
+  padding-bottom: 0.25rem;
+}
+
+td {
+  padding: 0.25rem 0.5rem 0.25rem 0;
+  vertical-align: top;
+}
+
+input[type="text"],
+td input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+td input[aria-invalid="true"] {
+  border-color: var(--wrong);
+}
+
+.complaint {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--wrong);
+}
+
+button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+label {
+  margin-right: 1.25rem;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  max-width: 22rem;
+}
+
+dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+dt.total,
+dd.total {
+  border-top: 1px solid var(--line);
+  padding-top: 0.35rem;
+  margin-top: 0.35rem;
+  font-weight: 600;
+}
+
+.issues h2,
+.ended h2 {
+  color: var(--wrong);
+}
+
+pre {
+  overflow-x: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.8125rem;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--quiet);
+  font-size: 0.875rem;
+  margin-top: 2rem;
+}

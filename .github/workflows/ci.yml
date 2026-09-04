@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  # Every branch. Work happens on a feature branch here, so naming two would mean the build ran
+  # on nothing that was being worked on.
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # The compiler this reads a program through is not published anywhere, so a runner has to
+      # build it. Only what a CheckedProgram is reachable from is wanted, which is why this
+      # installs rather than builds the whole of it.
+      - name: Check out the Souther compiler
+        uses: actions/checkout@v5
+        with:
+          repository: souther-lang/souther
+          ref: develop
+          path: souther
+      - name: Install the Souther compiler
+        run: mvn -B --no-transfer-progress -f souther/pom.xml install -DskipTests -Dmaven.javadoc.skip=true
+
+      - name: Build and test
+        run: mvn -B --no-transfer-progress verify
+
+      # What no test can see: a test runs with the whole build's classpath, and the jar carries
+      # only what the pom says it does. A program with an example is what tells them apart,
+      # because checking an example means running it.
+      - name: Compile a program with the jar the build produced
+        run: |
+          mkdir -p /tmp/asked
+          cat > /tmp/asked/shipping.sou <<'SOURCE'
+          module shipping
+
+          behavior fee : (total: Int) -> Int
+
+          let fee (total) = if total >= 5000 then 0 else 500
+          SOURCE
+          cat > /tmp/asked/shipping.examples.sou <<'SOURCE'
+          examples for shipping
+
+          example fee
+              | "five thousand is free" : (5000) -> 0
+              | "under it is five hundred" : (4999) -> 500
+          SOURCE
+          java -jar target/*-cli.jar /tmp/asked -o /tmp/asked/out.wasm --wit /tmp/asked/out.wit
+          test -s /tmp/asked/out.wasm
+          test -s /tmp/asked/out.wit
+
+      # The programs this is meant to compile, which are not in this repository and are not written
+      # against it. What the tests here compile was written to make a point about one thing at a
+      # time; these were written to model something, and every defect the tests did not have a
+      # fixture for came from running them.
+      - name: Check out the Souther examples
+        uses: actions/checkout@v5
+        with:
+          repository: souther-lang/examples
+          path: souther-examples
+      - name: Compile every one of them
+        run: |
+          shared=souther-examples/sharedmoney/src/main/souther
+          for project in souther-examples/*/src/main/souther; do
+            name=$(basename "$(dirname "$(dirname "$(dirname "$project")")")")
+            # One of them is written against a module another one publishes, and a build gives it
+            # both. Handing over only its own directory is a missing source, not a missing feature.
+            with=""
+            if [ "$name" = invoicing ]; then with="$shared"; fi
+            if ! java -jar target/*-cli.jar "$project" $with -o "/tmp/$name.wasm"; then
+              echo "::error::$name no longer compiles"
+              exit 1
+            fi
+          done
+
+      # The example is a program compiled by this and then called from a browser. Nothing else
+      # here calls a compiled program from outside the JVM, so it is the only place that would
+      # notice the boundary changing shape — and only while it is still built.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: examples/react-cart/package-lock.json
+      - name: Build the example
+        working-directory: examples/react-cart
+        run: |
+          npm ci
+          npm run build
+          test -s dist/cart.wasm
+
+  runtime:
+    # The compiled runtime is carried in the repository so that building the Java half needs no
+    # Rust. That only holds while the two agree, and nothing but this notices when they stop:
+    # every test would keep passing against the copy that is checked in.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Rust
+        run: rustup show
+        working-directory: runtime
+      - name: Build the runtime
+        run: cargo build --release --target wasm32-unknown-unknown
+        working-directory: runtime
+      - name: Require the carried runtime to be what the source builds
+        run: |
+          built=runtime/target/wasm32-unknown-unknown/release/souther_wasm_runtime.wasm
+          carried=src/main/resources/souther/wasm/runtime.wasm
+          if ! cmp -s "$built" "$carried"; then
+            echo "The runtime carried in src/main/resources is not what runtime/src builds."
+            echo "Rebuild it and commit the result — see the README."
+            cmp "$built" "$carried" || true
+            exit 1
+          fi

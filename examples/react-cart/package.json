@@ -1,0 +1,19 @@
+{
+  "name": "souther-react-cart",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "model": "jar=$(ls ../../target/*-cli.jar 2>/dev/null | head -1); if [ -z \"$jar\" ]; then echo 'The compiler has not been built. From the repository root: mvn package' >&2; exit 1; fi; java -jar \"$jar\" model -o public/cart.wasm",
+    "dev": "npm run model && vite",
+    "build": "npm run model && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.1.0"
+  }
+}

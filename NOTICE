@@ -16,7 +16,28 @@ src/main/java/souther/wasm/emit/
     Copyright Toshiaki Maki
     Licensed under the Apache License, Version 2.0
 
-  The package declaration was rewritten from am.ik.wasm to souther.wasm.emit.
-  Nothing else was changed on the way in, so a later upstream fix reads as a
-  diff against that commit. These files stay under the Apache License 2.0; a
-  copy is in LICENSE-APACHE-2.0.
+  The package name am.ik.wasm was rewritten to souther.wasm.emit wherever it
+  appears — the declaration, the imports and the javadoc. Nothing else was
+  changed on the way in, so a later upstream fix reads as a diff against that
+  commit. Each file says so at its head as well. These files stay under the
+  Apache License 2.0; a copy is in LICENSE-APACHE-2.0.
+
+---
+
+The runnable jar (classifier `cli`) carries this project's dependencies inside
+it, so distributing that jar distributes them:
+
+  org.souther-lang:souther-compiler, souther-syntax, souther-fmt
+    Eclipse Public License 2.0
+
+  net.unit8.raoh:raoh, raoh-json
+    Apache License 2.0 (https://github.com/kawasima/raoh)
+
+  tools.jackson.core:jackson-core, jackson-databind
+  com.fasterxml.jackson.core:jackson-annotations
+  org.jspecify:jspecify
+    Apache License 2.0
+
+Each carries whatever licence and notice files it publishes, under META-INF, and
+they are left where they are. This project's own three are under
+META-INF/souther-wasm-compiler so that neither stands in for the other.
