@@ -63,6 +63,26 @@ final class Descriptors {
     }
 
     /**
+     * A shape whose external form this cannot settle.
+     *
+     * <p>A type declared over another — {@code data ProductId = String} — is written as what it is
+     * declared over, not as an object with one member. A type declared with one member called
+     * {@code value} is written as that object. What reaches this backend is the same thing for
+     * both: one field, called {@code value}, of the same type. So the two are refused together,
+     * because writing either one is answering for the other as well.
+     *
+     * <p>Only the one shape. Every other product is an object with the members it declares, and
+     * which of the two a one-member product is only matters for that one member name.
+     */
+    private static void refuseWhatCannotBeToldApart(CheckedData.Product shape) {
+        if (shape.fields().size() == 1 && shape.fields().get(0).name().equals("value")) {
+            throw new NotLowered(shape.name() + " is written down with one member called value,"
+                    + " and a type declared over another reaches this backend as that same shape."
+                    + " The two are written differently and nothing here can tell them apart");
+        }
+    }
+
+    /**
      * The descriptor of a type, placing it if this is the first place to want one.
      *
      * <p>Kept, so that a type used in many places is written down once. What a descriptor holds is
@@ -189,9 +209,12 @@ final class Descriptors {
                 byName.put(name, descriptor);
                 yield descriptor;
             }
-            case CheckedData.Product shape -> composite(KIND_PRODUCT, name, shape.fields().stream()
-                    .map(field -> new Member(field.name(), field.type()))
-                    .toList());
+            case CheckedData.Product shape -> {
+                refuseWhatCannotBeToldApart(shape);
+                yield composite(KIND_PRODUCT, name, shape.fields().stream()
+                        .map(field -> new Member(field.name(), field.type()))
+                        .toList());
+            }
             // A sum's cases are its leaves: a case written as another sum is carried here as the
             // cases under it, so nothing nested reaches this and the tag always names a leaf.
             case CheckedData.Sum choice -> alternatives(name, choice.cases());
