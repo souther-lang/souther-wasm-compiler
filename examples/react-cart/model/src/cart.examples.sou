@@ -1,16 +1,17 @@
 examples for cart
 
-// 規程を読んだ人が最初に書く行。答えを決めるのは規程を読む人で、
-// これが通らなくなったら、規則が変わったか、変えてはいけないものを変えたかのどちらか。
+// The rows somebody writes first, having read what the rules are meant to say. What each answer is
+// is theirs to decide. A row that stops holding says either that a rule changed or that something
+// changed which was not meant to.
 example price
-    | "空のかごには値段がない" :
+    | "an empty basket has no price" :
         (Cart { lines = [], member = Standard }) -> EmptyCart
-    | "五千円未満は送料五百円" :
+    | "under five thousand pays for shipping" :
         (Cart { lines = [ Line { sku = Sku("ABC-1234"), quantity = 2, unitPrice = 1500.00m } ]
               , member = Standard })
             -> Priced { subtotal = 3000.00m, discount = 0.00m
                       , shipping = 500.00m, total = 3500.00m }
-    | "会員は一割引き、引いた後で五千円以上なら送料無料" :
+    | "a member's tenth comes off first, and what is left ships free" :
         (Cart { lines = [ Line { sku = Sku("ABC-1234"), quantity = 2, unitPrice = 3000.00m } ]
               , member = Premium })
             -> Priced { subtotal = 6000.00m, discount = 600.00m

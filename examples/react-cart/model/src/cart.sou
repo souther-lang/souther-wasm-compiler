@@ -1,14 +1,15 @@
 module cart
 
-// 買い物かごの値付け。規則はここにしか書かれていない。
-// 下（wasm）にも上（React）にも、写しは一つも無い。
+// What a basket costs. The rules are written here and nowhere else — not below in the wasm, and
+// not above in the form.
 
-// 商品コードは書式が決まっている。決まっているなら、それは型が持つ。
+// A product code has a shape. Where it has one, the type is what holds it.
 data Sku = String
     invariant written = String.matches("[A-Z]{3}-[0-9]{4}", value)
 
-// 一行。数量は一以上で、単価は正。ゼロ個の行や値段のない行は
-// 「答えが出せない」のではなく「書き間違い」なので、境界で断る。
+// One line: at least one of something, at a price above nothing. A line of none, or a line at no
+// price, is not an answer nobody can work out — it is something written down wrong, so the
+// boundary refuses it rather than pricing it.
 data Line = { sku: Sku, quantity: Int, unitPrice: Decimal }
     invariant atLeastOne = quantity >= 1
     invariant priced = unitPrice > 0.00m
@@ -19,7 +20,7 @@ data Cart = { lines: List<Line>, member: Membership }
 
 data Priced = { subtotal: Decimal, discount: Decimal, shipping: Decimal, total: Decimal }
 
-// かごが空なのは書き間違いではない。答えが値段でないだけ。
+// An empty basket is not written down wrong. The answer is simply not a price.
 data EmptyCart
 
 behavior price : (cart: Cart) -> Priced | EmptyCart

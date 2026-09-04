@@ -1,49 +1,54 @@
-# かごの値付け — Souther のモデルを React から呼ぶ
+# A basket priced by a Souther model, from React
 
-値段の規則は [`model/src/cart.sou`](model/src/cart.sou) にしか書かれていません。この画面は入力を
-そのまま渡し、返ってきたものを表示します。商品コードの書式も、数量が一以上であることも、
-JavaScript 側には一行もありません。
+What a basket costs is written in [`model/src/cart.sou`](model/src/cart.sou) and nowhere else. This
+page hands over what was typed and shows what came back. The shape of a product code, and that a
+quantity is at least one, appear nowhere in the JavaScript.
 
     npm install
     npm run dev
 
-`npm run dev` はモデルをコンパイルしてから Vite を起動します。モデルを直すたびに走らせてください。
+`npm run dev` compiles the model and then starts Vite. Run it again after changing the model.
 
-## 何が起きているか
+## What is going on
 
-Souther のコンパイラが `cart.sou` を WebAssembly のモジュールにします。コンポーネントモデルは
-使いません——素の core wasm なので、ブラウザがそのまま読みます。
+The compiler turns `cart.sou` into a WebAssembly module. Not a component — a plain core module,
+which is what a browser reads, so nothing is transpiled and nothing is bundled between the compiler
+and the page.
 
-`src/souther.js` が呼び出しの全部です。モデルについて何も知らないので、別のプログラムを読ませても
-同じファイルのまま使えます。
+[`src/souther.js`](src/souther.js) is the whole of the calling. It knows nothing about the model, so
+it is the same file whatever program it loads:
 
-* 引数は JSON の配列にして、モジュール自身のメモリへ書く
-* 呼び出しの前後を `__ronto_alloc_mark` と `__ronto_alloc_reset` で挟む
-* 返ってくるのは JSON がひとつ。`{"value": ...}` か `{"issues": [...]}`
+* the arguments go over as one JSON array, written into the module's own memory
+* a call is bracketed by `__ronto_alloc_mark` and `__ronto_alloc_reset`
+* one JSON object comes back — either `{"value": ...}` or `{"issues": [...]}`
 
-## 境界が言うこと
+## What the boundary says
 
-入力が読めないとき、どこが読めないかを **モデルが** 言います。
+Where it will not read what it was given, the model says which part it will not read.
 
 ```json
 {"issues":[{"path":"/0/lines/0/sku","code":"invariant_violation",
             "meta":{"actual":"0","expected":"Sku"}}]}
 ```
 
-`path` は引数への JSON Pointer です。`/0/lines/0/sku` は「一つ目の引数の、一行目の、商品コード」。
-だから画面はどの入力欄に出すかを自分で決めていません。決まったものが届いています。
+`path` is a JSON Pointer into the arguments: `/0/lines/0/sku` is the first argument's first line's
+product code. So the form does not work out which input a complaint belongs under. It arrives
+knowing.
 
-行そのものの規則（数量は一以上、単価は正）は行に対する規則なので、`/0/lines/0` に届きます。
-どちらの規則だったかは番号で返り、モデルが付けた名前（`atLeastOne`、`priced`）では返りません。
-なので画面はどちらとは言いません——ここで名前を書けば、それはモデルの規則を二つ目の言語で
-書いたことになり、片方を変えるときにもう片方は誰も読みません。
+A rule about a whole line — at least one of something, at a price above nothing — arrives naming
+the line, at `/0/lines/0`, because that is what the rule is about. Which of the line's rules it was
+comes back as a number rather than as the name the model gave it (`atLeastOne`, `priced`), so the
+form does not say which. Saying would be that rule written a second time, in a language nobody
+reads when they change the first.
 
-## 空のかご
+## An empty basket
 
-`EmptyCart` は間違いではありません。答えが値段でないだけで、モデルはそれを別の型で言います。
-画面はそれを型で見分けます。
+`EmptyCart` is not a complaint. The answer is simply not a price, and the model says so with a type
+of its own rather than with a price of zero — so the page tells the two apart by asking what it
+was handed, not by comparing a number against nothing.
 
-## モデルを直したら
+## After changing the model
 
-`model/src/cart.examples.sou` の例が先に落ちます。例はコンパイル時に走るので、規則を変えたのか、
-変えてはいけないものを変えたのかが、画面を開く前に分かります。
+The rows in [`model/src/cart.examples.sou`](model/src/cart.examples.sou) fail first. They are run
+where the model is compiled, so whether a rule changed or something changed that was not meant to
+is answered before the page is opened.
