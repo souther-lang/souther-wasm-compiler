@@ -131,7 +131,10 @@ A core module is what a browser reads, so a program compiled here is loaded with
 `WebAssembly.instantiateStreaming` and called with no toolchain in between.
 [`examples/react-cart`](examples/react-cart) is a domain model priced from a React form: the rules
 are in the Souther source and nowhere else, and where the boundary will not read what it was given
-it says which part it will not read, as a path into the arguments.
+it says which part it will not read, as a path into the arguments. It also shows the two things a
+caller outside the JVM has to get right: an amount crosses as its digits rather than through a
+JavaScript number, and a behavior the model reaches out for is supplied by name, from the list the
+module carries.
 
 ## What it has been run against
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { load } from "./souther.js";
+import { amount, load } from "./souther.js";
 import "./app.css";
 
 const START = [{ sku: "ABC-1234", quantity: "2", unitPrice: "1500.00" }];
@@ -23,7 +23,7 @@ export default function App() {
       lines: lines.map((line) => ({
         sku: line.sku,
         quantity: asNumber(line.quantity),
-        unitPrice: asNumber(line.unitPrice),
+        unitPrice: asAmount(line.unitPrice),
       })),
       member,
     };
@@ -174,14 +174,19 @@ function Answer({ answer }) {
         <dt>Subtotal</dt>
         <dd>{money(held.subtotal)}</dd>
         <dt>Discount</dt>
-        <dd>{held.discount === 0 ? "—" : `− ${money(held.discount)}`}</dd>
+        <dd>{isNothing(held.discount) ? "—" : `− ${money(held.discount)}`}</dd>
         <dt>Shipping</dt>
-        <dd>{held.shipping === 0 ? "free" : money(held.shipping)}</dd>
+        <dd>{isNothing(held.shipping) ? "free" : money(held.shipping)}</dd>
         <dt className="total">Total</dt>
         <dd className="total">{money(held.total)}</dd>
       </dl>
     </section>
   );
+}
+
+/** Whether an amount is nothing, however wide the amount it is nothing beside was. */
+function isNothing(held) {
+  return Number(held) === 0;
 }
 
 function Complaint({ about }) {
@@ -236,6 +241,26 @@ function asNumber(written) {
   return written.trim() !== "" && Number.isFinite(held) ? held : written;
 }
 
-function money(amount) {
-  return `¥${Number(amount).toLocaleString("en", { minimumFractionDigits: 0 })}`;
+/**
+ * What was typed, as an amount where it reads as one.
+ *
+ * The digits, and not the nearest number to them: a price is held to what it was written with, and
+ * a JavaScript number is not, so putting one through a number here would round it before the model
+ * ever saw it.
+ */
+function asAmount(written) {
+  return /^-?\d+(\.\d+)?$/.test(written.trim()) ? amount(written.trim()) : written;
+}
+
+/**
+ * An amount, for reading.
+ *
+ * What comes back is a number where a number holds it and the digits where one does not, so this
+ * takes both. Where it is the digits, they are shown as they are: a number is what would lose
+ * them, and grouping them is the same loss with a comma in it.
+ */
+function money(held) {
+  return typeof held === "string"
+    ? `¥${held}`
+    : `¥${held.toLocaleString("en", { minimumFractionDigits: 0 })}`;
 }

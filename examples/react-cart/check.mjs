@@ -7,7 +7,7 @@
 // about here or nowhere.
 
 import { readFileSync } from "node:fs";
-import { load } from "./src/souther.js";
+import { load, amount } from "./src/souther.js";
 
 const program = await load(readFileSync("public/cart.wasm"));
 let wrong = 0;
@@ -66,6 +66,42 @@ for (let i = 1; i <= 10; i++) {
 same("a call given nothing",
   program.call("cart.price", []),
   { issues: [{ path: "", code: "invalid_size", meta: { actual: "0", expected: "1" } }] });
+
+// An amount is held to whatever precision it was written with, and a JavaScript number is not. So
+// one is handed over as its digits and comes back as its digits wherever a number could not have
+// carried them — which is the only way a caller reads what the model worked out rather than what
+// survived being read.
+const wide = "12345678901234567890.12345";
+same("an amount wider than a number holds",
+  program.call("cart.price", [{
+    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount(wide) }], member: "Standard",
+  }]).value.subtotal,
+  wide);
+same("an amount a number does hold",
+  program.call("cart.price", [{
+    lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: amount("1500.00") }], member: "Standard",
+  }]).value.subtotal,
+  3000);
+// Written one way and written back another, and the same amount either way: what the two are
+// compared by is how much each is and not which digits each is written with.
+same("an amount written with a point where the answer has none",
+  program.call("cart.price", [{
+    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1500.000") }], member: "Standard",
+  }]).value.subtotal,
+  1500);
+// An amount a number holds exactly and writes another way round: the model writes the digits out
+// and a JavaScript number writes a power of ten, so the two texts differ and the two amounts do
+// not. Comparing the digits without the point would call these two amounts.
+same("an amount a number writes as a power of ten",
+  program.call("cart.price", [{
+    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1e21") }], member: "Standard",
+  }]).value.subtotal,
+  1e21);
+same("an amount written as a power of ten",
+  program.call("cart.price", [{
+    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1.5e3") }], member: "Standard",
+  }]).value.subtotal,
+  1500);
 
 // Everything a call made goes back when it is over. What is left standing after many calls is what
 // says the reset ran — a caller that never gave the arena back would leave it climbing.
