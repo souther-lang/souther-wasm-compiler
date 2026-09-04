@@ -74,8 +74,6 @@ which is where the one question the writing cannot answer — where a result may
 
 ## What is not written yet
 
-- A value bound by something this backend does not write yet, which is what stops two of the projects
-  in souther-lang/examples.
 - A behavior supplied from outside, in a component. A core module reaches out for one.
 - A behavior another build implements. This links one program.
 
@@ -106,6 +104,11 @@ A loose bound on purpose. It does not say a call is fast — it says that readin
 a list and settling a set have not gone back to asking every part about every other part, which
 three of them were doing while every other test passed. A test that hands over three of something
 cannot tell the two shapes apart.
+
+## What it has been run against
+
+Every project in [souther-lang/examples](https://github.com/souther-lang/examples) compiles. A
+project whose modules come from another one is given both, the way a build gives it both.
 
 ## Building
 

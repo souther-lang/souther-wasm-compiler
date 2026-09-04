@@ -201,9 +201,15 @@ public final class WasmFragment {
      * @param bytes exactly as many as were reserved
      */
     public void fill(int address, byte[] bytes) {
+        if (!reserved.contains(address)) {
+            throw new IllegalArgumentException("nothing was reserved at " + address);
+        }
         for (int i = 0; i < data.size(); i++) {
             Segment segment = data.get(i);
-            if (segment.address() == address) {
+            // The one that was reserved, and not merely one that begins there. Nothing occupying no
+            // bytes moves what comes after it, so a name with nothing in it and the thing reserved
+            // next both begin at the same address — and only one of them is what this was promised.
+            if (segment.address() == address && segment.bytes().length == bytes.length) {
                 if (segment.bytes().length != bytes.length) {
                     throw new IllegalArgumentException(
                             "what was reserved at " + address + " is not as long as what was written for it");

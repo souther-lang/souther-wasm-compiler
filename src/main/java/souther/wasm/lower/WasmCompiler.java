@@ -1064,12 +1064,28 @@ public final class WasmCompiler {
          * would have been recognised differently can still be declined.
          */
         private void recognised(BodyWriter out, Core.Call call) {
-            if (!(call.args().get(0) instanceof Core.Str written)) {
-                throw new NotLowered(writing + " matches against a pattern that is not written out");
-            }
             value(out, call.args().get(1));
-            out.constant(Patterns.place(fragment, written.value()))
+            out.constant(Patterns.place(fragment, spelt(call.args().get(0))))
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
+        }
+
+        /**
+         * The text an expression comes to, for a pattern that has to be settled where it is
+         * written.
+         *
+         * <p>Written out is not the same as written in one piece. A pattern shared between several
+         * types is named once and joined onto what tells them apart, and what reaches here is the
+         * joining rather than the text — so the joining is done here, which is where the language
+         * says it can be.
+         */
+        private String spelt(Core expression) {
+            return switch (expression) {
+                case Core.Str written -> written.value();
+                case Core.Binary joined when joined.op() == BinOp.CONCAT ->
+                        spelt(joined.left()) + spelt(joined.right());
+                default -> throw new NotLowered(writing
+                        + " matches against a pattern this backend cannot settle where it stands");
+            };
         }
 
         /**

@@ -67,10 +67,37 @@ final class FreeReads {
                     each.values().forEach(field -> walk(field.value(), read, bound));
             case Core.ListLit each -> each.elements().forEach(element -> walk(element, read, bound));
             case Core.OptionSome each -> walk(each.value(), read, bound);
-            default -> {
-                // A leaf reads nothing and binds nothing. What is not named here is not something a
-                // body of this backend's writes, and meeting one is refused where it is written.
+            case Core.Tuple each -> each.elements().forEach(element -> walk(element, read, bound));
+            case Core.TupleGet each -> walk(each.tuple(), read, bound);
+            case Core.IfConstructed each -> {
+                walk(each.construct(), read, bound);
+                bound.add(each.binder().binding());
+                walk(each.then(), read, bound);
+                each.els().forEach(arm -> walk(arm.body(), read, bound));
             }
+            // The leaves, named rather than left to a default. What a block reads has to travel
+            // with it, and a walk that treats what it does not know as a leaf leaves a read behind
+            // — the block is written, the read is not bound where it lands, and what says so is
+            // the emitter meeting a binding nothing put anywhere. So the walk refuses instead, at
+            // the one place that can still say which expression it was.
+            case Core.Int ignored -> {
+            }
+            case Core.Bool ignored -> {
+            }
+            case Core.Str ignored -> {
+            }
+            case Core.Decimal ignored -> {
+            }
+            case Core.Temporal ignored -> {
+            }
+            case Core.OptionNone ignored -> {
+            }
+            case Core.UnitValue ignored -> {
+            }
+            case Core.Unreachable ignored -> {
+            }
+            default -> throw new NotLowered(expression.getClass().getSimpleName()
+                    + " is written into a block, and what it reads is not walked for");
         }
     }
 }
