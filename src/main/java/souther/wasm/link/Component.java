@@ -65,7 +65,7 @@ public final class Component {
                 inside.add(Map.entry(crossing, lifted++));
             }
             instances.add(ComponentWriter.componentInstanceFromFuncs(inside));
-            exports.add(ComponentWriter.exportInstance(UNDER + module.getKey(), made++));
+            exports.add(ComponentWriter.exportInstance(offeredAs(module.getKey()), made++));
         }
 
         ComponentWriter out = new ComponentWriter();
@@ -125,6 +125,25 @@ public final class Component {
 
     private static void section(WasmWriter out, int id, byte[] payload) {
         out.write(id).writeUnsignedLeb128(payload.length).write(payload);
+    }
+
+    /**
+     * What a component calls the interface a module's behaviors are offered under.
+     *
+     * <p>A module is named in parts and an interface is named in one, so the parts are joined the
+     * way an interface joins words. What comes out has to be a name an interface can carry for the
+     * same reason a behavior's does — and unlike a behavior's, this one is not carried inside the
+     * component but stands in its export, where a reader that cannot spell it cannot read past it.
+     *
+     * @param module the module the behaviors are declared in
+     */
+    public static String offeredAs(String module) {
+        String held = interfaceName(module.replace('.', '-'));
+        if (!WRITABLE.matcher(held).matches()) {
+            throw new IllegalArgumentException(module + " comes to " + held
+                    + ", which is not a name an interface writes");
+        }
+        return UNDER + held;
     }
 
     /**

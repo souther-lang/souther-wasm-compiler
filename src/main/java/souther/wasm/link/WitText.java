@@ -27,7 +27,7 @@ public final class WitText {
     public static String of(Map<String, Map<String, String>> behaviors) {
         StringBuilder out = new StringBuilder("package souther:program;\n");
         for (Map.Entry<String, Map<String, String>> module : behaviors.entrySet()) {
-            out.append("\ninterface ").append(module.getKey()).append(" {\n");
+            out.append("\ninterface ").append(named(module.getKey())).append(" {\n");
             for (String crossing : Component.namesIn(module.getKey(), module.getValue()).values()) {
                 out.append("  ").append(crossing)
                         .append(": func(arguments: string) -> string;\n");
@@ -36,7 +36,7 @@ public final class WitText {
         }
         out.append("\nworld program {\n");
         for (String module : behaviors.keySet()) {
-            out.append("  export ").append(module).append(";\n");
+            out.append("  export ").append(named(module)).append(";\n");
         }
         return out.append("}\n").toString();
     }
@@ -48,6 +48,12 @@ public final class WitText {
             // issue names where in the arguments it is about. Nothing else crosses — the shape of
             // what goes in and comes back is the model's, and it is written in Souther, not here.
             """;
+
+    /** What an interface calls a module, which is what the component exports it under. */
+    private static String named(String module) {
+        String held = Component.offeredAs(module);
+        return held.substring(held.indexOf('/') + 1);
+    }
 
     /**
      * The whole file: what a caller has to know, then the interfaces.

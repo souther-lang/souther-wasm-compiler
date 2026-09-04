@@ -120,6 +120,38 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     @Test
+    void offersAModuleNamedInPartsUnderOneNameAnInterfaceCanCarry() {
+        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of("""
+                module shared.money
+
+                behavior doubled : (n: Int) -> Int
+
+                let doubled (n) = n + n
+                """)));
+
+        // A module is named in parts and an interface is named in one. This is the one name a
+        // component carries that reading the component back cannot check, because it stands in the
+        // export where a reader that cannot spell it cannot read past it.
+        assertThat(offered(component)).containsOnlyKeys("souther:program/shared-money");
+    }
+
+    @Test
+    void namesEveryExportSomethingAComponentMayBeExportedUnder() {
+        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of("""
+                module a.b.c
+
+                behavior doubled : (n: Int) -> Int
+
+                let doubled (n) = n + n
+                """)));
+
+        for (String name : offered(component).keySet()) {
+            assertThat(name).describedAs("an export name")
+                    .matches("[a-z][a-z0-9-]*:[a-z][a-z0-9-]*/[a-z][a-z0-9-]*");
+        }
+    }
+
+    @Test
     void refusesTwoBehaviorsOneInterfaceWouldCallByOneName() {
         byte[] core = WasmCompiler.compile(oneBehavior());
 
