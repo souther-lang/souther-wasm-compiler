@@ -687,19 +687,64 @@ pub unsafe extern "C" fn __souther_list_sort(list: u32, descriptor: u32) -> u32 
     for i in 0..held {
         __souther_list_set(out, i, __souther_list_get(list, i));
     }
-    // An insertion sort, which keeps two equal elements in the order they were written.
-    for i in 1..held {
-        let mut j = i;
-        while j > 0
-            && order::ranked(__souther_list_get(out, j - 1), __souther_list_get(out, j), element) > 0
-        {
-            let earlier = __souther_list_get(out, j - 1);
-            __souther_list_set(out, j - 1, __souther_list_get(out, j));
-            __souther_list_set(out, j, earlier);
-            j -= 1;
-        }
-    }
+    merge_sorted(out, out, element);
     out
+}
+
+/// Sorts a list in place, in the order a second list's elements place them.
+///
+/// Merged in runs that double, and the two lists move together so that sorting by what a block
+/// answered moves what it was answered about. Two elements a comparison cannot separate keep the
+/// order they were written in, which is what a caller sorting twice by two things relies on.
+///
+/// The scratch is the arena's, which is where everything a call makes lives. An insertion sort
+/// wants none, and that is the whole of what it has to recommend it: a list twice as long costs
+/// four times as much to sort, and a list is as long as whoever sent it wanted.
+unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
+    let held = __souther_list_length(list);
+    if held < 2 {
+        return;
+    }
+    let room = alloc(8 * held);
+    let mut width = 1;
+    while width < held {
+        let mut at = 0;
+        while at < held {
+            let middle = if at + width < held { at + width } else { held };
+            let end = if at + 2 * width < held { at + 2 * width } else { held };
+            let mut left = at;
+            let mut right = middle;
+            let mut into = at;
+            while into < end {
+                let take_left = if left == middle {
+                    false
+                } else if right == end {
+                    true
+                } else {
+                    order::ranked(__souther_list_get(by, left), __souther_list_get(by, right),
+                            element) <= 0
+                };
+                let taken = if take_left {
+                    left += 1;
+                    left - 1
+                } else {
+                    right += 1;
+                    right - 1
+                };
+                core::ptr::write_unaligned(
+                    (room + into * 8) as *mut u32, __souther_list_get(list, taken));
+                core::ptr::write_unaligned(
+                    (room + into * 8 + 4) as *mut u32, __souther_list_get(by, taken));
+                into += 1;
+            }
+            at += 2 * width;
+        }
+        for i in 0..held {
+            __souther_list_set(list, i, core::ptr::read_unaligned((room + i * 8) as *const u32));
+            __souther_list_set(by, i, core::ptr::read_unaligned((room + i * 8 + 4) as *const u32));
+        }
+        width *= 2;
+    }
 }
 
 /// `List.max(xs)` and `List.min(xs)`: the furthest one either way, or nothing where there is none.
@@ -738,19 +783,7 @@ pub unsafe extern "C" fn __souther_list_sort_by(
         __souther_list_set(out, i, each);
         __souther_list_set(by, i, crate::__souther_call_block(key, each));
     }
-    for i in 1..held {
-        let mut j = i;
-        while j > 0 && order::ranked(__souther_list_get(by, j - 1), __souther_list_get(by, j), keys) > 0
-        {
-            let earlier = __souther_list_get(out, j - 1);
-            __souther_list_set(out, j - 1, __souther_list_get(out, j));
-            __souther_list_set(out, j, earlier);
-            let key_before = __souther_list_get(by, j - 1);
-            __souther_list_set(by, j - 1, __souther_list_get(by, j));
-            __souther_list_set(by, j, key_before);
-            j -= 1;
-        }
-    }
+    merge_sorted(out, by, keys);
     out
 }
 

@@ -859,29 +859,65 @@ unsafe fn list(value: u32, descriptor: u32, path: u32, path_length: u32, unique:
 
 /// The members of a set, in the order they are written in, each held once.
 ///
+/// A list in the order its type places its elements, in place.
+unsafe fn sorted_in_place(cell: u32, element: u32) {
+    let held = __souther_list_length(cell);
+    if held < 2 {
+        return;
+    }
+    let room = alloc(4 * held);
+    let mut width = 1;
+    while width < held {
+        let mut at = 0;
+        while at < held {
+            let middle = if at + width < held { at + width } else { held };
+            let end = if at + 2 * width < held { at + 2 * width } else { held };
+            let mut left = at;
+            let mut right = middle;
+            let mut into = at;
+            while into < end {
+                let take_left = if left == middle {
+                    false
+                } else if right == end {
+                    true
+                } else {
+                    order::compare(
+                        __souther_list_get(cell, left),
+                        __souther_list_get(cell, right),
+                        element,
+                    ) <= 0
+                };
+                let taken = if take_left {
+                    left += 1;
+                    left - 1
+                } else {
+                    right += 1;
+                    right - 1
+                };
+                core::ptr::write_unaligned(
+                    (room + into * 4) as *mut u32,
+                    __souther_list_get(cell, taken),
+                );
+                into += 1;
+            }
+            at += 2 * width;
+        }
+        for i in 0..held {
+            __souther_list_set(cell, i, core::ptr::read_unaligned((room + i * 4) as *const u32));
+        }
+        width *= 2;
+    }
+}
+
 /// Sorted here rather than on the way out because what a set is does not depend on how it was
 /// written: two documents listing the same members are one set, and a set that only settled its
 /// order at the boundary would compare as two.
 unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
     let element = descriptor::member(descriptor, 0);
     let held = __souther_list_length(cell);
-    // An insertion sort: a set is written out by hand and is small, and the arena has nowhere to
-    // put the second half of a merge.
-    for i in 1..held {
-        let mut j = i;
-        while j > 0
-            && order::compare(
-                __souther_list_get(cell, j - 1),
-                __souther_list_get(cell, j),
-                element,
-            ) > 0
-        {
-            let earlier = __souther_list_get(cell, j - 1);
-            __souther_list_set(cell, j - 1, __souther_list_get(cell, j));
-            __souther_list_set(cell, j, earlier);
-            j -= 1;
-        }
-    }
+    // Merged in runs that double: a set is written out by hand and is usually small, but usually is
+    // not a bound, and a set twice as long would otherwise cost four times as much to settle.
+    sorted_in_place(cell, element);
     let mut kept = 0;
     for i in 0..held {
         let each = __souther_list_get(cell, i);
