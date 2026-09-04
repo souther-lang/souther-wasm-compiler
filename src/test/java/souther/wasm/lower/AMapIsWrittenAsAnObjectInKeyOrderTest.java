@@ -1,7 +1,6 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -88,8 +87,10 @@ class AMapIsWrittenAsAnObjectInKeyOrderTest {
     }
 
     @Test
-    void saysSoForAMapKeyedBySomethingItDoesNotWriteYet() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+    void takesAMapKeyedByAnythingWrittenAsAStringWhereverOneStands() {
+        // Inside a shape as well as at the boundary: a map's key carries its own descriptor, so
+        // nothing here decides a second time what a key of that type looks like.
+        assertThat(WasmCompiler.compile(CheckedProgram.of(List.of("""
                 module counting
 
                 data Tally = { by: Map<Date, Int> }
@@ -97,11 +98,7 @@ class AMapIsWrittenAsAnObjectInKeyOrderTest {
                 behavior same : (t: Tally) -> Tally
 
                 let same (t) = t
-                """));
-
-        assertThatThrownBy(() -> WasmCompiler.compile(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("keyed by");
+                """)))).isNotEmpty();
     }
 
     /** What the module answers for a map written that way, as its object alone. */

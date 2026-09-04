@@ -1116,11 +1116,12 @@ pub unsafe extern "C" fn __souther_map_insert(
         return out;
     }
     let out = value::__souther_map(descriptor, entries + 1);
+    let keys = value::map_keys(map);
     let mut at = 0;
     let mut placed = false;
     for i in 0..entries {
         let each = value::__souther_map_key(map, i);
-        if !placed && order::compare_text(key, each) < 0 {
+        if !placed && written_before(key, each, keys) {
             value::__souther_map_set(out, at, key, held);
             at += 1;
             placed = true;
@@ -1190,13 +1191,26 @@ pub unsafe extern "C" fn __souther_map_remove(key: u32, map: u32, descriptor: u3
 }
 
 /// Where a key stands in a map, or nowhere.
+///
+/// By what the key is written as, because that is what one entry of a map is: a member of an
+/// object, and two spellings of one moment name one member.
 unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
+    let keys = value::map_keys(map);
+    let (wanted, wanted_length) = value::key_text(key, keys);
     for i in 0..value::__souther_map_length(map) {
-        if order::compare_text(value::__souther_map_key(map, i), key) == 0 {
+        let (each, each_length) = value::key_text(value::__souther_map_key(map, i), keys);
+        if order::compare_runs(each, each_length, wanted, wanted_length) == 0 {
             return Some(i);
         }
     }
     None
+}
+
+/// Whether one key is written before another, which is the order a map's entries stand in.
+unsafe fn written_before(key: u32, other: u32, keys: u32) -> bool {
+    let (a, a_length) = value::key_text(key, keys);
+    let (b, b_length) = value::key_text(other, keys);
+    order::compare_runs(a, a_length, b, b_length) < 0
 }
 
 /// How many a set or a map holds.

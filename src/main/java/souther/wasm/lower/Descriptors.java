@@ -118,13 +118,10 @@ final class Descriptors {
             }
             case Type.Union union -> alternatives(null, List.copyOf(union.members()));
             case Type.MapOf map -> {
-                // A key is written as the name of an object's member, so only a type that is
-                // already text is one this backend writes. What a date or a declared key is
-                // written as is a rule of its own and is not read off the key's type.
-                if (map.key() != Type.Prim.STRING) {
-                    throw new NotLowered("a map keyed by " + map.key()
-                            + ", and this backend writes one keyed by a String");
-                }
+                // A key is written as the name of an object's member, so a type keys a map
+                // exactly when it is written as a bare string — and it is written the same way
+                // there as anywhere else, which is why the key carries its own descriptor and
+                // nothing here decides a second time what a key of it looks like.
                 yield pair(KIND_MAP, map.key(), map.value());
             }
             default -> throw new NotLowered("a " + type

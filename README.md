@@ -79,8 +79,6 @@ which is where the one question the writing cannot answer — where a result may
   what `data Wrapper = { value: String }` reaches it as, and those two are written differently. Both
   are refused rather than one of them answered for by the other. Telling them apart is a question
   for `CheckedProgram`.
-- A `Map` keyed by a `Date`, a `Time`, a `DateTime`, an `Instant` or a declared enumeration. What a
-  key of one of those is written as is a rule of its own, not something read off the key's type.
 - A behavior supplied from outside, in a component. A core module reaches out for one.
 - A behavior another build implements. This links one program.
 

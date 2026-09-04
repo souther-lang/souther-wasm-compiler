@@ -211,9 +211,22 @@ unsafe fn held(cell: u32) -> u32 {
     }
 }
 
-/// Two strings by UTF-16 code unit, which is what a JVM string compares by.
-pub unsafe fn compare_text(left: u32, right: u32) -> i32 {
-    text(left, right)
+/// Two runs of text by UTF-16 code unit, which is what a JVM string compares by.
+pub unsafe fn compare_runs(at: u32, length: u32, other: u32, other_length: u32) -> i32 {
+    let mut a = Units::over(at, length);
+    let mut b = Units::over(other, other_length);
+    loop {
+        match (a.next(), b.next()) {
+            (None, None) => return 0,
+            (None, Some(_)) => return -1,
+            (Some(_), None) => return 1,
+            (Some(x), Some(y)) => {
+                if x != y {
+                    return if x < y { -1 } else { 1 };
+                }
+            }
+        }
+    }
 }
 
 unsafe fn text(left: u32, right: u32) -> i32 {

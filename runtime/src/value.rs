@@ -333,6 +333,11 @@ pub unsafe extern "C" fn __souther_map(descriptor: u32, entries: u32) -> u32 {
     cell
 }
 
+/// What a map's keys are, for a caller that has the map and not the type it was declared as.
+pub(crate) unsafe fn map_keys(cell: u32) -> u32 {
+    descriptor::member(core::ptr::read_unaligned((cell as usize + 4) as *const u32), 0)
+}
+
 /// How many entries a map holds.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_length(cell: u32) -> u32 {
@@ -894,6 +899,33 @@ unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
     out
 }
 
+/// The text a key of a map is written as, without the quotes a document puts round it.
+///
+/// A map's external form is an object, whose member names are strings, so a type keys a map
+/// exactly when it is written as a bare string — and every one that is is written the same way in
+/// key position as anywhere else. So this is not a second account of what a value is written as:
+/// it is the same one, read back for the two things a key is used for, standing in an order and
+/// standing for one entry.
+pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
+    match descriptor::kind(descriptor) {
+        KIND_STRING => (__souther_string_bytes(cell), __souther_string_length(cell)),
+        KIND_DATE => temporal::written_day(cell),
+        KIND_TIME => temporal::written_time(cell),
+        KIND_DATE_TIME => temporal::written_both(cell),
+        KIND_INSTANT => temporal::written_moment(cell),
+        KIND_ENUMERATION => {
+            let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+            for i in 0..descriptor::arity(descriptor) {
+                if descriptor::member(descriptor, i) == held {
+                    return descriptor::name(descriptor, i);
+                }
+            }
+            abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64)
+        }
+        other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
+    }
+}
+
 /// A map is written as an object, its keys the keys and its entries in ascending order of them.
 ///
 /// A key written twice names one entry, and the one that stands is the last written: what reaches
@@ -906,6 +938,7 @@ unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     }
     let held = json::__souther_json_length(value);
     let cell = __souther_map(descriptor, held);
+    let keys = descriptor::member(descriptor, 0);
     let values = descriptor::member(descriptor, 1);
     let mut whole = true;
     let mut kept = 0;
@@ -918,16 +951,20 @@ unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
         if read == 0 {
             whole = false;
         }
-        let key = __souther_string(name, name_length);
+        let key = __souther_read(written, keys, at, at_length);
+        if key == 0 {
+            // A member name that is no key of this type leaves nothing to file the entry under,
+            // so the entry is dropped and the whole is already not answered for.
+            whole = false;
+            continue;
+        }
+        // Two member names can be two spellings of one key — a moment written to three places and
+        // to six — and what the map holds is one entry under the key they both name.
+        let (spelt, spelt_length) = key_text(key, keys);
         let mut over = kept;
         for j in 0..kept {
-            let existing = __souther_map_key(cell, j);
-            if same(
-                __souther_string_bytes(existing),
-                __souther_string_length(existing),
-                name,
-                name_length,
-            ) {
+            let (existing, existing_length) = key_text(__souther_map_key(cell, j), keys);
+            if same(existing, existing_length, spelt, spelt_length) {
                 over = j;
                 break;
             }
@@ -941,18 +978,23 @@ unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     if !whole {
         return 0;
     }
-    sorted_by_key(cell);
+    sorted_by_key(cell, keys);
     cell
 }
 
-/// A map's entries, ascending by key.
-unsafe fn sorted_by_key(cell: u32) {
+/// A map's entries, ascending by what its keys are written as.
+///
+/// By the written form and not by where a key stands: a set of alternatives places its own in the
+/// order the declaration writes them, and a document's members are in the order their names sort.
+unsafe fn sorted_by_key(cell: u32, keys: u32) {
     let held = __souther_map_length(cell);
     for i in 1..held {
         let mut j = i;
-        while j > 0
-            && order::compare_text(__souther_map_key(cell, j - 1), __souther_map_key(cell, j)) > 0
-        {
+        while j > 0 && {
+            let (a, a_length) = key_text(__souther_map_key(cell, j - 1), keys);
+            let (b, b_length) = key_text(__souther_map_key(cell, j), keys);
+            order::compare_runs(a, a_length, b, b_length) > 0
+        } {
             let key = __souther_map_key(cell, j - 1);
             let held_value = __souther_map_value(cell, j - 1);
             __souther_map_set(cell, j - 1, __souther_map_key(cell, j), __souther_map_value(cell, j));
@@ -1142,16 +1184,14 @@ unsafe fn written(cell: u32, descriptor: u32) {
         }
         KIND_MAP => {
             write(b"{");
+            let keys = descriptor::member(descriptor, 0);
             let values = descriptor::member(descriptor, 1);
             for i in 0..__souther_map_length(cell) {
                 if i > 0 {
                     write(b",");
                 }
-                let key = __souther_map_key(cell, i);
-                copied(json::__souther_json_write_string(
-                    __souther_string_bytes(key),
-                    __souther_string_length(key),
-                ));
+                let (spelt, spelt_length) = key_text(__souther_map_key(cell, i), keys);
+                copied(json::__souther_json_write_string(spelt, spelt_length));
                 write(b":");
                 written(__souther_map_value(cell, i), values);
             }
