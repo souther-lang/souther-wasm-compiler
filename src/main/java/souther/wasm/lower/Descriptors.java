@@ -47,6 +47,16 @@ final class Descriptors {
     private static final int KIND_DATE_TIME = 15;
     private static final int KIND_INSTANT = 16;
     private static final int KIND_NEWTYPE = 17;
+    /**
+     * What the empty list's elements are, of which there are none.
+     *
+     * <p>A list written with nothing in it, standing where nothing said what it holds, has an
+     * element type no value is of. A descriptor is still wanted, because a list's descriptor names
+     * its element and something has to be there — but nothing reads or writes through this one,
+     * and every path that would is the one that ends a call on a kind it does not know. So it is a
+     * number no reader handles on purpose, rather than a stand-in for a type that would answer.
+     */
+    private static final int KIND_NOTHING = 18;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -85,6 +95,7 @@ final class Descriptors {
             case Type.Prim.TIME -> scalar(KIND_TIME);
             case Type.Prim.DATETIME -> scalar(KIND_DATE_TIME);
             case Type.Prim.INSTANT -> scalar(KIND_INSTANT);
+            case Type.Nothing ignored -> scalar(KIND_NOTHING);
             case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule named ->
                     ofDeclared(named);
             case Type.ListOf list -> holding(KIND_LIST, list.element());
@@ -143,6 +154,17 @@ final class Descriptors {
     List<ValueShape.Invariant> invariantsOf(TypeSymbol.AtModule name) {
         return declared(name) instanceof CheckedData.WithFields found
                 ? found.invariants() : List.of();
+    }
+
+    /**
+     * Whether where a field lies is settled by the type a read is written against.
+     *
+     * <p>It is not, where that type is a set of alternatives: the field is one every case of it
+     * spreads, and two cases need not put it in the same place. Which case a value turned out to
+     * be is a thing there has to be a value to know.
+     */
+    boolean settlesWhereAFieldLies(TypeSymbol.AtModule name) {
+        return declared(name) instanceof CheckedData.WithFields;
     }
 
     /** Which field of a shape a name is, by the shape's own ordering. */

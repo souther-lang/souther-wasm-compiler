@@ -842,6 +842,26 @@ unsafe fn named_for(value: u32, descriptor: u32, path: u32, path_length: u32) ->
     cell
 }
 
+/// A field of a record, found by the name it goes by rather than by where it lies.
+///
+/// A field every case of a set of alternatives spreads is read off the set, and which case a value
+/// turned out to be is not known until there is a value — so where in it the field lies is not
+/// known either, and the two cases need not put it in the same place. The value carries the
+/// descriptor of what it was made as, and that descriptor names its fields, so this asks it.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_record_named(cell: u32, at: u32, length: u32) -> u32 {
+    let descriptor = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+    for i in 0..descriptor::arity(descriptor) {
+        let (field, field_length) = descriptor::name(descriptor, i);
+        if same(field, field_length, at, length) {
+            return __souther_record_get(cell, i);
+        }
+    }
+    // Nothing a caller wrote reaches this. A field read off a set of alternatives is one every
+    // case of it has, which the check settled before this compiler wrote the read.
+    abort(REASON_NOT_A_VALUE, descriptor, at as u64, length as u64)
+}
+
 /// Which of a type's invariants a value breaks, or minus one where it breaks none.
 ///
 /// The check is generated: what must hold of a value is written in Souther, so what runs it is a

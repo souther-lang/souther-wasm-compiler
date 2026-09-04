@@ -498,6 +498,9 @@ public final class RuntimeAbi {
     public static final String STRING = "__souther_string";
 
     /** An amount a body wrote down, read from the text it was written as. */
+    /** A field of a record, found by the name it goes by rather than by where it lies. */
+    public static final String RECORD_NAMED = "__souther_record_named";
+
     public static final String DECIMAL_WRITTEN = "__souther_decimal_written";
 
     /** A day a body wrote down, read from the text it was written as. */

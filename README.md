@@ -74,6 +74,8 @@ which is where the one question the writing cannot answer — where a result may
 
 ## What is not written yet
 
+- A value bound by something this backend does not write yet, which is what stops two of the projects
+  in souther-lang/examples.
 - A behavior supplied from outside, in a component. A core module reaches out for one.
 - A behavior another build implements. This links one program.
 

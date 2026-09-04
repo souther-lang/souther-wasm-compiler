@@ -752,8 +752,17 @@ public final class WasmCompiler {
                 case Core.IfConstructed attempted -> attempt(out, attempted);
                 case Core.FieldAccess read -> {
                     value(out, read.target());
-                    out.constant(shapes.positionOf(shapeOf(read.target()), read.field()))
-                            .call(calls.of(RuntimeAbi.RECORD_GET));
+                    TypeSymbol.AtModule shape = shapeOf(read.target());
+                    if (shapes.settlesWhereAFieldLies(shape)) {
+                        out.constant(shapes.positionOf(shape, read.field()))
+                                .call(calls.of(RuntimeAbi.RECORD_GET));
+                    } else {
+                        // Read off a set of alternatives, so the value says where the field is.
+                        byte[] named = read.field().getBytes(StandardCharsets.UTF_8);
+                        out.constant(fragment.place(named))
+                                .constant(named.length)
+                                .call(calls.of(RuntimeAbi.RECORD_NAMED));
+                    }
                 }
                 case Core.Neg opposite -> {
                     boolean amount = opposite.operand().type()
