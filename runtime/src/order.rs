@@ -122,6 +122,23 @@ pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
 
 /// Where a value is written relative to another of the same type.
 pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
+    // What an optional is written as is what it holds, or nothing at all — so what it is compared
+    // by is that, and the cell holding it is not a value anybody wrote. Opened here rather than
+    // where the rank is asked, because the rank is asked of what is written and everything below
+    // is then handed the value the rank was about.
+    if descriptor::kind(descriptor) == KIND_OPTION {
+        let (a, b) = (held(left), held(right));
+        if a == 0 || b == 0 {
+            return if a == b {
+                0
+            } else if a == 0 {
+                -1
+            } else {
+                1
+            };
+        }
+        return compare(a, b, descriptor::member(descriptor, 0));
+    }
     if descriptor::kind(descriptor) == KIND_NEWTYPE {
         return compare(
             value::__souther_record_get(left, 0),
@@ -141,13 +158,10 @@ pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
         RANK_NULL | RANK_FALSE | RANK_TRUE => 0,
         RANK_NUMBER => {
             if descriptor::kind(descriptor) == KIND_DECIMAL {
-                // The amount decides, and where it cannot, the way it is written does: two that
-                // differ only in scale are one amount and two documents.
-                let by_amount = decimal::compare(left, right);
-                if by_amount != 0 {
-                    return by_amount;
-                }
-                return written_forms(left, right);
+                // How much it is, and nothing about how it was written. Two amounts differing only
+                // in scale are one amount, and a boundary writes them as one thing, so a
+                // collection holding one of them cannot be told to hold the other beside it.
+                return decimal::compare(left, right);
             }
             let x = value::__souther_int_value(left);
             let y = value::__souther_int_value(right);
@@ -331,15 +345,17 @@ unsafe fn members(left: u32, right: u32, descriptor: u32) -> i32 {
 /// Two maps: their entries read in key order, key against key and then value against value, with
 /// the one holding fewer first where everything they share agrees.
 unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
+    let keys = descriptor::member(descriptor, 0);
     let values = descriptor::member(descriptor, 1);
     let a = value::__souther_map_length(left);
     let b = value::__souther_map_length(right);
     let shorter = if a < b { a } else { b };
     for i in 0..shorter {
-        let by_key = text(
-            value::__souther_map_key(left, i),
-            value::__souther_map_key(right, i),
-        );
+        // What a key is written as, which is the same question a map's own order asks of it and
+        // is answered in the same place. A key is a string only where its type is one.
+        let (a_key, a_length) = value::key_text(value::__souther_map_key(left, i), keys);
+        let (b_key, b_length) = value::key_text(value::__souther_map_key(right, i), keys);
+        let by_key = compare_runs(a_key, a_length, b_key, b_length);
         if by_key != 0 {
             return by_key;
         }
@@ -365,13 +381,6 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
 unsafe fn tags(left: u32, right: u32, descriptor: u32) -> i32 {
     let (a, a_length) = descriptor::name(descriptor, case_of(left, descriptor));
     let (b, b_length) = descriptor::name(descriptor, case_of(right, descriptor));
-    bytes_as_units(a, a_length, b, b_length)
-}
-
-/// Two amounts of one size, by the text each is written as.
-unsafe fn written_forms(left: u32, right: u32) -> i32 {
-    let (a, a_length) = decimal::written(left);
-    let (b, b_length) = decimal::written(right);
     bytes_as_units(a, a_length, b, b_length)
 }
 

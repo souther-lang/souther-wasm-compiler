@@ -32,6 +32,16 @@ class ASetIsWrittenInTheOrderSoutherWritesOneTest {
             let same (w) = w
             """;
 
+    private static final String AMOUNTS = """
+            module paying
+
+            data Prices = { all: Set<Decimal> }
+
+            behavior same : (p: Prices) -> Prices
+
+            let same (p) = p
+            """;
+
     private static final String NUMBERS = """
             module counting
 
@@ -93,6 +103,20 @@ class ASetIsWrittenInTheOrderSoutherWritesOneTest {
         String written = "[{\"all\": [" + String.join(",", members) + "]}]";
         String answer = answerOf(module, export, written);
         return answer.substring(answer.indexOf('['), answer.lastIndexOf(']') + 1);
+    }
+
+    @Test
+    void holdsOneAmountOnceHoweverItWasWritten() {
+        Running module = compiled(AMOUNTS);
+
+        // How much it is, and nothing about how it was written: scale is no part of what an amount
+        // is, so a set given three ways of writing one holds it once and writes it once. Holding
+        // them apart would put the same thing in a document twice, since a boundary writes the one
+        // form either way.
+        assertThat(answerOf(module, "paying.same", "[{\"all\":[1.5,1.50,1.500]}]"))
+                .isEqualTo("{\"value\":{\"all\":[1.5]}}");
+        assertThat(answerOf(module, "paying.same", "[{\"all\":[0.10,0.1,0.2]}]"))
+                .isEqualTo("{\"value\":{\"all\":[0.1,0.2]}}");
     }
 
     private static Running compiled(String... sources) {
