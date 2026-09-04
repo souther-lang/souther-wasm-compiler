@@ -119,6 +119,35 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void compilesAProgramWhoseExamplesAreCheckedByRunningThem(@TempDir Path room)
+            throws IOException {
+        Files.writeString(room.resolve("shipping.sou"), """
+                module shipping
+
+                behavior fee : (total: Int) -> Int
+
+                let fee (total) = if total >= 5000 then 0 else 500
+                """);
+        Files.writeString(room.resolve("shipping.examples.sou"), """
+                examples for shipping
+
+                example fee
+                    | "five thousand is free" : (5000) -> 0
+                    | "under it is five hundred" : (4999) -> 500
+                """);
+        Path into = room.resolve("out.wasm");
+
+        // An example is checked by running it, so the compile this reads a program through needs
+        // the runtime those rows call. What this cannot see is whether the jar carries it: a test
+        // runs with the whole build's classpath either way. The build asks that of the jar.
+        Ran ran = run(room.toString(), "-o", into.toString());
+
+        assertThat(ran.complained()).isEmpty();
+        assertThat(ran.status()).isZero();
+        assertThat(into).exists();
+    }
+
+    @Test
     void leavesNothingWhereTheModuleWouldHaveGoneWhenTheLanguageRefuses(@TempDir Path room)
             throws IOException {
         Path source = Files.writeString(room.resolve("bad.sou"), """

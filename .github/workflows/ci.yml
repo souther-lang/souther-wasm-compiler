@@ -36,6 +36,30 @@ jobs:
       - name: Build and test
         run: mvn -B --no-transfer-progress verify
 
+      # What no test can see: a test runs with the whole build's classpath, and the jar carries
+      # only what the pom says it does. A program with an example is what tells them apart,
+      # because checking an example means running it.
+      - name: Compile a program with the jar the build produced
+        run: |
+          mkdir -p /tmp/asked
+          cat > /tmp/asked/shipping.sou <<'SOURCE'
+          module shipping
+
+          behavior fee : (total: Int) -> Int
+
+          let fee (total) = if total >= 5000 then 0 else 500
+          SOURCE
+          cat > /tmp/asked/shipping.examples.sou <<'SOURCE'
+          examples for shipping
+
+          example fee
+              | "five thousand is free" : (5000) -> 0
+              | "under it is five hundred" : (4999) -> 500
+          SOURCE
+          java -jar target/*-cli.jar /tmp/asked -o /tmp/asked/out.wasm --wit /tmp/asked/out.wit
+          test -s /tmp/asked/out.wasm
+          test -s /tmp/asked/out.wit
+
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no
     # Rust. That only holds while the two agree, and nothing but this notices when they stop:

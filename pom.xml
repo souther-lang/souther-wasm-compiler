@@ -53,11 +53,13 @@
 
         <!-- The authority on the order a Set and a Map are written in. Only the tests read it: a
              backend that agreed with its own idea of the order would agree with nothing. -->
+        <!-- Not only for the tests. A program's examples are checked by running them, so the
+             compile this reads a program through needs the runtime those rows call, and a build
+             without it stops on any program that has an example — which is most of them. -->
         <dependency>
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-runtime</artifactId>
             <version>${souther.version}</version>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>com.dylibso.chicory</groupId>
