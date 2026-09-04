@@ -1194,13 +1194,25 @@ pub unsafe extern "C" fn __souther_map_remove(key: u32, map: u32, descriptor: u3
 ///
 /// By what the key is written as, because that is what one entry of a map is: a member of an
 /// object, and two spellings of one moment name one member.
+///
+/// Halved rather than walked: a map's entries stand in the order their keys are written, so
+/// whether a key is there is answered by asking the middle one and dropping the half it is not in.
 unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
     let keys = value::map_keys(map);
     let (wanted, wanted_length) = value::key_text(key, keys);
-    for i in 0..value::__souther_map_length(map) {
-        let (each, each_length) = value::key_text(value::__souther_map_key(map, i), keys);
-        if order::compare_runs(each, each_length, wanted, wanted_length) == 0 {
-            return Some(i);
+    let mut low = 0;
+    let mut high = value::__souther_map_length(map);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let (each, each_length) = value::key_text(value::__souther_map_key(map, middle), keys);
+        let held = order::compare_runs(each, each_length, wanted, wanted_length);
+        if held == 0 {
+            return Some(middle);
+        }
+        if held < 0 {
+            low = middle + 1;
+        } else {
+            high = middle;
         }
     }
     None

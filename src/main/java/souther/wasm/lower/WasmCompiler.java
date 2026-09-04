@@ -101,6 +101,21 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
+        return Component.around(written(program, runtime, true), offered(program));
+    }
+
+    /**
+     * What a program offers, as {@link Component} and {@link WitText} are both given it.
+     *
+     * <p>A behavior supplied from outside is refused here rather than where a component is built,
+     * because it is not offered either way: what it sends out is a call in this module's own
+     * memory, which is not a thing a component carries, and writing it down as offered would say
+     * otherwise.
+     *
+     * @param program what a Souther compile checked
+     * @return every behavior's core export name, by the module that declares it
+     */
+    public static Map<String, Map<String, String>> offered(CheckedProgram program) {
         Map<String, Map<String, String>> behaviors = new LinkedHashMap<>();
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
@@ -117,7 +132,7 @@ public final class WasmCompiler {
             }
             behaviors.put(module.name(), named);
         }
-        return Component.around(written(program, runtime, true), behaviors);
+        return behaviors;
     }
 
     private static byte[] written(CheckedProgram program, byte[] runtime, boolean lifted) {

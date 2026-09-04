@@ -3,7 +3,13 @@ package souther.wasm.lower;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Random;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Running;
@@ -53,12 +59,27 @@ class AMapIsKeyedByWhateverIsWrittenAsAStringTest {
     void findsAnEntryByWhatItsKeyIsWrittenAsRatherThanHowItWasSpelt() {
         Running module = compiled();
 
-        assertThat(answerOf(module, "keyed.at",
-                        "{\"2026-09-04T09:30:15.500Z\":7},\"2026-09-04T09:30:15.5Z\""))
-                .isEqualTo(value("7"));
-        assertThat(answerOf(module, "keyed.at",
-                        "{\"2026-09-04T09:30:15.500Z\":7},\"2026-09-04T09:30:16Z\""))
+        // Every entry of a map with many of them, and one key that is in none of them. One entry
+        // would be found by any way of looking at all, including a wrong one.
+        List<String> moments = new ArrayList<>();
+        for (int i = 0; i < 64; i++) {
+            moments.add(Instant.EPOCH.plusSeconds(i * 3607L).toString());
+        }
+        String written = "{" + moments.stream()
+                .map(at -> "\"" + at + "\":" + moments.indexOf(at))
+                .collect(Collectors.joining(",")) + "}";
+
+        for (int i = 0; i < moments.size(); i++) {
+            assertThat(answerOf(module, "keyed.at", written + ",\"" + moments.get(i) + "\""))
+                    .describedAs(moments.get(i)).isEqualTo(value(Integer.toString(i)));
+        }
+        assertThat(answerOf(module, "keyed.at", written + ",\"2999-01-01T00:00:00Z\""))
                 .isEqualTo(value("-1"));
+        assertThat(answerOf(module, "keyed.at", written + ",\"1900-01-01T00:00:00Z\""))
+                .isEqualTo(value("-1"));
+        // The same moment, spelt another way.
+        assertThat(answerOf(module, "keyed.at", written + ",\"1970-01-01T01:00:07.000Z\""))
+                .isEqualTo(value("1"));
     }
 
     @Test
@@ -92,6 +113,43 @@ class AMapIsKeyedByWhateverIsWrittenAsAStringTest {
         // a calendar writes and not the member names the document happened to carry.
         assertThat(answerOf(module, "keyed.firstOf", "{\"2026-09-04\":1,\"1970-01-01\":2}"))
                 .isEqualTo(value("1970"));
+    }
+
+    @Test
+    void putsManyEntriesInOrderWhateverOrderTheyWereWrittenIn() {
+        Running module = compiled();
+
+        // Enough entries, in enough orders, that a sort which merely looks sorted on three of them
+        // does not. Every run is the same set of days, so every answer is the same string.
+        List<String> days = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            days.add(LocalDate.of(1970, 1, 1).plusDays(i * 37L).toString());
+        }
+        String expected = value("{" + days.stream().sorted()
+                .map(day -> "\"" + day + "\":1").collect(Collectors.joining(",")) + "}");
+
+        for (long seed : new long[] {1, 2, 3, 4, 5}) {
+            List<String> shuffled = new ArrayList<>(days);
+            Collections.shuffle(shuffled, new Random(seed));
+            String written = "{" + shuffled.stream()
+                    .map(day -> "\"" + day + "\":1").collect(Collectors.joining(",")) + "}";
+
+            assertThat(answerOf(module, "keyed.days", written))
+                    .describedAs("shuffled with " + seed).isEqualTo(expected);
+        }
+    }
+
+    @Test
+    void keepsWhatTheDocumentWroteLastWhereverTheRepeatWas() {
+        Running module = compiled();
+
+        // Three names for one moment, and the answer is what stands at the last of them — which is
+        // not what stands at the first, and not what a sort would leave there by accident.
+        assertThat(answerOf(module, "keyed.moments", """
+                {"2026-09-04T09:30:15.5Z":1,"2026-01-01T00:00:00Z":9,\
+                "2026-09-04T09:30:15.500Z":2,"2026-09-04T09:30:15.500000Z":3}"""))
+                .isEqualTo(value(
+                        "{\"2026-01-01T00:00:00Z\":9,\"2026-09-04T09:30:15.500Z\":3}"));
     }
 
     private static String value(String written) {

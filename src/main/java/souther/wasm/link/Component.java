@@ -56,19 +56,9 @@ public final class Component {
         int made = 0;
         for (Map.Entry<String, Map<String, String>> module : behaviors.entrySet()) {
             List<Map.Entry<String, Integer>> inside = new ArrayList<>();
-            Map<String, String> already = new LinkedHashMap<>();
+            Map<String, String> named = namesIn(module.getKey(), module.getValue());
             for (Map.Entry<String, String> behavior : module.getValue().entrySet()) {
-                String crossing = interfaceName(behavior.getKey());
-                if (!WRITABLE.matcher(crossing).matches()) {
-                    throw new IllegalArgumentException(behavior.getKey()
-                            + " comes to " + crossing + ", which is not a name an interface writes");
-                }
-                String taken = already.put(crossing, behavior.getKey());
-                if (taken != null) {
-                    throw new IllegalArgumentException(module.getKey() + " declares " + taken
-                            + " and " + behavior.getKey() + ", which an interface would name "
-                            + crossing + " both times");
-                }
+                String crossing = named.get(behavior.getKey());
                 int core32 = aliases.coreFunc(Lifted.wrapping(behavior.getValue()));
                 lifts.add(ComponentWriter.canonLiftMemoryReallocUtf8PostReturn(
                         core32, 0, memory, realloc, afterwards));
@@ -135,6 +125,36 @@ public final class Component {
 
     private static void section(WasmWriter out, int id, byte[] payload) {
         out.write(id).writeUnsignedLeb128(payload.length).write(payload);
+    }
+
+    /**
+     * What an interface calls each behavior of a module, or why it can call none of them that.
+     *
+     * <p>Asked here rather than where a component is built, because what a program offers is the
+     * same whether it is written as a component or only written down — and a name an interface
+     * cannot carry is not something to find out at the second of those.
+     *
+     * @param module the module the behaviors are declared in, for saying which one
+     * @param behaviors the behaviors of it, by the name Souther wrote
+     * @return each behavior's name, by the name Souther wrote
+     */
+    public static Map<String, String> namesIn(String module, Map<String, String> behaviors) {
+        Map<String, String> named = new LinkedHashMap<>();
+        Map<String, String> already = new LinkedHashMap<>();
+        for (String behavior : behaviors.keySet()) {
+            String crossing = interfaceName(behavior);
+            if (!WRITABLE.matcher(crossing).matches()) {
+                throw new IllegalArgumentException(behavior + " comes to " + crossing
+                        + ", which is not a name an interface writes");
+            }
+            String taken = already.put(crossing, behavior);
+            if (taken != null) {
+                throw new IllegalArgumentException(module + " declares " + taken + " and "
+                        + behavior + ", which an interface would name " + crossing + " both times");
+            }
+            named.put(behavior, crossing);
+        }
+        return named;
     }
 
     /**

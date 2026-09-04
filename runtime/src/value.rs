@@ -930,6 +930,10 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
 ///
 /// A key written twice names one entry, and the one that stands is the last written: what reaches
 /// a decoder is what the document says at that key, and a document says it last.
+///
+/// Read, then sorted, then collapsed — three walks rather than one. Filing each entry against the
+/// ones already kept as it is read costs a comparison for every pair of members, and an object is
+/// as long as whoever sent it wanted.
 unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
@@ -941,7 +945,7 @@ unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let keys = descriptor::member(descriptor, 0);
     let values = descriptor::member(descriptor, 1);
     let mut whole = true;
-    let mut kept = 0;
+    let mut read_in = 0;
     for i in 0..held {
         let written = json::__souther_json_key(value, i);
         let name = json::__souther_json_bytes(written);
@@ -958,49 +962,103 @@ unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
             whole = false;
             continue;
         }
-        // Two member names can be two spellings of one key — a moment written to three places and
-        // to six — and what the map holds is one entry under the key they both name.
-        let (spelt, spelt_length) = key_text(key, keys);
-        let mut over = kept;
-        for j in 0..kept {
-            let (existing, existing_length) = key_text(__souther_map_key(cell, j), keys);
-            if same(existing, existing_length, spelt, spelt_length) {
-                over = j;
-                break;
-            }
-        }
-        __souther_map_set(cell, over, key, read);
-        if over == kept {
-            kept += 1;
-        }
+        __souther_map_set(cell, read_in, key, read);
+        read_in += 1;
     }
-    map_of_length(cell, kept);
+    map_of_length(cell, read_in);
     if !whole {
         return 0;
     }
     sorted_by_key(cell, keys);
+    map_of_length(cell, collapsed(cell, keys));
     cell
+}
+
+/// The entries with each run of one key left as its last, answering how many are left.
+///
+/// After the sort, so two member names that spell one key stand next to each other. Which of them
+/// stands is the one the document wrote last, and the sort leaves a run in the order it was
+/// written.
+unsafe fn collapsed(cell: u32, keys: u32) -> u32 {
+    let held = __souther_map_length(cell);
+    let mut kept = 0;
+    for i in 0..held {
+        let (a, a_length) = key_text(__souther_map_key(cell, i), keys);
+        let last = i + 1 == held || {
+            let (b, b_length) = key_text(__souther_map_key(cell, i + 1), keys);
+            order::compare_runs(a, a_length, b, b_length) != 0
+        };
+        if last {
+            __souther_map_set(cell, kept, __souther_map_key(cell, i), __souther_map_value(cell, i));
+            kept += 1;
+        }
+    }
+    kept
 }
 
 /// A map's entries, ascending by what its keys are written as.
 ///
 /// By the written form and not by where a key stands: a set of alternatives places its own in the
 /// order the declaration writes them, and a document's members are in the order their names sort.
+///
+/// Merged in runs that double, which keeps two entries of one key in the order they were written —
+/// what the collapse after this leans on — and reads each entry a number of times that grows with
+/// the logarithm of how many there are rather than with how many there are.
 unsafe fn sorted_by_key(cell: u32, keys: u32) {
     let held = __souther_map_length(cell);
-    for i in 1..held {
-        let mut j = i;
-        while j > 0 && {
-            let (a, a_length) = key_text(__souther_map_key(cell, j - 1), keys);
-            let (b, b_length) = key_text(__souther_map_key(cell, j), keys);
-            order::compare_runs(a, a_length, b, b_length) > 0
-        } {
-            let key = __souther_map_key(cell, j - 1);
-            let held_value = __souther_map_value(cell, j - 1);
-            __souther_map_set(cell, j - 1, __souther_map_key(cell, j), __souther_map_value(cell, j));
-            __souther_map_set(cell, j, key, held_value);
-            j -= 1;
+    if held < 2 {
+        return;
+    }
+    let room = alloc(8 * held);
+    let mut width = 1;
+    while width < held {
+        let mut at = 0;
+        while at < held {
+            let middle = if at + width < held { at + width } else { held };
+            let end = if at + 2 * width < held { at + 2 * width } else { held };
+            merged(cell, keys, room, at, middle, end);
+            at += 2 * width;
         }
+        for i in 0..held {
+            __souther_map_set(
+                cell,
+                i,
+                core::ptr::read_unaligned((room + i * 8) as *const u32),
+                core::ptr::read_unaligned((room + i * 8 + 4) as *const u32),
+            );
+        }
+        width *= 2;
+    }
+}
+
+/// Two runs of entries laid into `room` as one, the earlier one first where their keys agree.
+unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u32) {
+    let mut left = from;
+    let mut right = middle;
+    let mut at = from;
+    while at < end {
+        let take_left = if left == middle {
+            false
+        } else if right == end {
+            true
+        } else {
+            let (a, a_length) = key_text(__souther_map_key(cell, left), keys);
+            let (b, b_length) = key_text(__souther_map_key(cell, right), keys);
+            order::compare_runs(a, a_length, b, b_length) <= 0
+        };
+        let taken = if take_left {
+            left += 1;
+            left - 1
+        } else {
+            right += 1;
+            right - 1
+        };
+        core::ptr::write_unaligned((room + at * 8) as *mut u32, __souther_map_key(cell, taken));
+        core::ptr::write_unaligned(
+            (room + at * 8 + 4) as *mut u32,
+            __souther_map_value(cell, taken),
+        );
+        at += 1;
     }
 }
 

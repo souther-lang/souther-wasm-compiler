@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.stream.Stream;
 import souther.compiler.diag.CompileException;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.link.WitText;
 import souther.wasm.lower.NotLowered;
 import souther.wasm.lower.WasmCompiler;
 
@@ -32,6 +33,8 @@ public final class Main {
               -o <file>     where to write. Required.
               --component   write a component, one interface per Souther module, rather than a
                             core module. A behavior crosses as func(arguments: string) -> string.
+              --wit <file>  also write what the program offers, as a reader of interfaces reads
+                            it. The same whether a component is written or not.
 
             A directory is read for the .sou files under it, in the order their paths sort.
             """;
@@ -61,6 +64,7 @@ public final class Main {
     public static int run(String[] arguments, PrintStream out, PrintStream problems) {
         List<Path> sources = new ArrayList<>();
         Path into = null;
+        Path offering = null;
         boolean component = false;
         for (int i = 0; i < arguments.length; i++) {
             String held = arguments[i];
@@ -73,6 +77,13 @@ public final class Main {
                     into = Path.of(arguments[++i]);
                 }
                 case "--component" -> component = true;
+                case "--wit" -> {
+                    if (i + 1 == arguments.length) {
+                        problems.println("--wit names no file");
+                        return WRONG_COMMAND;
+                    }
+                    offering = Path.of(arguments[++i]);
+                }
                 case "-h", "--help" -> {
                     out.print(USAGE);
                     return NOTHING_WRONG;
@@ -105,6 +116,7 @@ public final class Main {
         }
 
         byte[] written;
+        String offers = null;
         try {
             List<String> read = new ArrayList<>(files.size());
             for (Path file : files) {
@@ -114,7 +126,15 @@ public final class Main {
             written = component
                     ? WasmCompiler.compileAsComponent(program)
                     : WasmCompiler.compile(program);
+            if (offering != null) {
+                offers = WitText.written(WasmCompiler.offered(program));
+            }
         } catch (CompileException e) {
+            problems.println(e.getMessage());
+            return REFUSED;
+        } catch (IllegalArgumentException e) {
+            // A program that compiles but offers two behaviors one name, which is a refusal of
+            // the program rather than something this backend has not got round to.
             problems.println(e.getMessage());
             return REFUSED;
         } catch (NotLowered e) {
@@ -132,6 +152,12 @@ public final class Main {
                 Files.createDirectories(into.getParent());
             }
             Files.write(into, written);
+            if (offering != null) {
+                if (offering.getParent() != null) {
+                    Files.createDirectories(offering.getParent());
+                }
+                Files.writeString(offering, offers, StandardCharsets.UTF_8);
+            }
         } catch (IOException e) {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
