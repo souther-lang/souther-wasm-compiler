@@ -77,6 +77,48 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void writesWhatTheProgramOffersWhereOneIsAskedFor(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), """
+                module counting
+
+                behavior doubled : (n: Int) -> Int
+
+                let doubled (n) = n + n
+
+                behavior withVat : (n: Int) -> String
+
+                let withVat (n) = String.fromDecimal(Decimal.fromInt(n) * 1.10m)
+                """);
+        Path offers = room.resolve("counting.wit");
+
+        Ran ran = run(source.toString(), "-o", room.resolve("out.wasm").toString(),
+                "--wit", offers.toString());
+
+        assertThat(ran.status()).isZero();
+        assertThat(Files.readString(offers))
+                .contains("package souther:program;")
+                .contains("interface counting {")
+                .contains("doubled: func(arguments: string) -> string;")
+                .contains("with-vat: func(arguments: string) -> string;")
+                .contains("export counting;");
+    }
+
+    @Test
+    void offersTheSameThingWhetherAComponentIsWrittenOrNot(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+        Path fromCore = room.resolve("core.wit");
+        Path fromComponent = room.resolve("component.wit");
+
+        run(source.toString(), "-o", room.resolve("a.wasm").toString(),
+                "--wit", fromCore.toString());
+        run(source.toString(), "-o", room.resolve("b.wasm").toString(), "--component",
+                "--wit", fromComponent.toString());
+
+        // What a program offers is the program's, not the shape it was written in.
+        assertThat(Files.readString(fromCore)).isEqualTo(Files.readString(fromComponent));
+    }
+
+    @Test
     void leavesNothingWhereTheModuleWouldHaveGoneWhenTheLanguageRefuses(@TempDir Path room)
             throws IOException {
         Path source = Files.writeString(room.resolve("bad.sou"), """
@@ -127,6 +169,7 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
             {"-o", room.resolve("out.wasm").toString()},
             {source.toString(), "-o"},
             {source.toString(), "-o", room.resolve("out.wasm").toString(), "--fast"},
+            {source.toString(), "-o", room.resolve("out.wasm").toString(), "--wit"},
             {room.resolve("nothing-here.sou").toString(), "-o",
                     room.resolve("out.wasm").toString()},
         }) {

@@ -87,6 +87,10 @@ which is where the one question the writing cannot answer — where a result may
     mvn package
     java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm
     java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm --component
+    java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm --wit program.wit
+
+`--wit` writes what the program offers, as a reader of interfaces reads it. The same either way: a
+component carries it and a core module does not, but what a program offers is the program's.
 
 A directory is read for the `.sou` files under it, in the order their paths sort, so one command
 line is one program every time. Nothing is written where the module would go unless the whole
