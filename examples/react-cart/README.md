@@ -12,6 +12,64 @@ The first line builds the compiler, which is what turns the model into a module.
 compiles the model with it and then starts Vite, so it is what to run again after changing the
 model.
 
+## How you work on one
+
+Not through the browser. A model is a program the JVM runs, and
+[`souther run`](https://github.com/souther-lang/souther) runs one behavior of it without compiling
+anything to disk, so changing a rule and seeing what it answers is one command — and the module
+this repository writes is a build output rather than a step in the loop.
+
+    souther run --behavior price \
+      --input '{"lines":[{"sku":"ABC-1234","quantity":2,"unitPrice":3000.00}],"member":"Premium"}' \
+      model/src/cart.sou
+    # => {"subtotal":6000,"discount":600,"shipping":0,"total":5400,"type":"Priced"}
+
+The same command is where a rule is met from the other side. Nothing about the input below is a
+special case anybody wrote:
+
+    souther run --behavior price \
+      --input '{"lines":[{"sku":"nope","quantity":1,"unitPrice":1}],"member":"Standard"}' \
+      model/src/cart.sou
+    # => input #1 could not be decoded — /lines/0/sku: invalid format
+
+## Writing the examples is deciding the answers
+
+`souther examples` reads a model and measures the rows against the model's own rules — not against
+lines of anything. What it reports is which points the rules define and which of them no row stands
+at:
+
+    border   borders 3   obligations 2/3
+      ! no row is at an IN point (comparison@32:35)
+          · read as price/List.length(cart.lines): in 1 < List.length(cart.lines)
+      · no OFF point is owed at quantity = 1 (invariant Line (atLeastOne)):
+          excluded — the rules leave no value there
+
+Two different things, and they are worth reading apart. The first is a point somebody has to decide
+the answer at. The second is a point that cannot be written, because the rules leave no value
+there — so it is not owed, and nothing is missing.
+
+`--generate --boundaries` then writes the row for the first, with the answer left out:
+
+    // example price
+    //     | ( Cart { lines = [ Line { sku = Sku("AAA-0000"), quantity = 1, unitPrice = 1m },
+    //                          Line { sku = Sku("AAA-0000"), quantity = 1, unitPrice = 1m } ],
+    //                member = Standard } )
+    //         -> <?>
+
+The product code in it came from the format rule the model states. So what is left to do is fill in
+`<?>`, which is the one part of it nothing but a person reading what the rules are meant to say can
+answer. Working out what to ask is the compiler's half; deciding what the answer is is not.
+
+## What a build stopping means
+
+Three of them, and they mean three different things — all of them before the page is opened.
+
+* **A row stopped holding.** Either a rule changed, or something changed that was not meant to. The
+  rows run where the model is compiled, so this is the first thing that happens.
+* **The language refused it.** What was written is not a model.
+* **This backend refused it.** The language takes it and this cannot write it yet; the list is in
+  [the compiler's README](../../README.md).
+
 ## What is going on
 
 The compiler turns `cart.sou` into a WebAssembly module. Not a component — a plain core module,
