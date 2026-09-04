@@ -96,7 +96,7 @@ public final class Linker {
                     layout.dataSegmentCount() + fragment.dataSegments().size()));
         }
 
-        return assemble(sections);
+        return assemble(sections, crossings(fragment));
     }
 
     /**
@@ -279,7 +279,7 @@ public final class Linker {
         return out.toByteArray();
     }
 
-    private static byte[] assemble(Map<Integer, byte[]> sections) {
+    private static byte[] assemble(Map<Integer, byte[]> sections, byte[] crossings) {
         ByteArrayOutputStream module = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(module);
         writer.write(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
@@ -290,7 +290,45 @@ public final class Linker {
             }
             writer.write((byte) id).writeUnsignedLeb128(payload.length).write(payload);
         }
+        if (crossings.length > 0) {
+            writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(crossings.length).write(crossings);
+        }
         return module.toByteArray();
+    }
+
+    /** A section carrying no code, whose meaning is its name. */
+    private static final int SEC_CUSTOM = 0;
+
+    /** What the module reaches out for, under the name a reader looks for it by. */
+    private static final String CROSSINGS = "souther:crossings";
+
+    /**
+     * What the module reaches out for, written as a section of the module.
+     *
+     * <p>A number is what a call out carries, so what the numbers are has to be said somewhere, and
+     * the module is the only place a reader cannot be given the wrong one of. Written as one JSON
+     * array, because a caller reading it is reading JSON already — a call's arguments and its
+     * answer are both JSON, and this is the same reader.
+     */
+    private static byte[] crossings(WasmFragment fragment) {
+        List<WasmFragment.Crossing> held = fragment.crossings();
+        if (held.isEmpty()) {
+            return new byte[0];
+        }
+        StringBuilder written = new StringBuilder("[");
+        for (WasmFragment.Crossing crossing : held) {
+            written.append(written.length() > 1 ? "," : "")
+                    .append("{\"ordinal\":").append(crossing.ordinal())
+                    .append(",\"behavior\":\"").append(crossing.behavior())
+                    .append("\",\"implementedElsewhere\":").append(crossing.elsewhere())
+                    .append("}");
+        }
+        byte[] payload = written.append("]").toString().getBytes(StandardCharsets.UTF_8);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        WasmWriter writer = new WasmWriter(out);
+        byte[] name = CROSSINGS.getBytes(StandardCharsets.UTF_8);
+        writer.writeUnsignedLeb128(name.length).write(name).write(payload);
+        return out.toByteArray();
     }
 
     private static byte[] unsignedLeb(int value) {

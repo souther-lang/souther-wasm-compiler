@@ -36,6 +36,13 @@ exported memory, buffers come from `__ronto_alloc`, and a caller brackets a call
 `__ronto_alloc_mark` and `__ronto_alloc_reset`. An export that answers a string answers a live
 pointer into the arena, so the reset comes after the bytes have been read out.
 
+A behavior this program holds no implementation for is reached the same way whichever of the two
+reasons it is — the caller supplies it, or another build already did — because to a caller reaching
+in they are the same call, and only one of them has an artifact to be found somewhere. Which it is
+is in the module: `souther:crossings` says what each number a call out carries is the name of, and
+which of them another build implements. In the module rather than beside it, so a caller holding
+one cannot be handed the wrong other.
+
 What Souther adds is a way to say why a call ended without a value. An abort writes a fixed-width
 record outside the arena and traps; the record carries a generation, so a caller that snapshots it
 before the call can tell a Souther abort from an ordinary wasm fault.
@@ -75,7 +82,6 @@ which is where the one question the writing cannot answer — where a result may
 ## What is not written yet
 
 - A behavior supplied from outside, in a component. A core module reaches out for one.
-- A behavior another build implements. This links one program.
 - Part of what a pattern can say. `String.matches` is read here rather than at run time, so what is
   read is a written-out subset: characters, a class, a group, a choice, and the counts, with `^` and
   `$` taken where they only say what a whole-string match already says. A backreference, a

@@ -173,7 +173,15 @@ public final class WasmCompiler {
                 int arity = behavior.signature().takes().size();
                 int index = fragment.declare(overCells(fragment, arity));
                 reached.put(behavior.name(), index);
-                if (behavior.implementation() instanceof CheckedImplementation.Injected) {
+                // Reached out for, and the two reasons are one call. What a module holds for a
+                // behavior nobody in this program wrote is the same either way; which of them it
+                // is is what the module says about itself, not how the call is made.
+                if (behavior.implementation() instanceof CheckedImplementation.Injected
+                        || behavior.implementation()
+                                instanceof CheckedImplementation.ImplementedElsewhere) {
+                    boolean elsewhere = behavior.implementation()
+                            instanceof CheckedImplementation.ImplementedElsewhere;
+                    fragment.reachesOutFor(injected.size(), exportName(behavior.name()), elsewhere);
                     injected.add(new Crossing(index, behavior, injected.size()));
                     continue;
                 }
@@ -266,9 +274,9 @@ public final class WasmCompiler {
      * A behavior supplied from outside: where its function goes, which one it is, and what it was
      * declared to take and answer.
      *
-     * <p>The number is what the host is told: an ordinal of this build, which is enough for a host
-     * holding the table this compiler also writes. Not a name — a name would have to travel as
-     * bytes on every call for a number the host looks up once.
+     * <p>The number is what the caller is told: an ordinal of this build. Not a name — a name would
+     * travel as bytes on every call for something a caller looks up once — so the module says what
+     * the numbers are, in a section of itself.
      */
     private record Crossing(int index, CheckedBehavior behavior, int ordinal) {
     }
@@ -294,8 +302,9 @@ public final class WasmCompiler {
                     behavior.name() + " is injected and is written as a crossing, not as a body");
             case CheckedImplementation.Unwritten ignored -> throw new NotLowered(
                     behavior.name() + " is not written, so there is nothing to emit for it");
-            case CheckedImplementation.ImplementedElsewhere ignored -> throw new NotLowered(
-                    behavior.name() + " is implemented by another build, and this backend links one program");
+            case CheckedImplementation.ImplementedElsewhere ignored -> throw new IllegalStateException(
+                    behavior.name() + " is implemented by another build and is written as a"
+                            + " crossing, not as a body");
         };
     }
 
