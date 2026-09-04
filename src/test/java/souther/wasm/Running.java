@@ -86,6 +86,16 @@ public final class Running {
         return (int) instance.export(export).apply(first, second)[0];
     }
 
+    /** Calls an export answering nothing. */
+    public void run(String export) {
+        instance.export(export).apply();
+    }
+
+    /** Calls an export taking four numbers and answering one. */
+    public int call(String export, int first, int second, int third, int fourth) {
+        return (int) instance.export(export).apply(first, second, third, fourth)[0];
+    }
+
     /** Calls an export answering a pointer and a length packed into one number. */
     public long callPacked(String export, long... arguments) {
         return instance.export(export).apply(arguments)[0];
