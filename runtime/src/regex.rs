@@ -12,10 +12,12 @@
 //! then, per step: u32 what it does, u32, u32
 //! ```
 //!
-//! A set of characters sits on its own:
+//! A set of characters sits on its own, as the runs it names and nothing else. What a class
+//! leaves out was worked out where the pattern was read, so this only ever asks whether a
+//! character is in one of the runs:
 //!
 //! ```text
-//! +0  u32 whether it is everything but what follows
+//! +0  u32 nothing
 //! +4  u32 how many runs
 //! then, per run: u32 the first, u32 the last
 //! ```
@@ -123,17 +125,15 @@ unsafe fn step(machine: u32, pc: u32, field: u32) -> u32 {
 }
 
 unsafe fn in_class(set: u32, point: u32) -> bool {
-    let away = core::ptr::read_unaligned(set as *const u32) == 1;
     let runs = core::ptr::read_unaligned((set + 4) as *const u32);
-    let mut found = false;
     for i in 0..runs {
         let first = core::ptr::read_unaligned((set + 8 + i * 8) as *const u32);
         let last = core::ptr::read_unaligned((set + 12 + i * 8) as *const u32);
         if point >= first && point <= last {
-            found = true;
+            return true;
         }
     }
-    found != away
+    false
 }
 
 /// The characters a dot does not stand for, which is what ends a line.

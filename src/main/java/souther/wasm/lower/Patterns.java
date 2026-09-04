@@ -2,6 +2,7 @@ package souther.wasm.lower;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
@@ -255,7 +256,7 @@ final class Patterns {
         }
         char held = pattern.charAt(at++);
         return switch (held) {
-            case 'd', 'D', 'w', 'W', 's', 'S' -> new int[] {MATCH_CLASS, named(held), 0};
+            case 'd', 'D', 'w', 'W', 's', 'S' -> new int[] {MATCH_CLASS, placeClass(rangesOf(held)), 0};
             case 'n' -> new int[] {MATCH_ONE, '\n', 0};
             case 'r' -> new int[] {MATCH_ONE, '\r', 0};
             case 't' -> new int[] {MATCH_ONE, '\t', 0};
@@ -265,9 +266,11 @@ final class Patterns {
         };
     }
 
-    /** One of the sets a backslash names, placed as the runs of characters it stands for. */
-    private int named(char held) {
-        boolean away = Character.isUpperCase(held);
+    /** The last character there is, which is where a set's complement ends. */
+    private static final int LAST = 0x10ffff;
+
+    /** The characters one of the sets a backslash names stands for, as runs. */
+    private static List<int[]> rangesOf(char held) {
         List<int[]> runs = switch (Character.toLowerCase(held)) {
             case 'd' -> List.of(new int[] {'0', '9'});
             case 'w' -> List.of(new int[] {'a', 'z'}, new int[] {'A', 'Z'},
@@ -276,7 +279,42 @@ final class Patterns {
                     new int[] {'\n', '\n'}, new int[] {0x0b, 0x0b},
                     new int[] {'\f', '\f'}, new int[] {'\r', '\r'});
         };
-        return placeClass(away, runs);
+        return Character.isUpperCase(held) ? without(runs) : settled(runs);
+    }
+
+    /** The runs a set names, in order and with none touching the next. */
+    private static List<int[]> settled(List<int[]> runs) {
+        List<int[]> held = new ArrayList<>(runs);
+        held.sort(Comparator.comparingInt(run -> run[0]));
+        List<int[]> out = new ArrayList<>();
+        for (int[] run : held) {
+            if (run[1] < run[0]) {
+                continue;
+            }
+            int[] last = out.isEmpty() ? null : out.get(out.size() - 1);
+            if (last != null && run[0] <= last[1] + 1) {
+                last[1] = Math.max(last[1], run[1]);
+            } else {
+                out.add(new int[] {run[0], run[1]});
+            }
+        }
+        return out;
+    }
+
+    /** Every character the runs do not name. */
+    private static List<int[]> without(List<int[]> runs) {
+        List<int[]> out = new ArrayList<>();
+        int from = 0;
+        for (int[] run : settled(runs)) {
+            if (run[0] > from) {
+                out.add(new int[] {from, run[0] - 1});
+            }
+            from = run[1] + 1;
+        }
+        if (from <= LAST) {
+            out.add(new int[] {from, LAST});
+        }
+        return out;
     }
 
     /** {@code [...]}: the characters it names, or everything but them. */
@@ -290,15 +328,17 @@ final class Patterns {
         while (at < pattern.length() && pattern.charAt(at) != ']') {
             int held;
             if (pattern.charAt(at) == '\\') {
-                int[] escaped = escape();
-                if (escaped[0] == MATCH_CLASS) {
-                    // A set inside a set would be a union, and a negated one inside a negated one
-                    // is not the union anybody reads it as, so neither is admitted.
-                    throw new NotLowered(
-                            "a class naming a set inside it, which this backend does not read: "
-                                    + pattern);
+                char what = pattern.charAt(at + 1);
+                if ("dDwWsS".indexOf(what) >= 0) {
+                    // A set named inside a class is the characters it stands for, thrown in with
+                    // the rest. Where it is the negated one it is every character it does not name
+                    // — worked out here, so that what is placed is runs either way and nothing has
+                    // to hold a set inside a set.
+                    at += 2;
+                    runs.addAll(rangesOf(what));
+                    continue;
                 }
-                held = escaped[1];
+                held = escape()[1];
             } else {
                 held = pattern.charAt(at++);
             }
@@ -316,17 +356,21 @@ final class Patterns {
             throw notRead();
         }
         at++;
-        return placeClass(away, runs);
+        return placeClass(away ? without(runs) : settled(runs));
     }
 
     /**
-     * A set of characters in static memory: whether it is what is named or everything else, how
-     * many runs it names, and the runs.
+     * A set of characters in static memory: how many runs it names, and the runs.
+     *
+     * <p>The runs and nothing else. What is negated is worked out where it is written, because a
+     * class can name a set inside it and a negated set inside a negated class is not the union
+     * anybody reads it as — so the negating happens once, over runs, rather than being carried
+     * here and undone by whatever reads it.
      */
-    private int placeClass(boolean away, List<int[]> runs) {
+    private int placeClass(List<int[]> runs) {
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         WasmWriter out = new WasmWriter(table);
-        out.writeLittleEndian4(away ? 1 : 0).writeLittleEndian4(runs.size());
+        out.writeLittleEndian4(0).writeLittleEndian4(runs.size());
         for (int[] run : runs) {
             out.writeLittleEndian4(run[0]).writeLittleEndian4(run[1]);
         }
