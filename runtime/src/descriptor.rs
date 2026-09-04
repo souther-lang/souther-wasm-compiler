@@ -15,6 +15,11 @@
 //!
 //! kind INT / BOOL / STRING / UNIT   nothing more
 //!
+//! kind NEWTYPE
+//! +4  u32 one
+//! +8  u32 where the field's name is, u32 how long, u32 the field's own descriptor
+//! then u32 where the type's own name is, u32 how long, u32 the slot of what checks it
+//!
 //! kind PRODUCT
 //! +4  u32 how many fields
 //! +8  per field: u32 where its name is, u32 how long, u32 the field's own descriptor
@@ -52,6 +57,14 @@ pub const KIND_DATE_TIME: u32 = 15;
 
 /// A moment on the timeline, which is not a calendar reading and has no zone until one is named.
 pub const KIND_INSTANT: u32 = 16;
+
+/// A name for a value of another type, with rules of its own.
+///
+/// Laid out as a product of one field, because that is what a value of one is made of — the field,
+/// the binding a clause reads it through, and the slot of what checks it. What differs is only how
+/// it crosses: a value of it is written as the type it is a name for is written, so what reads and
+/// writes one asks the field's own descriptor and nothing here says `{"value": ...}`.
+pub const KIND_NEWTYPE: u32 = 17;
 /// A type with one value.
 pub const KIND_UNIT: u32 = 3;
 /// A type written as fields.

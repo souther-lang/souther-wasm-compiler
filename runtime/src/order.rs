@@ -20,7 +20,7 @@
 use crate::decimal;
 use crate::descriptor::{
     self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
-    KIND_INT,
+    KIND_INT, KIND_NEWTYPE,
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
     KIND_TUPLE, KIND_UNIT,
 };
@@ -42,6 +42,18 @@ const RANK_OBJECT: i32 = 6;
 /// written in one order and sorted in another, and one unit may be a case of two sets that place
 /// it differently. Everything else answers both questions alike.
 pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
+    // Where a name for a value stands is where the value it names stands. Walking into the one
+    // field it is laid out with arrives at the same place, and that is why nothing here has ever
+    // been wrong — but it is an answer about how the value is held rather than about what it is,
+    // and the two part company as soon as `rank` is asked, which says a name is written as an
+    // object where what it names is written as a string.
+    if descriptor::kind(descriptor) == KIND_NEWTYPE {
+        return ranked(
+            value::__souther_record_get(left, 0),
+            value::__souther_record_get(right, 0),
+            descriptor::member(descriptor, 0),
+        );
+    }
     match descriptor::kind(descriptor) {
         KIND_SUM | KIND_ENUMERATION => {
             let a = case_of(left, descriptor);
@@ -110,6 +122,13 @@ pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
 
 /// Where a value is written relative to another of the same type.
 pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
+    if descriptor::kind(descriptor) == KIND_NEWTYPE {
+        return compare(
+            value::__souther_record_get(left, 0),
+            value::__souther_record_get(right, 0),
+            descriptor::member(descriptor, 0),
+        );
+    }
     let a = rank(left, descriptor);
     let b = rank(right, descriptor);
     if a != b {

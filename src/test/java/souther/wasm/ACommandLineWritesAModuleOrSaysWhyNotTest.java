@@ -169,18 +169,17 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     @Test
     void saysWhichKindOfStopItWasWhenThisBackendIsTheOneRefusing(@TempDir Path room)
             throws IOException {
-        Path source = Files.writeString(room.resolve("wrapped.sou"), """
-                module wrapped
+        Path source = Files.writeString(room.resolve("reaching.sou"), """
+                module reaching
 
-                data ProductId = String
-
-                behavior kept : (x: ProductId) -> ProductId
-
-                let kept (x) = x
+                behavior today : (ignored: Int) -> Date
                 """);
         Path into = room.resolve("out.wasm");
 
-        Ran ran = run(source.toString(), "-o", into.toString());
+        // A behavior supplied from outside reaches out through a crossing in this module's own
+        // memory, which is not a thing a component carries. A core module reaches out for one, so
+        // this is the component asking and not the backend.
+        Ran ran = run(source.toString(), "-o", into.toString(), "--component");
 
         assertThat(ran.status()).isEqualTo(1);
         assertThat(ran.complained()).contains("this backend does not write that yet");

@@ -29,7 +29,7 @@
 use crate::decimal;
 use crate::descriptor::{
     self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
-    KIND_INT,
+    KIND_INT, KIND_NEWTYPE,
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
     KIND_TUPLE, KIND_UNIT,
 };
@@ -620,6 +620,7 @@ pub unsafe extern "C" fn __souther_read(
         }
         KIND_UNIT => unit(value, descriptor, path, path_length),
         KIND_PRODUCT => product(value, descriptor, path, path_length),
+        KIND_NEWTYPE => named_for(value, descriptor, path, path_length),
         KIND_SUM => sum(value, descriptor, path, path_length),
         KIND_ENUMERATION => enumeration(value, descriptor, path, path_length),
         // A tuple is how a body carries two things where one goes. Nothing outside the program is
@@ -812,13 +813,43 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     cell
 }
 
+/// A name for a value of another type: what that type is written as, held under this name.
+///
+/// The value crosses as the type it is a name for, so what is read is the field's own descriptor
+/// and there is no object here. What it is held as is a value of one field, the same as a product
+/// of one — construction, access and the clauses that must hold are the same for the two, and only
+/// the writing differs.
+unsafe fn named_for(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
+    let read = __souther_read(value, descriptor::member(descriptor, 0), path, path_length);
+    if read == 0 {
+        return 0;
+    }
+    let cell = __souther_record(descriptor);
+    __souther_record_set(cell, 0, read);
+    // Reported where the value is, and not below it at a field nobody wrote: a name for a value is
+    // written as that value, so the position a caller would look at is this one.
+    let clause = __souther_check_invariants(cell, descriptor);
+    if clause >= 0 {
+        issues::issue_of(
+            CODE_INVARIANT_VIOLATION,
+            path,
+            path_length,
+            decimal(clause as u32),
+            descriptor::own_name(descriptor),
+        );
+        return 0;
+    }
+    cell
+}
+
 /// Which of a type's invariants a value breaks, or minus one where it breaks none.
 ///
 /// The check is generated: what must hold of a value is written in Souther, so what runs it is a
 /// body this runtime knows nothing about, reached through the module's table.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_check_invariants(cell: u32, descriptor: u32) -> i32 {
-    if descriptor::kind(descriptor) != KIND_PRODUCT {
+    let kind = descriptor::kind(descriptor);
+    if kind != KIND_PRODUCT && kind != KIND_NEWTYPE {
         return -1;
     }
     let slot = descriptor::invariant(descriptor);
@@ -943,6 +974,9 @@ unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
 /// it is the same one, read back for the two things a key is used for, standing in an order and
 /// standing for one entry.
 pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
+    if descriptor::kind(descriptor) == KIND_NEWTYPE {
+        return key_text(__souther_record_get(cell, 0), descriptor::member(descriptor, 0));
+    }
     match descriptor::kind(descriptor) {
         KIND_STRING => (__souther_string_bytes(cell), __souther_string_length(cell)),
         KIND_DATE => temporal::written_day(cell),
@@ -1262,6 +1296,9 @@ unsafe fn written(cell: u32, descriptor: u32) {
         }
         KIND_UNIT => write(b"{}"),
         KIND_PRODUCT => fields(cell, descriptor, false),
+        // Written as the type it is a name for is written. The name is what a model reads it by
+        // and what a clause is about; it is not part of the value that crosses.
+        KIND_NEWTYPE => written(__souther_record_get(cell, 0), descriptor::member(descriptor, 0)),
         KIND_SUM => tagged(cell, descriptor),
         KIND_ENUMERATION => named(cell, descriptor),
         KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, cell as u64),

@@ -46,6 +46,7 @@ final class Descriptors {
     private static final int KIND_TIME = 14;
     private static final int KIND_DATE_TIME = 15;
     private static final int KIND_INSTANT = 16;
+    private static final int KIND_NEWTYPE = 17;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -60,26 +61,6 @@ final class Descriptors {
         this.program = program;
         this.fragment = fragment;
         this.checks = checks;
-    }
-
-    /**
-     * A shape whose external form this cannot settle.
-     *
-     * <p>A type declared over another — {@code data ProductId = String} — is written as what it is
-     * declared over, not as an object with one member. A type declared with one member called
-     * {@code value} is written as that object. What reaches this backend is the same thing for
-     * both: one field, called {@code value}, of the same type. So the two are refused together,
-     * because writing either one is answering for the other as well.
-     *
-     * <p>Only the one shape. Every other product is an object with the members it declares, and
-     * which of the two a one-member product is only matters for that one member name.
-     */
-    private static void refuseWhatCannotBeToldApart(CheckedData.Product shape) {
-        if (shape.fields().size() == 1 && shape.fields().get(0).name().equals("value")) {
-            throw new NotLowered(shape.name() + " is written down with one member called value,"
-                    + " and a type declared over another reaches this backend as that same shape."
-                    + " The two are written differently and nothing here can tell them apart");
-        }
     }
 
     /**
@@ -152,9 +133,15 @@ final class Descriptors {
         throw new NotLowered("the language declares no set of ways to round");
     }
 
-    /** What a declared shape says must hold of its values. */
+    /**
+     * What a declared shape says must hold of its values.
+     *
+     * <p>Asked of what a value is made of rather than of which form it was declared in: a name for
+     * a value of another type carries clauses exactly as a product does, and they are the same
+     * clauses about the same field.
+     */
     List<ValueShape.Invariant> invariantsOf(TypeSymbol.AtModule name) {
-        return declared(name) instanceof CheckedData.Product found
+        return declared(name) instanceof CheckedData.WithFields found
                 ? found.invariants() : List.of();
     }
 
@@ -206,12 +193,15 @@ final class Descriptors {
                 byName.put(name, descriptor);
                 yield descriptor;
             }
-            case CheckedData.Product shape -> {
-                refuseWhatCannotBeToldApart(shape);
-                yield composite(KIND_PRODUCT, name, shape.fields().stream()
-                        .map(field -> new Member(field.name(), field.type()))
-                        .toList());
-            }
+            case CheckedData.Product shape -> composite(KIND_PRODUCT, name, shape.fields().stream()
+                    .map(field -> new Member(field.name(), field.type()))
+                    .toList());
+            // A name for a value of another type. Laid out as the one-field product it is made
+            // like, because that is what a value of it is made of, and written as the type it is a
+            // name for is written — which is the one thing the two forms do not answer alike.
+            case CheckedData.Newtype named -> composite(KIND_NEWTYPE, name, named.fields().stream()
+                    .map(field -> new Member(field.name(), field.type()))
+                    .toList());
             // A sum's cases are its leaves: a case written as another sum is carried here as the
             // cases under it, so nothing nested reaches this and the tag always names a leaf.
             case CheckedData.Sum choice -> alternatives(name, choice.cases());
@@ -305,8 +295,9 @@ final class Descriptors {
     }
 
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members) {
-        // A product carries its own name and the slot of what checks it, after its fields.
-        int descriptor = fragment.reserve(4 + 4 + 12 * members + (kind == KIND_PRODUCT ? 12 : 0));
+        // A form a value is built out of carries its own name and the slot of what checks it,
+        // after its fields.
+        int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 12 : 0));
         if (name != null) {
             byName.put(name, descriptor);
         }
@@ -314,7 +305,7 @@ final class Descriptors {
     }
 
     private int filled(int kind, TypeSymbol.AtModule name, int descriptor, List<int[]> written) {
-        boolean product = kind == KIND_PRODUCT;
+        boolean product = carriesRules(kind);
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         WasmWriter out = new WasmWriter(table);
         out.writeLittleEndian4(kind).writeLittleEndian4(written.size());
@@ -334,6 +325,18 @@ final class Descriptors {
     }
 
     /**
+     * Whether a form is one a value is built out of field by field, and so one that carries what
+     * must hold of a value and the name a violation is reported under.
+     *
+     * <p>Asked in one place because two forms answer it and the room a descriptor takes and what
+     * goes in that room are two different lines: a form added to one and not the other would leave
+     * a descriptor saying it has a check, at bytes that are somebody else's.
+     */
+    private static boolean carriesRules(int kind) {
+        return kind == KIND_PRODUCT || kind == KIND_NEWTYPE;
+    }
+
+    /**
      * What a name declares, whether the model declared it or the language did.
      *
      * <p>A rounding mode is the language's, and a body that names one is naming a type like any
@@ -341,21 +344,18 @@ final class Descriptors {
      */
     private CheckedData declared(TypeSymbol.AtModule name) {
         for (CheckedData each : program.languageDeclarations()) {
-            if (each instanceof CheckedData.Product held && held.name().equals(name)) {
-                return held;
-            }
-            if (each instanceof CheckedData.Sum held && held.name().equals(name)) {
-                return held;
-            }
-            if (each instanceof CheckedData.Unit held && held.name().equals(name)) {
-                return held;
+            // By the name every declaration answers, not by asking each form in turn: a form this
+            // does not name would be looked for where a module's declarations are and not found
+            // there, and the day the language declares one that is what would happen.
+            if (each.name().equals(name)) {
+                return each;
             }
         }
         return program.declaration(name).data();
     }
 
-    private CheckedData.Product product(TypeSymbol.AtModule name) {
-        if (declared(name) instanceof CheckedData.Product found) {
+    private CheckedData.WithFields product(TypeSymbol.AtModule name) {
+        if (declared(name) instanceof CheckedData.WithFields found) {
             return found;
         }
         throw new NotLowered(name + " is not written as fields, and a field is read off one that is");
