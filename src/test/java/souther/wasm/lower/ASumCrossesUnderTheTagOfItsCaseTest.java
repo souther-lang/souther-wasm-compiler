@@ -123,6 +123,40 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
                 .isEqualTo("{\"value\":{\"type\":\"Second\",\"n\":1}}");
     }
 
+    @Test
+    void writesASetOfAlternativesWhoseCaseHoldsTheSetItIsACaseOf() {
+        // A shape is described before the set it is a case of has an address, so a case holding
+        // the set describes it again. Nothing here says why that stops, which is the reason this
+        // asks: the day it does not, the compile dies with a stack rather than a diagnostic.
+        assertThat(WasmCompiler.compile(CheckedProgram.of(List.of("""
+                module chaining
+
+                data Empty
+                data Cons = { head: Int, tail: Chain }
+                data Chain = Empty | Cons
+
+                behavior same : (c: Chain) -> Chain
+
+                let same (c) = c
+                """)))).isNotEmpty();
+    }
+
+    @Test
+    void writesAShapeHoldingTheSetOfAlternativesItIsReachedThrough() {
+        // The same question from the other end, where the shape is the first thing described.
+        assertThat(WasmCompiler.compile(CheckedProgram.of(List.of("""
+                module chaining
+
+                data Empty
+                data Cons = { head: Int, tail: Chain }
+                data Chain = Empty | Cons
+
+                behavior same : (c: Cons) -> Cons
+
+                let same (c) = c
+                """)))).isNotEmpty();
+    }
+
     private static Running compiled(String... sources) {
         return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
     }

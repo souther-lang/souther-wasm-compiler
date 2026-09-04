@@ -99,6 +99,14 @@ jobs:
           npm run build
           test -s dist/cart.wasm
 
+      # Building it says the page compiles. It says nothing about whether the calling works, and
+      # the calling is the only thing outside the JVM that reads this boundary — the numbers a
+      # reason goes by, where a failure record's fields are, which way round a pointer and a length
+      # come back. So the glue is run against a module, by the same file the page loads.
+      - name: Call a compiled program through the glue the page uses
+        working-directory: examples/react-cart
+        run: node check.mjs
+
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no
     # Rust. That only holds while the two agree, and nothing but this notices when they stop:

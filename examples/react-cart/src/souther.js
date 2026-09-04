@@ -63,6 +63,17 @@ class Program {
     this.#exports = instance.exports;
   }
 
+  /**
+   * The first byte of this memory the module has not handed out.
+   *
+   * <p>What a caller does with it is see that a call gave back what it took: everything a call
+   * made lives until the answer has been read and nothing lives past that, so this is where it was
+   * before any call and where it is after every one of them.
+   */
+  arenaTop() {
+    return this.#exports.__ronto_alloc_mark();
+  }
+
   /** What this program offers, which is one name per behavior the model declares. */
   get behaviors() {
     return Object.keys(this.#exports).filter((name) => name.includes("."));
