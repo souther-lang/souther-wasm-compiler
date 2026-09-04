@@ -71,17 +71,37 @@ bracket a core caller keeps, moved to where the format states it.
 
 A behavior's name is not the same string on both sides — Souther writes one convention and an
 interface another — so where two behaviors of a module would come to one interface name, this
-refuses rather than exporting one of them twice. A behavior supplied from outside is refused as
-well: what it sends out is a call in this module's own memory, which is not a thing a component
-carries, and it has no crossing of its own yet.
+refuses rather than exporting one of them twice.
+
+A behavior the program does not implement is asked for rather than offered, under a package of its
+own:
+
+    world root {
+      import souther:reached/rates;
+      export souther:program/rates;
+    }
+
+One interface says what the program answers and the other what it has to be given, so a name says
+which of the two it is. What stands between them is two small core modules. A program reaches out
+through a call in its own memory — a behavior's number, where the arguments are, and a buffer of
+its own — and a component's call carries a string and answers one, so something has to change one
+into the other, and what it needs is the program's memory. That memory does not exist until the
+program has been instantiated, which cannot happen until something answers what it reaches out for.
+So the first module is instantiated before the program and answers by calling through a table it
+exports, which is empty; the program is instantiated against it; the component's own calls are
+lowered against the memory that now exists; and the second module, instantiated last, writes those
+lowerings into the table as it starts. The table is full before anything outside has been handed
+anything that could reach a call through it.
 
 The tests read the component back out of what was written. They do not run one: nothing here can.
 The three runtime functions a component's canonical calls go through are asked directly instead,
 which is where the one question the writing cannot answer — where a result may begin — can be put.
+The two modules a program reaches out through are run the same way, against lowerings that write
+what a lowering writes, because what could be got wrong about them is which behavior a numbered
+call reaches and what it does with a buffer too short to hold the answer.
 
 ## What is not written yet
 
-- A behavior supplied from outside, in a component. A core module reaches out for one.
 - What a pattern says by looking back or ahead. `String.matches` is read where it is written rather
   than at run time, and what it is read into holds every step the walk could be at rather than
   trying one way and coming back — so a backreference, a lookaround and a lazy or possessive count
@@ -104,8 +124,9 @@ which is where the one question the writing cannot answer — where a result may
     java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm --component
     java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm --wit program.wit
 
-`--wit` writes what the program offers, as a reader of interfaces reads it. The same either way: a
-component carries it and a core module does not, but what a program offers is the program's.
+`--wit` writes what the program offers and what it has to be given, as a reader of interfaces reads
+them. The same either way: a component carries it and a core module does not, but what a program
+offers is the program's.
 
 A directory is read for the `.sou` files under it, in the order their paths sort, so one command
 line is one program every time. Nothing is written where the module would go unless the whole

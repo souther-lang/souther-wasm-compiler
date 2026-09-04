@@ -101,16 +101,44 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(written(program, runtime, true), offered(program));
+        return Component.around(
+                written(program, runtime, true), offered(program), reachedOutFor(program));
+    }
+
+    /**
+     * What a program reaches out for, in the order it numbers them.
+     *
+     * <p>The same order the module's own crossings are numbered in, because it is read from the
+     * same walk: a component asks for each of these as an interface, and which one a call is for
+     * is the number the program was compiled with.
+     *
+     * @param program what a Souther compile checked
+     * @return each behavior the program declares and does not implement
+     */
+    public static List<Component.Reach> reachedOutFor(CheckedProgram program) {
+        List<Component.Reach> reaches = new ArrayList<>();
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                if (isReachedOutFor(behavior)) {
+                    reaches.add(new Component.Reach(module.name(), behavior.name().name()));
+                }
+            }
+        }
+        return reaches;
+    }
+
+    /** Whether what stands for a behavior is a call out of the program rather than a body. */
+    private static boolean isReachedOutFor(CheckedBehavior behavior) {
+        return behavior.implementation() instanceof CheckedImplementation.Injected
+                || behavior.implementation() instanceof CheckedImplementation.ImplementedElsewhere;
     }
 
     /**
      * What a program offers, as {@link Component} and {@link WitText} are both given it.
      *
-     * <p>A behavior supplied from outside is refused here rather than where a component is built,
-     * because it is not offered either way: what it sends out is a call in this module's own
-     * memory, which is not a thing a component carries, and writing it down as offered would say
-     * otherwise.
+     * <p>A behavior the program does not implement is not among them. Nothing in the module
+     * answers it, so what it crosses as is asked for rather than offered, and that is
+     * {@link #reachedOutFor} rather than this.
      *
      * @param program what a Souther compile checked
      * @return every behavior's core export name, by the module that declares it
@@ -120,15 +148,9 @@ public final class WasmCompiler {
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
             for (CheckedBehavior behavior : module.behaviors()) {
-                if (behavior.implementation() instanceof CheckedImplementation.Injected) {
-                    // What an injected behavior sends out is a call in this module's own memory,
-                    // which is not a thing a component carries. A component that let one through
-                    // would end the call where it was reached rather than where it was built.
-                    throw new NotLowered(behavior.name()
-                            + " is supplied from outside, and a component has no way to reach out"
-                            + " for it yet");
+                if (!isReachedOutFor(behavior)) {
+                    named.put(behavior.name().name(), exportName(behavior.name()));
                 }
-                named.put(behavior.name().name(), exportName(behavior.name()));
             }
             behaviors.put(module.name(), named);
         }

@@ -28,6 +28,9 @@ public final class Component {
     /** The namespace and package a Souther program's interfaces are named under. */
     private static final String UNDER = "souther:program/";
 
+    /** The namespace and package what a program reaches out for is asked for under. */
+    private static final String ASKED = "souther:reached/";
+
     /** What a behavior crosses as, taking the call's arguments and answering the envelope. */
     private static final String TAKES = "arguments";
 
@@ -43,6 +46,20 @@ public final class Component {
      * @return the component
      */
     public static byte[] around(byte[] core, Map<String, Map<String, String>> behaviors) {
+        return around(core, behaviors, List.of());
+    }
+
+    /**
+     * Wraps a linked core module as a component that reaches out for what it does not implement.
+     *
+     * @param core the linked core module
+     * @param behaviors every behavior's core export name, by the module that declares it, in the
+     *     order the program declares them
+     * @param reaches the behaviors the program reaches out for, in the order it numbers them
+     * @return the component
+     */
+    public static byte[] around(byte[] core, Map<String, Map<String, String>> behaviors,
+            List<Reach> reaches) {
         Aliases aliases = new Aliases(PROGRAM);
         List<byte[]> lifts = new ArrayList<>();
         List<byte[]> exports = new ArrayList<>();
@@ -70,20 +87,130 @@ public final class Component {
 
         ComponentWriter out = new ComponentWriter();
         out.rawSection(ComponentWriter.SEC_CORE_MODULE, core);
-        out.rawSection(ComponentWriter.SEC_CORE_MODULE, unreachedHost());
+        out.rawSection(ComponentWriter.SEC_CORE_MODULE, reaches.isEmpty()
+                ? unreachedHost()
+                : ReachingOut.answeringThroughATable(reaches.size()));
+        if (!reaches.isEmpty()) {
+            out.rawSection(ComponentWriter.SEC_CORE_MODULE,
+                    ReachingOut.fillingTheTable(reaches.size()));
+        }
         out.rawSection(ComponentWriter.SEC_CORE_INSTANCE, ComponentWriter.vec(List.of(
                 ComponentWriter.coreInstanceInstantiate(1, List.of(), List.of()),
                 ComponentWriter.coreInstanceInstantiate(
                         0, List.of(RuntimeAbi.IMPORT_MODULE), List.of(0)))));
-        out.rawSection(ComponentWriter.SEC_ALIAS, ComponentWriter.vec(aliases.written()));
-        out.rawSection(ComponentWriter.SEC_TYPE, ComponentWriter.vec(List.of(
-                ComponentWriter.funcTypeScalars(List.of(TAKES),
-                        List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING))));
+        List<byte[]> taken = new ArrayList<>(aliases.written());
+        if (!reaches.isEmpty()) {
+            taken.add(ComponentWriter.aliasCoreTable(HOST, ReachingOut.TABLE));
+        }
+        out.rawSection(ComponentWriter.SEC_ALIAS, ComponentWriter.vec(taken));
+        List<byte[]> types = new ArrayList<>();
+        byte[] crossing = ComponentWriter.funcTypeScalars(List.of(TAKES),
+                List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING);
+        types.add(crossing);
+        Map<String, Integer> asked = new LinkedHashMap<>();
+        for (Reach reach : reaches) {
+            if (!asked.containsKey(reach.module())) {
+                asked.put(reach.module(), types.size());
+                types.add(askedFor(reaches, reach.module()));
+            }
+        }
+        out.rawSection(ComponentWriter.SEC_TYPE, ComponentWriter.vec(types));
         out.rawSection(ComponentWriter.SEC_CANON, ComponentWriter.vec(lifts));
         out.rawSection(ComponentWriter.SEC_INSTANCE, ComponentWriter.vec(instances));
+        if (!reaches.isEmpty()) {
+            reachOut(out, reaches, asked, made, lifted, aliases.taken(), memory, realloc);
+        }
         out.rawSection(ComponentWriter.SEC_EXPORT, ComponentWriter.vec(exports));
         return out.toByteArray();
     }
+
+    /**
+     * A behavior a program declares and does not implement.
+     *
+     * @param module the module the behavior is declared in
+     * @param behavior the name Souther wrote it under
+     */
+    public record Reach(String module, String behavior) {
+    }
+
+    /** The interface a module's reached-out-for behaviors are asked for under. */
+    private static byte[] askedFor(List<Reach> reaches, String module) {
+        List<byte[]> decls = new ArrayList<>();
+        decls.add(ComponentWriter.instanceDeclType(ComponentWriter.funcTypeScalars(List.of(TAKES),
+                List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING)));
+        for (String named : namesIn(module, reachedIn(reaches, module)).values()) {
+            decls.add(ComponentWriter.instanceDeclExportFunc(named, 0));
+        }
+        return ComponentWriter.instanceTypeOf(decls);
+    }
+
+    /** The behaviors of one module that are reached out for, in the order they are numbered. */
+    private static Map<String, String> reachedIn(List<Reach> reaches, String module) {
+        Map<String, String> held = new LinkedHashMap<>();
+        for (Reach reach : reaches) {
+            if (reach.module().equals(module)) {
+                held.put(reach.behavior(), reach.behavior());
+            }
+        }
+        return held;
+    }
+
+    /**
+     * Asks for what the program reaches out for, and hands the answers to what fills the table.
+     *
+     * <p>Each is asked for as an interface, the same way each module's own behaviors are offered,
+     * so a caller reads one shape whichever direction a behavior goes. What comes back is lowered
+     * against the program's own memory — which is why this is written here and not beside the
+     * lifts: the memory does not exist until the program has been instantiated, and the program
+     * cannot be instantiated until something answers what it reaches out for.
+     */
+    private static void reachOut(ComponentWriter out, List<Reach> reaches,
+            Map<String, Integer> asked, int made, int lifted, int coreFuncs, int memory,
+            int realloc) {
+        List<byte[]> imports = new ArrayList<>();
+        Map<String, Integer> from = new LinkedHashMap<>();
+        for (Map.Entry<String, Integer> module : asked.entrySet()) {
+            from.put(module.getKey(), made + imports.size());
+            imports.add(ComponentWriter.importInstance(
+                    askedUnder(module.getKey()), module.getValue()));
+        }
+        out.rawSection(ComponentWriter.SEC_IMPORT, ComponentWriter.vec(imports));
+
+        List<byte[]> taken = new ArrayList<>();
+        List<byte[]> lowers = new ArrayList<>();
+        for (Reach reach : reaches) {
+            taken.add(ComponentWriter.aliasInstanceFunc(from.get(reach.module()),
+                    interfaceName(reach.behavior())));
+            lowers.add(ComponentWriter.canonLowerMemoryReallocUtf8(
+                    lifted + lowers.size(), memory, realloc));
+        }
+        out.rawSection(ComponentWriter.SEC_ALIAS, ComponentWriter.vec(taken));
+        out.rawSection(ComponentWriter.SEC_CANON, ComponentWriter.vec(lowers));
+
+        List<String> names = new ArrayList<>(List.of(
+                RuntimeAbi.MEMORY, ReachingOut.TABLE, RuntimeAbi.CANONICAL_REALLOC));
+        List<Integer> sorts = new ArrayList<>(List.of(SORT_MEMORY, SORT_TABLE, SORT_FUNC));
+        List<Integer> held = new ArrayList<>(List.of(memory, 0, realloc));
+        for (int i = 0; i < reaches.size(); i++) {
+            names.add(ReachingOut.lowered(i));
+            sorts.add(SORT_FUNC);
+            held.add(coreFuncs + i);
+        }
+        out.rawSection(ComponentWriter.SEC_CORE_INSTANCE, ComponentWriter.vec(List.of(
+                ComponentWriter.coreInstanceFromExports(names, sorts, held),
+                ComponentWriter.coreInstanceInstantiate(
+                        2, List.of(RuntimeAbi.IMPORT_MODULE), List.of(FIXUP_ARGS)))));
+    }
+
+    /** Which core instance holds what the program's arguments are handed to it as. */
+    private static final int FIXUP_ARGS = 2;
+
+    /** Which core instance answers what the program reaches out for. */
+    private static final int HOST = 0;
+
+    private static final int SORT_FUNC = 0x00;
+    private static final int SORT_TABLE = 0x01;
+    private static final int SORT_MEMORY = 0x02;
 
     /**
      * A module standing where the crossing out of the program would be.
@@ -138,12 +265,31 @@ public final class Component {
      * @param module the module the behaviors are declared in
      */
     public static String offeredAs(String module) {
+        return UNDER + writable(module);
+    }
+
+    /**
+     * What a component calls the interface a module's reached-out-for behaviors are asked for
+     * under.
+     *
+     * <p>Not the one the module's own behaviors are offered under, though the two hold behaviors of
+     * one Souther module. An interface name says what its functions are, and these are the ones the
+     * component has none of — a reader handed one name for both would be handed one interface that
+     * is two.
+     *
+     * @param module the module the behaviors are declared in
+     */
+    public static String askedUnder(String module) {
+        return ASKED + writable(module);
+    }
+
+    private static String writable(String module) {
         String held = interfaceName(module.replace('.', '-'));
         if (!WRITABLE.matcher(held).matches()) {
             throw new IllegalArgumentException(module + " comes to " + held
                     + ", which is not a name an interface writes");
         }
-        return UNDER + held;
+        return held;
     }
 
     /**
@@ -247,6 +393,11 @@ public final class Component {
 
         List<byte[]> written() {
             return written;
+        }
+
+        /** How many core functions have been taken, which is where the next one is written. */
+        int taken() {
+            return taken;
         }
     }
 }

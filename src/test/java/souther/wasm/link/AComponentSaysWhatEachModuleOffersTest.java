@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
-import souther.wasm.lower.NotLowered;
 import souther.wasm.lower.WasmCompiler;
 
 /**
@@ -64,29 +63,23 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     @Test
-    void refusesABehaviorSuppliedFromOutside() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
-                module counting
+    void asksForABehaviorSuppliedFromOutsideRatherThanOfferingIt() {
+        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of("""
+                module rates
 
-                behavior doubled : (n: Int) -> Int
-                """));
+                behavior today : (pair: String) -> Decimal
 
-        assertThatThrownBy(() -> WasmCompiler.compileAsComponent(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("supplied from outside");
-    }
+                behavior priced : (n: Decimal) -> Decimal depends on today
 
-    @Test
-    void stillWritesTheSameBehaviorAsACoreModule() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
-                module counting
+                let priced (n, today) = n * today("JPY")
+                """)));
 
-                behavior doubled : (n: Int) -> Int
-                """));
-
-        // A core module reaches out for one, so the refusal is the component's and not the
-        // backend's: what a component cannot do is carry the crossing, not write the behavior.
-        assertThat(WasmCompiler.compile(program)).isNotEmpty();
+        // Nothing in the module answers `today`, so a component that offered it would be offering
+        // the caller's own answer back. It is asked for, under a name of its own: one interface
+        // says what a program answers and the other what it has to be given.
+        assertThat(offered(component)).containsOnlyKeys("souther:program/rates");
+        assertThat(offered(component).get("souther:program/rates")).containsExactly("priced");
+        assertThat(askedFor(component)).containsExactly("souther:reached/rates");
     }
 
     @Test
@@ -213,6 +206,23 @@ class AComponentSaysWhatEachModuleOffersTest {
      * a component that named every interface right while pointing them all at one is one this
      * would otherwise call correct.
      */
+    /** What the component says it has to be given, which is the interfaces it imports. */
+    private static List<String> askedFor(byte[] component) {
+        List<String> found = new ArrayList<>();
+        for (byte[] payload : sections(component).getOrDefault(SEC_IMPORT, List.of())) {
+            Cursor at = new Cursor(payload);
+            int entries = at.leb();
+            for (int i = 0; i < entries; i++) {
+                found.add(at.declaredName());
+                assertThat(at.byteAt()).describedAs("asked for as an interface").isEqualTo(0x05);
+                at.leb();
+            }
+        }
+        return found;
+    }
+
+    private static final int SEC_IMPORT = 10;
+
     private static Map<String, List<String>> offered(byte[] component) {
         List<List<String>> instances = new ArrayList<>();
         for (byte[] payload : sections(component).getOrDefault(SEC_INSTANCE, List.of())) {

@@ -96,11 +96,36 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
 
         assertThat(ran.status()).isZero();
         assertThat(Files.readString(offers))
-                .contains("package souther:program;")
+                .contains("package souther:program {")
                 .contains("interface counting {")
                 .contains("doubled: func(arguments: string) -> string;")
                 .contains("with-vat: func(arguments: string) -> string;")
-                .contains("export counting;");
+                .contains("export souther:program/counting;");
+    }
+
+    @Test
+    void saysWhatAProgramHasToBeGivenBesideWhatItOffers(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("rates.sou"), """
+                module rates
+
+                behavior today : (pair: String) -> Decimal
+
+                behavior priced : (n: Decimal) -> Decimal depends on today
+
+                let priced (n, today) = n * today("JPY")
+                """);
+        Path offers = room.resolve("rates.wit");
+
+        Ran ran = run(source.toString(), "-o", room.resolve("out.wasm").toString(),
+                "--wit", offers.toString());
+
+        // Whoever generates bindings against this owes an answer for `today`, and nothing else
+        // says so before a call goes looking for one.
+        assertThat(ran.status()).isZero();
+        assertThat(Files.readString(offers))
+                .contains("package souther:reached {")
+                .contains("import souther:reached/rates;")
+                .contains("export souther:program/rates;");
     }
 
     @Test
@@ -169,17 +194,19 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     @Test
     void saysWhichKindOfStopItWasWhenThisBackendIsTheOneRefusing(@TempDir Path room)
             throws IOException {
-        Path source = Files.writeString(room.resolve("reaching.sou"), """
-                module reaching
+        Path source = Files.writeString(room.resolve("looking.sou"), """
+                module looking
 
-                behavior today : (ignored: Int) -> Date
+                behavior priced : (written: String) -> Bool
+
+                let priced (written) = String.matches("^(?=.*x)ab$", written)
                 """);
         Path into = room.resolve("out.wasm");
 
-        // A behavior supplied from outside reaches out through a crossing in this module's own
-        // memory, which is not a thing a component carries. A core module reaches out for one, so
-        // this is the component asking and not the backend.
-        Ran ran = run(source.toString(), "-o", into.toString(), "--component");
+        // A lookahead is a question about a way already taken, and what a pattern is read into
+        // holds every step the walk could be at rather than trying one way and coming back. The
+        // language takes the program; this is the backend saying it cannot write it.
+        Ran ran = run(source.toString(), "-o", into.toString());
 
         assertThat(ran.status()).isEqualTo(1);
         assertThat(ran.complained()).contains("this backend does not write that yet");
