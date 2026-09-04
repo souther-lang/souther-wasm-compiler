@@ -84,6 +84,18 @@ which is where the one question the writing cannot answer — where a result may
 - A behavior supplied from outside, in a component. A core module reaches out for one.
 - A behavior another build implements. This links one program.
 
+## Running it
+
+    mvn package
+    java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm
+    java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm --component
+
+A directory is read for the `.sou` files under it, in the order their paths sort, so one command
+line is one program every time. Nothing is written where the module would go unless the whole
+program compiled: what stopped goes to the error stream, and it says which kind of stop it was —
+a program the language refuses answers differently from one this backend does not write yet, and
+both differently from a command line that named no compile.
+
 ## Building
 
     mvn test
