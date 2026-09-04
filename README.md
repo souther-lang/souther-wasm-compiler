@@ -90,6 +90,8 @@ which is where the one question the writing cannot answer — where a result may
   the only place a pattern that would have been recognised differently can still be declined rather
   than quietly answered.
 
+  A character written down as a number (`\x{1F600}`) is refused as well.
+
   What a class names is not refused, and is not written down here either: a name like
   `\p{IsHiragana}` is a fact about a version of Unicode, so it is asked of the reader whose flavour
   the language declares the pattern in, one character at a time, and what comes out is placed in the

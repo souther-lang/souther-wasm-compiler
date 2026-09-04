@@ -86,6 +86,11 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
         "a\\b b",
         "\\w+\\b",
         "[a-z]+\\b[0-9]*",
+        "🙂",
+        "🙂+",
+        "[🙂🙃]+",
+        "a🙂b",
+        "(?i)Ω",
     };
 
     private static final String[] SUBJECTS = {
@@ -96,6 +101,7 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
         "ひらがな", "ひa", "abc123", "a-1", "ABC", "e\u0301",
         "abc", "AbC", "aBc", "A.B", "a.b", "X", "x", "Y", "y", "aC", "Ab",
         "word", "a word", "words", "a b", "a-b", "ab", "a_b", "abc1",
+        "🙂", "🙂🙂", "🙃", "a🙂b", "🙂a", "Ω", "ω", "😀", "\uD83D", "\uDE42",
         "ac", "bc", "abc\n", "\n", "é", "日本",
         "acd", "bcd", "acbcd", "d", "abcd", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaab", "..", ".", "a-c", "-", "192.168.0.1", "1.2.3",
@@ -121,7 +127,7 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
         // language itself refuses — a property nobody has heard of — never arrives, so it is not
         // among them: what would be tested is the language's answer and not this one.
         for (String pattern : new String[] {
-            "(a)\\1", "(?=a)b", "a*?", "a*+", "(?<name>a)", "a^b", "a$b", "a(?i)b", "(a)(?i)b",
+            "(a)\\1", "(?=a)b", "a*?", "a*+", "(?<name>a)", "a^b", "a$b", "\\x{1F600}", "[\\x{41}-\\x{5A}]", "a(?i)b", "(a)(?i)b",
         }) {
             assertThatThrownBy(() -> compiled(pattern))
                     .describedAs(pattern)

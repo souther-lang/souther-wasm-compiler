@@ -106,6 +106,38 @@ class TheRuntimeReadsJsonAsTheDocumentWroteItTest {
     }
 
     @Test
+    void endsTheCallOnADocumentNestedPastWhatOneMayBe() {
+        // A walk into an array is a call, and how much stack there is is not something a caller
+        // may write down. Past what a document may be nested, it is refused the way anything that
+        // is not one document is refused — with a reason a caller reads — and not by the stack
+        // running out, which is a fault of this module and reads to a caller as one.
+        String written = "[".repeat(50_000) + "]".repeat(50_000);
+        Running runtime = Running.bareRuntime();
+        int snapshot = runtime.call(RuntimeAbi.FAILURE_GENERATION);
+        int address = runtime.staged(written);
+
+        assertThatThrownBy(() -> runtime.call(RuntimeAbi.JSON_PARSE, address,
+                        written.getBytes(StandardCharsets.UTF_8).length))
+                .isInstanceOf(ChicoryException.class);
+
+        FailureRecord record = runtime.failureRecord();
+        assertThat(record.describesTrapAfter(snapshot)).isTrue();
+        assertThat(record.namedReason()).contains(AbortReason.MALFORMED_JSON);
+    }
+
+    @Test
+    void takesADocumentNestedAsDeepAsOneMayBe() {
+        // The bound is not what a model asks for. A document nested as far as anything anybody
+        // writes still reads.
+        String written = "[".repeat(150) + "1" + "]".repeat(150);
+        Running runtime = Running.bareRuntime();
+
+        assertThat(runtime.call(RuntimeAbi.JSON_PARSE, runtime.staged(written),
+                        written.getBytes(StandardCharsets.UTF_8).length))
+                .describedAs("what a document nested that far comes to").isNotZero();
+    }
+
+    @Test
     void readsBackWhatItWroteForEveryScalarItWrites() {
         Running runtime = Running.bareRuntime();
 

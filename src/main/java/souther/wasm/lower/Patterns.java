@@ -287,8 +287,12 @@ final class Patterns {
             // ends up: the count it belongs to has already been read, and what is left is this.
             case '^', '$', '*', '+', '?' -> throw notRead();
             default -> {
-                at++;
-                return List.of(oneOf(held));
+                // A character and not a unit of how it is written down. What the walk compares is
+                // a character, so a character written as two units is one step and not two halves
+                // of one that no character ever equals.
+                int point = pattern.codePointAt(at);
+                at += Character.charCount(point);
+                return List.of(oneOf(point));
             }
         }
     }
@@ -300,7 +304,7 @@ final class Patterns {
      * same walk over the same steps whichever the pattern said.
      */
     private int[] oneOf(int point) {
-        if (!eitherCase) {
+        if (!eitherCase || !foldable(point)) {
             return new int[] {MATCH_ONE, point, 0};
         }
         int lower = Character.toLowerCase(point);
@@ -477,13 +481,20 @@ final class Patterns {
                 }
                 held = escape()[1];
             } else {
-                held = pattern.charAt(at++);
+                held = pattern.codePointAt(at);
+                at += Character.charCount(held);
             }
             if (at + 1 < pattern.length()
                     && pattern.charAt(at) == '-'
                     && pattern.charAt(at + 1) != ']') {
                 at++;
-                int upper = pattern.charAt(at) == '\\' ? escape()[1] : pattern.charAt(at++);
+                int upper;
+                if (pattern.charAt(at) == '\\') {
+                    upper = escape()[1];
+                } else {
+                    upper = pattern.codePointAt(at);
+                    at += Character.charCount(upper);
+                }
                 runs.add(new int[] {held, upper});
             } else {
                 runs.add(new int[] {held, held});
@@ -506,10 +517,25 @@ final class Patterns {
      * one is somewhere else entirely — `a` to `z` has its other case a fixed distance away and the
      * next alphabet does not, so moving the ends of a run is an answer about one alphabet.
      */
+    /**
+     * Whether saying either case says anything about this character.
+     *
+     * <p>The letters that were written down when a machine had those and no others. What says
+     * either case says it of those alone in the flavour the language declares a pattern in, and
+     * there is a second thing to write that says it of the rest — so folding more here would
+     * recognise what the flavour does not, which is the way of being wrong that reads as helpful.
+     */
+    private static boolean foldable(int point) {
+        return point < 0x80;
+    }
+
     private static List<int[]> bothCasesOf(List<int[]> runs) {
         List<int[]> held = new ArrayList<>(runs);
         for (int[] run : runs) {
             for (int c = run[0]; c <= run[1]; c++) {
+                if (!foldable(c)) {
+                    continue;
+                }
                 int lower = Character.toLowerCase(c);
                 int upper = Character.toUpperCase(c);
                 if (lower != c) {

@@ -49,7 +49,8 @@ const HEADER: usize = 8;
 /// would answer about bytes nobody wrote.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_parse(pointer: u32, length: u32) -> u32 {
-    let mut reader = Reader { at: pointer as usize, end: (pointer + length) as usize };
+    let mut reader =
+        Reader { at: pointer as usize, end: (pointer + length) as usize, deep: 0 };
     let value = reader.value();
     reader.spaces();
     if reader.at != reader.end {
@@ -241,9 +242,25 @@ unsafe fn write_u32(at: usize, value: u32) {
 struct Reader {
     at: usize,
     end: usize,
+    /// How far in the walk has descended, against how far it may.
+    deep: u32,
 }
 
+/// How far one document may be nested.
+///
+/// A walk into an array or an object is a call, and a machine's stack is not something a caller
+/// may write down how much of. Past this the document is refused the way anything that is not one
+/// document is refused — with what a caller can read — rather than by the stack running out, which
+/// is a fault of this module and reads as one.
+const AS_DEEP_AS: u32 = 200;
+
 impl Reader {
+    /// Goes one deeper, or says the document is nested past what one may be.
+    fn descended(&mut self) -> bool {
+        self.deep += 1;
+        self.deep <= AS_DEEP_AS
+    }
+
     unsafe fn value(&mut self) -> u32 {
         self.spaces();
         match self.peek() {
@@ -416,6 +433,9 @@ impl Reader {
     }
 
     unsafe fn array(&mut self) -> u32 {
+        if !self.descended() {
+            self.malformed();
+        }
         self.expect(b'[');
         self.spaces();
         let mut first = 0u32;
@@ -446,6 +466,9 @@ impl Reader {
     }
 
     unsafe fn object(&mut self) -> u32 {
+        if !self.descended() {
+            self.malformed();
+        }
         self.expect(b'{');
         self.spaces();
         let mut first = 0u32;
