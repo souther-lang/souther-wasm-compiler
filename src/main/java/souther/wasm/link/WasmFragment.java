@@ -135,6 +135,19 @@ public final class WasmFragment {
     }
 
     /**
+     * Which function a name reaches, for a body that means to call what a caller would.
+     *
+     * @param name a name {@link #export} was given
+     */
+    public int exported(String name) {
+        Integer held = exports.get(name);
+        if (held == null) {
+            throw new IllegalArgumentException("this fragment exports no " + name);
+        }
+        return held;
+    }
+
+    /**
      * Puts a function in the module's table and answers the slot it took.
      *
      * <p>A slot is how a body the runtime does not know about is reached from inside the runtime:

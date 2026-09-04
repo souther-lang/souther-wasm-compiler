@@ -30,6 +30,7 @@ import souther.compiler.types.ValueName;
 import souther.wasm.abi.AbortReason;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.emit.Type;
+import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
 import souther.wasm.link.WasmFragment;
@@ -74,6 +75,44 @@ public final class WasmCompiler {
      * @return the linked module
      */
     public static byte[] compile(CheckedProgram program, byte[] runtime) {
+        return written(program, runtime, false);
+    }
+
+    /**
+     * Compiles a checked program as a component.
+     *
+     * <p>The same core module, wrapped so that each behavior crosses as
+     * {@code func(arguments: string) -> string} and the memory it crosses in has an owner the
+     * format states. The wrappers a lift needs are written only here, because a core module built
+     * for a host that holds its own bracket has no use for them.
+     *
+     * @param program what a Souther compile checked
+     * @return the component
+     */
+    public static byte[] compileAsComponent(CheckedProgram program) {
+        return compileAsComponent(program, runtimeModule());
+    }
+
+    /**
+     * Compiles a checked program as a component against a runtime.
+     *
+     * @param program what a Souther compile checked
+     * @param runtime the compiled runtime to link onto
+     * @return the component
+     */
+    public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
+        Map<String, Map<String, String>> behaviors = new LinkedHashMap<>();
+        for (CheckedModule module : program.modules()) {
+            Map<String, String> named = new LinkedHashMap<>();
+            for (CheckedBehavior behavior : module.behaviors()) {
+                named.put(behavior.name().name(), exportName(behavior.name()));
+            }
+            behaviors.put(module.name(), named);
+        }
+        return Component.around(written(program, runtime, true), behaviors);
+    }
+
+    private static byte[] written(CheckedProgram program, byte[] runtime, boolean lifted) {
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
         Runtime calls = new Runtime(plan);
@@ -154,7 +193,41 @@ public final class WasmCompiler {
                 }
             }
         }
+        if (lifted) {
+            liftable(fragment, calls, program);
+        }
         return Linker.link(fragment);
+    }
+
+    /**
+     * The functions a component's lift calls, which a plain core module does not carry.
+     *
+     * <p>One per behavior, taking the argument string and answering where the answer's own two
+     * words are, because the canonical ABI reads a string result out of memory rather than off the
+     * stack. And one post-return for all of them: everything a call made is the arena, so what
+     * each owes back is the same thing.
+     */
+    private static void liftable(WasmFragment fragment, Runtime calls, CheckedProgram program) {
+        int overStrings = fragment.functionType(
+                List.of(Type.I32, Type.I32), List.of(Type.I32));
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                String crossing = exportName(behavior.name());
+                byte[] body = new BodyWriter(2, 0)
+                        .localGet(0)
+                        .localGet(1)
+                        .call(fragment.exported(crossing))
+                        .call(calls.of(RuntimeAbi.LIFT_AREA))
+                        .body();
+                fragment.export(Component.Lifted.wrapping(crossing),
+                        fragment.define(overStrings, body));
+            }
+        }
+        byte[] rewind = new BodyWriter(1, 0)
+                .call(calls.of(RuntimeAbi.ARENA_REWIND))
+                .body();
+        fragment.export(Component.Lifted.POST_RETURN, fragment.define(
+                fragment.functionType(List.of(Type.I32), List.of()), rewind));
     }
 
     /** The shape of a generated function over values: a cell per parameter, and a cell answered. */

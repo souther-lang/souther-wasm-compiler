@@ -120,6 +120,61 @@ pub unsafe extern "C" fn __ronto_alloc_reset(mark: u32) {
     ARENA_TOP = mark;
 }
 
+/// Where a string a call answered with is, in the one place a component reads a result from.
+///
+/// The canonical ABI reads a string result out of an area in this memory rather than off the
+/// stack, so an answer that crossed as two values is put in one. The area is arena memory like
+/// everything else the call made, and goes back with it at the post-return.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
+    // The arena hands out a run exactly as long as it was asked for, so that text written piece by
+    // piece is one run. What reads this area asks it to begin on a four-byte boundary, so the
+    // padding is taken here rather than by the arena, where it would break the runs.
+    let over = ARENA_TOP % 4;
+    if over != 0 {
+        let _ = __ronto_alloc(4 - over as u32);
+    }
+    let area = __ronto_alloc(8);
+    core::ptr::write_unaligned(area as *mut u32, at);
+    core::ptr::write_unaligned((area + 4) as *mut u32, length);
+    area
+}
+
+/// Pops the arena back to where it began.
+///
+/// What a call left behind lives until the caller has read the answer, and nothing lives past
+/// that. A component says when that moment is — it is the post-return — so this is the whole of
+/// what a call has to be given back.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_arena_rewind() {
+    ARENA_TOP = ARENA_BASE;
+}
+
+/// What the canonical ABI allocates and reallocates with.
+///
+/// A component host lowers a string argument into this memory before the call and reads the
+/// answer out of it after, and this is what it does both through. The arena hands out a fresh run
+/// and the old one is copied into it: an allocator that hands back what it was given cannot also
+/// be the one handing out the run being written next to it, and the arena is a bump pointer. What
+/// is left over goes back at the post-return, which is when the whole call goes back.
+#[no_mangle]
+pub unsafe extern "C" fn cabi_realloc(
+    original: u32,
+    original_size: u32,
+    _align: u32,
+    wanted: u32,
+) -> u32 {
+    if wanted == 0 {
+        return ARENA_TOP as u32;
+    }
+    let held = __ronto_alloc(wanted);
+    if original != 0 && original_size != 0 {
+        let taken = if original_size < wanted { original_size } else { wanted };
+        core::ptr::copy_nonoverlapping(original as *const u8, held as *mut u8, taken as usize);
+    }
+    held
+}
+
 /// Where the failure record is. A host reads it after a trap; a linker needs it to lay out
 /// nothing, so this is the only way to find it.
 #[no_mangle]

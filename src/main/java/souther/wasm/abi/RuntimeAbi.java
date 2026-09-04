@@ -49,6 +49,15 @@ public final class RuntimeAbi {
     /** The linear memory a caller stages arguments in and reads answers out of. */
     public static final String MEMORY = "memory";
 
+    /** What the canonical ABI allocates and reallocates with. */
+    public static final String CANONICAL_REALLOC = "cabi_realloc";
+
+    /** Pops the arena back to where it began, which is what a post-return gives back. */
+    public static final String ARENA_REWIND = "__souther_arena_rewind";
+
+    /** Puts a string a call answered with where a component reads a result from. */
+    public static final String LIFT_AREA = "__souther_lift_area";
+
     /** {@code (i32 size) -> i32}: zeroed bytes from the arena. */
     public static final String ALLOC = "__ronto_alloc";
 
