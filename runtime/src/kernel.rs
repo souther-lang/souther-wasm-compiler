@@ -800,7 +800,17 @@ pub unsafe extern "C" fn __souther_list_reverse(list: u32, descriptor: u32) -> u
 
 /// `List.sum` over whole numbers.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_sum(list: u32) -> u32 {
+pub unsafe extern "C" fn __souther_list_sum(list: u32, descriptor: u32) -> u32 {
+    // What a total of nothing is, and what every step of it is worked out in, are the same
+    // question: the list's own element. A whole-number zero added to an amount reads the amount's
+    // bytes as a whole number's, and answers.
+    if descriptor::kind(descriptor) == descriptor::KIND_DECIMAL {
+        let mut total = crate::decimal::of_digits(crate::next_free(), 0, 0, false);
+        for i in 0..__souther_list_length(list) {
+            total = crate::decimal::__souther_decimal_add(total, __souther_list_get(list, i));
+        }
+        return total;
+    }
     let mut total = __souther_int(0);
     for i in 0..__souther_list_length(list) {
         total = value::__souther_add(total, __souther_list_get(list, i));
@@ -810,7 +820,17 @@ pub unsafe extern "C" fn __souther_list_sum(list: u32) -> u32 {
 
 /// `List.product` over whole numbers.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_product(list: u32) -> u32 {
+pub unsafe extern "C" fn __souther_list_product(list: u32, descriptor: u32) -> u32 {
+    if descriptor::kind(descriptor) == descriptor::KIND_DECIMAL {
+        let one = crate::next_free();
+        let _ = crate::alloc(1);
+        core::ptr::write(one as *mut u8, b'1');
+        let mut total = crate::decimal::of_digits(one, 1, 0, false);
+        for i in 0..__souther_list_length(list) {
+            total = crate::decimal::__souther_decimal_multiply(total, __souther_list_get(list, i));
+        }
+        return total;
+    }
     let mut total = __souther_int(1);
     for i in 0..__souther_list_length(list) {
         total = value::__souther_multiply(total, __souther_list_get(list, i));

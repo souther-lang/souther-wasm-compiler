@@ -1032,6 +1032,12 @@ public final class WasmCompiler {
             if (BUILDS_A_LIST.contains(kernel)) {
                 out.constant(shapes.of(call.type()));
             }
+            if (kernel == Kernel.LIST_SUM || kernel == Kernel.LIST_PRODUCT) {
+                // What a total is a total of. It is the same as the list's element, and it is what
+                // a total of nothing is too — which is the one a list with nothing in it cannot
+                // say, so it is taken from the type rather than from a value.
+                out.constant(shapes.of(call.type()));
+            }
             if (kernel == Kernel.LIST_SORT_BY) {
                 // Sorting by what a block answers wants the type of what it answers, which is the
                 // block's own result and not the list's element.
