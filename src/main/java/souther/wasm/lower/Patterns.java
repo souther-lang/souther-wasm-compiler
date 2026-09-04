@@ -56,9 +56,9 @@ final class Patterns {
      * @param pattern the pattern as it was written
      */
     static int place(WasmFragment fragment, String pattern) {
-        Patterns held = new Patterns(fragment, pattern);
+        Patterns held = new Patterns(fragment, wholeOf(pattern));
         List<int[]> steps = held.choice();
-        if (held.at != pattern.length()) {
+        if (held.at != held.pattern.length()) {
             throw held.notRead();
         }
         steps.add(new int[] {DONE, 0, 0});
@@ -72,6 +72,28 @@ final class Patterns {
                     .writeLittleEndian4(step[2]);
         }
         return fragment.place(table.toByteArray());
+    }
+
+    /**
+     * The pattern without the marks saying it is about the whole of a string.
+     *
+     * <p>What this recognises is the whole of a string, so a pattern that says so as well says
+     * nothing more. Somebody writing a format writes them out of habit and means what is meant
+     * without them, and refusing that is refusing a pattern for agreeing.
+     *
+     * <p>Only where they are the marks. A dollar at the end of a pattern that escaped it is the
+     * character, and how many backslashes run up to it is what says which.
+     */
+    private static String wholeOf(String pattern) {
+        String held = pattern.startsWith("^") ? pattern.substring(1) : pattern;
+        if (!held.endsWith("$")) {
+            return held;
+        }
+        int slashes = 0;
+        while (slashes + 1 < held.length() && held.charAt(held.length() - 2 - slashes) == '\\') {
+            slashes++;
+        }
+        return slashes % 2 == 0 ? held.substring(0, held.length() - 1) : held;
     }
 
     /** {@code a|b|c}: one of several, and what recognises it is a walk that is at all of them. */

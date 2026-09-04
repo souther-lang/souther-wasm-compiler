@@ -76,6 +76,13 @@ which is where the one question the writing cannot answer — where a result may
 
 - A behavior supplied from outside, in a component. A core module reaches out for one.
 - A behavior another build implements. This links one program.
+- Part of what a pattern can say. `String.matches` is read here rather than at run time, so what is
+  read is a written-out subset: characters, a class, a group, a choice, and the counts, with `^` and
+  `$` taken where they only say what a whole-string match already says. A backreference, a
+  lookaround, a lazy or possessive count, a named group, an inline flag, a word boundary, a Unicode
+  property class and a count above a thousand are each refused where the pattern is written, which
+  is the only place a pattern that would have been recognised differently can still be declined
+  rather than quietly answered.
 
 ## Running it
 

@@ -57,6 +57,12 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
         "[a-z\\d_]{2,}",
         "[\\s\\S]*",
         "[^\\w\\s]",
+        "^[0-9]{3}-[0-9]{4}$",
+        "^a",
+        "a$",
+        "^$",
+        "a\\$",
+        "^\\$a$",
     };
 
     private static final String[] SUBJECTS = {
@@ -86,7 +92,7 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
     @Test
     void refusesAPatternItWouldHaveHadToGuessAt() {
         for (String pattern : new String[] {
-            "(a)\\1", "(?=a)b", "a*?", "a*+", "(?<name>a)", "\\p{Alpha}", "^a$",
+            "(a)\\1", "(?=a)b", "a*?", "a*+", "(?<name>a)", "\\p{Alpha}", "a^b", "a$b",
         }) {
             assertThatThrownBy(() -> compiled(pattern))
                     .describedAs(pattern)
