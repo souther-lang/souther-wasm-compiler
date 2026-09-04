@@ -45,6 +45,7 @@ final class Descriptors {
     private static final int KIND_DATE = 13;
     private static final int KIND_TIME = 14;
     private static final int KIND_DATE_TIME = 15;
+    private static final int KIND_INSTANT = 16;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -82,6 +83,7 @@ final class Descriptors {
             case Type.Prim.DATE -> scalar(KIND_DATE);
             case Type.Prim.TIME -> scalar(KIND_TIME);
             case Type.Prim.DATETIME -> scalar(KIND_DATE_TIME);
+            case Type.Prim.INSTANT -> scalar(KIND_INSTANT);
             case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule named ->
                     ofDeclared(named);
             case Type.ListOf list -> holding(KIND_LIST, list.element());
@@ -168,6 +170,7 @@ final class Descriptors {
             case "Date" -> Type.Prim.DATE;
             case "Time" -> Type.Prim.TIME;
             case "DateTime" -> Type.Prim.DATETIME;
+            case "Instant" -> Type.Prim.INSTANT;
             default -> throw new NotLowered("a " + written
                     + " among alternatives, which this backend does not write yet");
         };

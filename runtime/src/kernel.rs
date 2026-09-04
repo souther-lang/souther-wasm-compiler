@@ -105,6 +105,13 @@ pub unsafe extern "C" fn __souther_string_matches(text: u32, machine: u32) -> u3
     )))
 }
 
+/// A moment a body wrote down, read from the text it was written as.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_instant_written(at: u32, length: u32) -> u32 {
+    let (second, nano) = temporal::read_moment(at, length).unwrap_or((0, 0));
+    temporal::moment_made(second, nano)
+}
+
 /// An amount a body wrote down, read from the text it was written as.
 ///
 /// The text sits in static memory and the value is built where it is used, because a value lives

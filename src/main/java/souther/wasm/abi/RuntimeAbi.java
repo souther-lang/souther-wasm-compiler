@@ -509,6 +509,9 @@ public final class RuntimeAbi {
     /** A day and a time together a body wrote down, read from the text it was written as. */
     public static final String DATETIME_WRITTEN = "__souther_datetime_written";
 
+    /** A moment a body wrote down, read from the text it was written as. */
+    public static final String INSTANT_WRITTEN = "__souther_instant_written";
+
     /**
      * {@code (i32 cell, i32 descriptor) -> i64}: a value written as the answer a caller reads,
      * answered packed.

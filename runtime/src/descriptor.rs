@@ -49,6 +49,9 @@ pub const KIND_DATE: u32 = 13;
 pub const KIND_TIME: u32 = 14;
 /// A `DateTime`.
 pub const KIND_DATE_TIME: u32 = 15;
+
+/// A moment on the timeline, which is not a calendar reading and has no zone until one is named.
+pub const KIND_INSTANT: u32 = 16;
 /// A type with one value.
 pub const KIND_UNIT: u32 = 3;
 /// A type written as fields.

@@ -262,6 +262,188 @@ unsafe fn two_at(at: u32, index: u32) -> Option<u32> {
     Some(((first - b'0') * 10 + (held - b'0')) as u32)
 }
 
+/// A moment on the timeline: how many seconds it is from the start of nineteen seventy, and how
+/// many nanoseconds past that second.
+///
+/// ```text
+/// +0  u32 tag
+/// +4  i64 the second, counted from the start of nineteen seventy
+/// +12 i32 the nanosecond past it
+/// ```
+///
+/// Wider than a day and a time because it holds what an outside timestamp said, down to the
+/// nanosecond. Dropping that would make a value written back out differ from the one that arrived.
+pub unsafe fn moment_made(second: i64, nanosecond: i32) -> u32 {
+    let cell = alloc(MOMENT_HEADER);
+    core::ptr::write_unaligned(cell as usize as *mut u32, crate::value::TAG_INSTANT);
+    core::ptr::write_unaligned((cell as usize + OFF_MOMENT) as *mut i64, second);
+    core::ptr::write_unaligned((cell as usize + OFF_NANO) as *mut i32, nanosecond);
+    cell
+}
+
+const OFF_MOMENT: usize = 4;
+const OFF_NANO: usize = 12;
+const MOMENT_HEADER: u32 = 16;
+
+/// Which second of the timeline a moment is.
+pub unsafe fn moment_second(cell: u32) -> i64 {
+    core::ptr::read_unaligned((cell as usize + OFF_MOMENT) as *const i64)
+}
+
+/// How many nanoseconds past that second.
+pub unsafe fn moment_nano(cell: u32) -> i32 {
+    core::ptr::read_unaligned((cell as usize + OFF_NANO) as *const i32)
+}
+
+/// A moment as a timestamp writes one: the calendar reading it has in no zone but the one it is
+/// counted from, and a `Z` saying so.
+///
+/// The seconds are always there — a clock's own form leaves `:00` out and this one does not, and a
+/// moment is not a time of day. A fraction is written to three, six or nine places, whichever is
+/// the fewest that says the whole of it: a reading written to a different number of places is a
+/// different string for the same moment.
+pub unsafe fn written_moment(cell: u32) -> (u32, u32) {
+    let held = moment_second(cell);
+    let nano = moment_nano(cell);
+    let days = held.div_euclid(A_DAY) as i32;
+    let past = held.rem_euclid(A_DAY) as i32;
+    let (year, month, day) = civil(days);
+    let out = crate::next_free();
+    let mut total = year_written(year);
+    total += byte(b'-');
+    total += two(month);
+    total += byte(b'-');
+    total += two(day);
+    total += byte(b'T');
+    total += two((past / 3600) as u32);
+    total += byte(b':');
+    total += two((past / 60 % 60) as u32);
+    total += byte(b':');
+    total += two((past % 60) as u32);
+    if nano != 0 {
+        total += byte(b'.');
+        let places = if nano % 1_000_000 == 0 {
+            3
+        } else if nano % 1_000 == 0 {
+            6
+        } else {
+            9
+        };
+        let mut divisor = 100_000_000;
+        for _ in 0..places {
+            total += byte(b'0' + (nano / divisor % 10) as u8);
+            divisor /= 10;
+        }
+    }
+    total += byte(b'Z');
+    (out, total)
+}
+
+/// Reads a moment as a timestamp writes one, or answers nothing.
+///
+/// An offset is a different spelling of the same moment and is taken; what it names is moved to the
+/// one this counts from. A leap second is not a moment the timeline has, and taking it would put a
+/// value here that says a different second than the text did, so it is refused.
+pub unsafe fn read_moment(at: u32, length: u32) -> Option<(i64, i32)> {
+    let mut i = 0;
+    while i < length && byte_at(at, i) | 0x20 != b't' {
+        i += 1;
+    }
+    if i >= length {
+        return None;
+    }
+    let day = read_day(at, i)?;
+    let mut rest = i + 1;
+    // The zone comes off the end first: what is left in front of it is a reading of a clock.
+    let (offset, ends) = zone(at, length, rest)?;
+    if ends < rest + 5 {
+        return None;
+    }
+    if byte_at(at, rest + 2) != b':' {
+        return None;
+    }
+    let hour = two_at(at, rest)?;
+    let minute = two_at(at, rest + 2 + 1)?;
+    rest += 5;
+    let mut second = 0;
+    let mut nano = 0;
+    if rest < ends {
+        if byte_at(at, rest) != b':' {
+            return None;
+        }
+        second = two_at(at, rest + 1)?;
+        rest += 3;
+        if rest < ends {
+            if byte_at(at, rest) != b'.' {
+                return None;
+            }
+            rest += 1;
+            let mut places = 0;
+            while rest < ends && byte_at(at, rest).is_ascii_digit() {
+                nano = nano * 10 + (byte_at(at, rest) - b'0') as i32;
+                places += 1;
+                rest += 1;
+            }
+            // A point with nothing after it says no fraction rather than a broken one, and a
+            // tenth place past the nanosecond says something a moment cannot hold.
+            if places > 9 || rest != ends {
+                return None;
+            }
+            for _ in places..9 {
+                nano *= 10;
+            }
+            if places == 0 {
+                nano = 0;
+            }
+        }
+    }
+    // A clock reading of twenty-four is the end of the day rather than an hour of it, and only
+    // where nothing has happened past it — that is what the form this reads says, and a moment
+    // named that way is the first of the next day.
+    let midnight = hour == 24 && minute == 0 && second == 0 && nano == 0;
+    if (hour > 23 && !midnight) || minute > 59 || second > 59 {
+        return None;
+    }
+    let held = day as i64 * A_DAY + (hour * 3600 + minute * 60 + second) as i64 - offset;
+    Some((held, nano))
+}
+
+/// What the end of a moment's text says about where it was read, and where that text ends.
+///
+/// Answers how many seconds the reading is ahead of what the timeline counts from, so taking it
+/// off leaves the moment itself.
+unsafe fn zone(at: u32, length: u32, from: u32) -> Option<(i64, u32)> {
+    if length == 0 {
+        return None;
+    }
+    let last = byte_at(at, length - 1);
+    if last | 0x20 == b'z' {
+        return Some((0, length - 1));
+    }
+    // An offset is five or six bytes: a sign, two digits, and the minutes with or without a colon.
+    for width in [6u32, 5] {
+        if length < from + width {
+            continue;
+        }
+        let start = length - width;
+        let sign = byte_at(at, start);
+        if sign != b'+' && sign != b'-' {
+            continue;
+        }
+        if width == 6 && byte_at(at, start + 3) != b':' {
+            continue;
+        }
+        let hours = two_at(at, start + 1)?;
+        let minutes = two_at(at, start + width - 2)?;
+        if hours > 18 || minutes > 59 {
+            return None;
+        }
+        let held = (hours * 3600 + minutes * 60) as i64;
+        return Some((if sign == b'-' { -held } else { held }, start));
+    }
+    None
+}
+
 /// A day so many days later, or an end to the call where that is not a day a calendar reaches.
 pub unsafe fn moved(days_from_epoch: i32, by: i64) -> i32 {
     let held = days_from_epoch as i64 + by;

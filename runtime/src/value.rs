@@ -28,7 +28,8 @@
 
 use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INT,
+    self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
+    KIND_INT,
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
     KIND_TUPLE, KIND_UNIT,
 };
@@ -206,6 +207,7 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
         KIND_DATE => tag == TAG_DATE,
         KIND_TIME => tag == TAG_TIME,
         KIND_DATE_TIME => tag == TAG_DATE_TIME,
+        KIND_INSTANT => tag == TAG_INSTANT,
         KIND_LIST | KIND_SET => tag == TAG_LIST,
         KIND_MAP => tag == TAG_MAP,
         KIND_OPTION => tag == TAG_SOME || tag == TAG_NONE,
@@ -424,6 +426,9 @@ pub const TAG_TIME: u32 = 15;
 /// A day and a time of day.
 pub const TAG_DATE_TIME: u32 = 16;
 
+/// A moment on the timeline.
+pub const TAG_INSTANT: u32 = 17;
+
 /// Values written together, with nothing in them yet.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_tuple(held: u32) -> u32 {
@@ -605,7 +610,7 @@ pub unsafe extern "C" fn __souther_read(
         KIND_BOOL => boolean(value, path, path_length),
         KIND_STRING => text(value, path, path_length),
         KIND_DECIMAL => amount(value, path, path_length),
-        KIND_DATE | KIND_TIME | KIND_DATE_TIME => {
+        KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
             when(value, descriptor::kind(descriptor), path, path_length)
         }
         KIND_UNIT => unit(value, descriptor, path, path_length),
@@ -709,6 +714,7 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
     let wanted: &[u8] = match kind {
         KIND_DATE => b"Date",
         KIND_TIME => b"Time",
+        KIND_INSTANT => b"Instant",
         _ => b"DateTime",
     };
     if tag != json::TAG_STRING {
@@ -717,6 +723,15 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
     }
     let at = json::__souther_json_bytes(value);
     let length = json::__souther_json_length(value);
+    if kind == KIND_INSTANT {
+        return match temporal::read_moment(at, length) {
+            Some((second, nano)) => temporal::moment_made(second, nano),
+            None => {
+                issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"string", wanted);
+                0
+            }
+        };
+    }
     let held = match kind {
         KIND_DATE => temporal::read_day(at, length).map(|d| (TAG_DATE, d, 0)),
         KIND_TIME => temporal::read_time(at, length).map(|s| (TAG_TIME, 0, s)),
@@ -1098,10 +1113,11 @@ unsafe fn written(cell: u32, descriptor: u32) {
             let (at, length) = decimal::written(decimal::canonical(cell));
             text::push(at, length);
         }
-        KIND_DATE | KIND_TIME | KIND_DATE_TIME => {
+        KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
             let (at, length) = match descriptor::kind(descriptor) {
                 KIND_DATE => temporal::written_day(cell),
                 KIND_TIME => temporal::written_time(cell),
+                KIND_INSTANT => temporal::written_moment(cell),
                 _ => temporal::written_both(cell),
             };
             write(b"\"");

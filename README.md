@@ -76,7 +76,6 @@ which is where the one question the writing cannot answer — where a result may
 
 - A `Map` keyed by a `Date`, a `Time`, a `DateTime`, an `Instant` or a declared enumeration. What a
   key of one of those is written as is a rule of its own, not something read off the key's type.
-- `Instant`.
 - A behavior supplied from outside, in a component. A core module reaches out for one.
 - A behavior another build implements. This links one program.
 

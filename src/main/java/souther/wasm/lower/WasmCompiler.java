@@ -672,6 +672,7 @@ public final class WasmCompiler {
                                 case DATE -> RuntimeAbi.DATE_WRITTEN;
                                 case TIME -> RuntimeAbi.TIME_WRITTEN;
                                 case DATETIME -> RuntimeAbi.DATETIME_WRITTEN;
+                                case INSTANT -> RuntimeAbi.INSTANT_WRITTEN;
                                 default -> throw new NotLowered(writing + " writes down a "
                                         + written.kind() + ", which is no day and no time");
                             }));
