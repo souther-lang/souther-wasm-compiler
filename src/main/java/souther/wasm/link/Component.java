@@ -100,8 +100,9 @@ public final class Component {
      *
      * <p>The runtime declares that crossing whether or not a program has anything to send across
      * it, so a component has to supply something. What a behavior sends across it is a call in
-     * this module's own memory, which is not a thing the component model can carry — so this
-     * refuses a program with an injected behavior, and what stands here is reached by nothing.
+     * this module's own memory, which is not a thing the component model can carry — so a program
+     * with an injected behavior is refused before it gets here, and what stands here is reached by
+     * nothing.
      */
     private static byte[] unreachedHost() {
         return ComponentWriter.enc(w -> {

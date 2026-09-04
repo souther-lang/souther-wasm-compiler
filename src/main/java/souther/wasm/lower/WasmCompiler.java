@@ -105,6 +105,14 @@ public final class WasmCompiler {
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
             for (CheckedBehavior behavior : module.behaviors()) {
+                if (behavior.implementation() instanceof CheckedImplementation.Injected) {
+                    // What an injected behavior sends out is a call in this module's own memory,
+                    // which is not a thing a component carries. A component that let one through
+                    // would end the call where it was reached rather than where it was built.
+                    throw new NotLowered(behavior.name()
+                            + " is supplied from outside, and a component has no way to reach out"
+                            + " for it yet");
+                }
                 named.put(behavior.name().name(), exportName(behavior.name()));
             }
             behaviors.put(module.name(), named);

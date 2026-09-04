@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.lower.NotLowered;
 import souther.wasm.lower.WasmCompiler;
 
 /**
@@ -60,6 +61,32 @@ class AComponentSaysWhatEachModuleOffersTest {
         assertThat(sections(component).keySet())
                 .contains(SEC_CORE_MODULE, SEC_CORE_INSTANCE, SEC_ALIAS,
                         SEC_TYPE, SEC_CANON, SEC_INSTANCE, SEC_EXPORT);
+    }
+
+    @Test
+    void refusesABehaviorSuppliedFromOutside() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module counting
+
+                behavior doubled : (n: Int) -> Int
+                """));
+
+        assertThatThrownBy(() -> WasmCompiler.compileAsComponent(program))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("supplied from outside");
+    }
+
+    @Test
+    void stillWritesTheSameBehaviorAsACoreModule() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module counting
+
+                behavior doubled : (n: Int) -> Int
+                """));
+
+        // A core module reaches out for one, so the refusal is the component's and not the
+        // backend's: what a component cannot do is carry the crossing, not write the behavior.
+        assertThat(WasmCompiler.compile(program)).isNotEmpty();
     }
 
     @Test

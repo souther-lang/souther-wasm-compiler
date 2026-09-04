@@ -43,6 +43,43 @@ before the call can tell a Souther abort from an ordinary wasm fault.
 `souther.wasm.abi.RuntimeAbi` writes all of this down, and the tests beside it run the module
 rather than trusting the writing.
 
+## As a component
+
+`WasmCompiler.compileAsComponent` wraps the same core module as a WebAssembly component. A Souther
+module becomes an interface and a behavior a function of it:
+
+    world root {
+      export souther:program/counting;
+    }
+    package souther:program {
+      interface counting {
+        doubled: func(arguments: string) -> string;
+      }
+    }
+
+The envelope is the one the core export answers with. What the component adds is who owns the
+memory it crosses in: the host lowers the argument through `cabi_realloc` and reads the answer out
+of an area in this memory, and the post-return says when the whole of it goes back. That is the
+bracket a core caller keeps, moved to where the format states it.
+
+A behavior's name is not the same string on both sides — Souther writes one convention and an
+interface another — so where two behaviors of a module would come to one interface name, this
+refuses rather than exporting one of them twice. A behavior supplied from outside is refused as
+well: what it sends out is a call in this module's own memory, which is not a thing a component
+carries, and it has no crossing of its own yet.
+
+The tests read the component back out of what was written. They do not run one: nothing here can.
+The three runtime functions a component's canonical calls go through are asked directly instead,
+which is where the one question the writing cannot answer — where a result may begin — can be put.
+
+## What is not written yet
+
+- A `Map` keyed by a `Date`, a `Time`, a `DateTime`, an `Instant` or a declared enumeration. What a
+  key of one of those is written as is a rule of its own, not something read off the key's type.
+- `Instant`.
+- A behavior supplied from outside, in a component. A core module reaches out for one.
+- A behavior another build implements. This links one program.
+
 ## Building
 
     mvn test
