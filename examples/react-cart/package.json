@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "model": "java -jar ../../target/souther-wasm-compiler-0.1.0-SNAPSHOT-cli.jar model -o public/cart.wasm",
+    "model": "jar=$(ls ../../target/*-cli.jar 2>/dev/null | head -1); if [ -z \"$jar\" ]; then echo 'The compiler has not been built. From the repository root: mvn package' >&2; exit 1; fi; java -jar \"$jar\" model -o public/cart.wasm",
     "dev": "npm run model && vite",
     "build": "npm run model && vite build",
     "preview": "vite preview"

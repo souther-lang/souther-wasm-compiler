@@ -4,10 +4,13 @@ What a basket costs is written in [`model/src/cart.sou`](model/src/cart.sou) and
 page hands over what was typed and shows what came back. The shape of a product code, and that a
 quantity is at least one, appear nowhere in the JavaScript.
 
+    (cd ../.. && mvn package)
     npm install
     npm run dev
 
-`npm run dev` compiles the model and then starts Vite. Run it again after changing the model.
+The first line builds the compiler, which is what turns the model into a module. `npm run dev`
+compiles the model with it and then starts Vite, so it is what to run again after changing the
+model.
 
 ## What is going on
 

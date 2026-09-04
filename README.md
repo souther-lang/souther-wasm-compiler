@@ -115,8 +115,13 @@ it says which part it will not read, as a path into the arguments.
 
 ## What it has been run against
 
-Every project in [souther-lang/examples](https://github.com/souther-lang/examples) compiles. A
-project whose modules come from another one is given both, the way a build gives it both.
+Every project in [souther-lang/examples](https://github.com/souther-lang/examples) compiles, and
+the build compiles all of them on every push rather than leaving that sentence to be true when it
+was written. A project whose modules come from another one is given both, the way a build gives it
+both.
+
+Those are the programs this is meant to compile, and they are not written against it. Every defect
+the tests here had no fixture for came from running them.
 
 ## Building
 

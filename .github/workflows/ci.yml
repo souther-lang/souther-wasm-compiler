@@ -60,6 +60,45 @@ jobs:
           test -s /tmp/asked/out.wasm
           test -s /tmp/asked/out.wit
 
+      # The programs this is meant to compile, which are not in this repository and are not written
+      # against it. What the tests here compile was written to make a point about one thing at a
+      # time; these were written to model something, and every defect the tests did not have a
+      # fixture for came from running them.
+      - name: Check out the Souther examples
+        uses: actions/checkout@v5
+        with:
+          repository: souther-lang/examples
+          path: souther-examples
+      - name: Compile every one of them
+        run: |
+          shared=souther-examples/sharedmoney/src/main/souther
+          for project in souther-examples/*/src/main/souther; do
+            name=$(basename "$(dirname "$(dirname "$(dirname "$project")")")")
+            # One of them is written against a module another one publishes, and a build gives it
+            # both. Handing over only its own directory is a missing source, not a missing feature.
+            with=""
+            if [ "$name" = invoicing ]; then with="$shared"; fi
+            if ! java -jar target/*-cli.jar "$project" $with -o "/tmp/$name.wasm"; then
+              echo "::error::$name no longer compiles"
+              exit 1
+            fi
+          done
+
+      # The example is a program compiled by this and then called from a browser. Nothing else
+      # here calls a compiled program from outside the JVM, so it is the only place that would
+      # notice the boundary changing shape — and only while it is still built.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: examples/react-cart/package-lock.json
+      - name: Build the example
+        working-directory: examples/react-cart
+        run: |
+          npm ci
+          npm run build
+          test -s dist/cart.wasm
+
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no
     # Rust. That only holds while the two agree, and nothing but this notices when they stop:
