@@ -7,8 +7,9 @@
  * of a change here is a local edit rather than a release somewhere else and a wait.
  *
  * <p>Source: <a href="https://github.com/making/rontolisp">making/rontolisp</a>, Apache License
- * 2.0, at commit {@code e599ae10bd377e673263ec4e99e3e13d0639015a}. The package was renamed;
- * nothing else was changed on the way in, so a later upstream fix is a diff against that commit.
- * The attribution is in this repository's {@code NOTICE}.
+ * 2.0, at commit {@code e599ae10bd377e673263ec4e99e3e13d0639015a}. The package name was
+ * rewritten wherever it appears and nothing else was changed, so a later upstream fix is a diff
+ * against that commit. The attribution is in this repository's {@code NOTICE}, and every file
+ * here says at its head what was changed in it.
  */
 package souther.wasm.emit;

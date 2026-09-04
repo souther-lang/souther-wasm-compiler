@@ -103,4 +103,7 @@ both differently from a command line that named no compile.
 ## Licence
 
 Eclipse Public License 2.0, except for `src/main/java/souther/wasm/emit`, which is a copy of
-rontolisp's wasm assembler under the Apache License 2.0. See `NOTICE`.
+[rontolisp](https://github.com/making/rontolisp)'s wasm assembler under the Apache License 2.0 —
+the package name was rewritten and nothing else, which each file says at its head. `NOTICE` has the
+attribution, and also lists what the runnable jar carries inside it, since distributing that jar
+distributes those too.
