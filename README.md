@@ -93,7 +93,13 @@ lowered against the memory that now exists; and the second module, instantiated 
 lowerings into the table as it starts. The table is full before anything outside has been handed
 anything that could reach a call through it.
 
-The tests read the component back out of what was written. They do not run one: nothing here can.
+The tests read the component back out of what was written, which says the sections hold what they
+were meant to hold and nothing about whether an index in one section names the thing in another —
+and a component that reaches out is almost entirely indices between sections. That is the format's
+question, so the build asks the format: CI validates a component this writes, and one that reaches
+out, with `wasm-tools`.
+
+They do not run one: nothing here can.
 The three runtime functions a component's canonical calls go through are asked directly instead,
 which is where the one question the writing cannot answer — where a result may begin — can be put.
 The two modules a program reaches out through are run the same way, against lowerings that write

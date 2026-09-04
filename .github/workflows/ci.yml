@@ -60,6 +60,39 @@ jobs:
           test -s /tmp/asked/out.wasm
           test -s /tmp/asked/out.wit
 
+      # Whether what was written is a component is the format's question, and nothing in the JVM
+      # can be asked it. The tests read a component back out of its own bytes, which says the
+      # sections hold what they were meant to hold and nothing about whether the index in one
+      # section names the thing in another — and a component that reaches out is almost entirely
+      # indices between sections.
+      - name: Install wasm-tools
+        run: |
+          version=1.258.0
+          curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v$version/wasm-tools-$version-x86_64-linux.tar.gz" \
+            | tar xz -C /tmp
+          echo "/tmp/wasm-tools-$version-x86_64-linux" >> "$GITHUB_PATH"
+      - name: Require every component this writes to be one
+        run: |
+          mkdir -p /tmp/component
+          cat > /tmp/component/rates.sou <<'SOURCE'
+          module rates
+
+          behavior today : (pair: String) -> Decimal
+
+          behavior priced : (n: Decimal) -> Decimal depends on today
+
+          let priced (n, today) = n * today("JPY")
+          SOURCE
+          for source in /tmp/asked /tmp/component; do
+            java -jar target/*-cli.jar "$source" --component \
+              -o "$source/out.wasm" --wit "$source/out.wit"
+            wasm-tools validate --features all "$source/out.wasm"
+            wasm-tools component wit "$source/out.wasm" > "$source/read-back.wit"
+          done
+          # What it says it needs is what it says it needs whichever end says it.
+          grep -q 'import souther:reached/rates' /tmp/component/out.wit
+          grep -q 'import souther:reached/rates' /tmp/component/read-back.wit
+
       # The programs this is meant to compile, which are not in this repository and are not written
       # against it. What the tests here compile was written to make a point about one thing at a
       # time; these were written to model something, and every defect the tests did not have a
