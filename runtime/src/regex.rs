@@ -30,6 +30,8 @@ const MATCH_CLASS: u32 = 2;
 const FORK: u32 = 3;
 const GO: u32 = 4;
 const DONE: u32 = 5;
+/// Go on where a word begins or ends here, and nowhere otherwise.
+const BOUNDARY: u32 = 6;
 
 /// Where the walk could be, and which round each step was last put there in.
 struct Where {
@@ -60,7 +62,10 @@ pub unsafe fn matches(at: u32, length: u32, machine: u32) -> bool {
     let mut current = Where::new(steps);
     let mut next = Where::new(steps);
     let mut round = 1u8;
-    add(machine, &mut current, round, 0);
+    // At the front there is nothing behind, so a word begins here exactly where the first
+    // character is one a word is made of.
+    let first = if length > 0 { code_point(at, length).0 } else { 0 };
+    add(machine, &mut current, round, 0, length > 0 && is_word(first));
 
     let mut i = 0;
     loop {
@@ -77,6 +82,14 @@ pub unsafe fn matches(at: u32, length: u32, machine: u32) -> bool {
             return false;
         }
         let (point, width) = code_point(at + i, length - i);
+        // Where the next position falls between a word character and something that is not one,
+        // which is what a walk arriving there is allowed to know.
+        let after = if i + width < length {
+            code_point(at + i + width, length - i - width).0
+        } else {
+            0
+        };
+        let edge = is_word(point) != (i + width < length && is_word(after));
         round = round.wrapping_add(1);
         if round == 0 {
             round = 1;
@@ -91,7 +104,7 @@ pub unsafe fn matches(at: u32, length: u32, machine: u32) -> bool {
                 _ => false,
             };
             if taken {
-                add(machine, &mut next, round, pc + 1);
+                add(machine, &mut next, round, pc + 1, edge);
             }
         }
         i += width;
@@ -102,17 +115,24 @@ pub unsafe fn matches(at: u32, length: u32, machine: u32) -> bool {
 /// Puts a step among the ones the walk could be at, and everything reachable from it without
 /// reading a character. The marks say which round a step was last put in, so a step several ways
 /// arrive at is held once and the list stays as short as the machine.
-unsafe fn add(machine: u32, into: &mut Where, round: u8, pc: u32) {
+unsafe fn add(machine: u32, into: &mut Where, round: u8, pc: u32, edge: bool) {
     if pc >= into.steps || core::ptr::read((into.marks + pc) as *const u8) == round {
         return;
     }
     core::ptr::write((into.marks + pc) as *mut u8, round);
     match step(machine, pc, 0) {
         FORK => {
-            add(machine, into, round, step(machine, pc, 1));
-            add(machine, into, round, step(machine, pc, 2));
+            add(machine, into, round, step(machine, pc, 1), edge);
+            add(machine, into, round, step(machine, pc, 2), edge);
         }
-        GO => add(machine, into, round, step(machine, pc, 1)),
+        GO => add(machine, into, round, step(machine, pc, 1), edge),
+        // Nothing is read here: whether a word begins or ends at this position was settled by the
+        // characters either side of it before the walk arrived, so this either goes on or stops.
+        BOUNDARY => {
+            if edge {
+                add(machine, into, round, pc + 1, edge);
+            }
+        }
         _ => {
             core::ptr::write_unaligned((into.held + into.kept * 4) as *mut u32, pc);
             into.kept += 1;
@@ -134,6 +154,14 @@ unsafe fn in_class(set: u32, point: u32) -> bool {
         }
     }
     false
+}
+
+/// What a word is made of, which is what a boundary is a boundary between.
+fn is_word(point: u32) -> bool {
+    (point >= 'a' as u32 && point <= 'z' as u32)
+        || (point >= 'A' as u32 && point <= 'Z' as u32)
+        || (point >= '0' as u32 && point <= '9' as u32)
+        || point == '_' as u32
 }
 
 /// The characters a dot does not stand for, which is what ends a line.

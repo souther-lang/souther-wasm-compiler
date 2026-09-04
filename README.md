@@ -82,13 +82,18 @@ which is where the one question the writing cannot answer — where a result may
 ## What is not written yet
 
 - A behavior supplied from outside, in a component. A core module reaches out for one.
-- Part of what a pattern can say. `String.matches` is read here rather than at run time, so what is
-  read is a written-out subset: characters, a class, a group, a choice, and the counts, with `^` and
-  `$` taken where they only say what a whole-string match already says. A backreference, a
-  lookaround, a lazy or possessive count, a named group, an inline flag, a word boundary, a Unicode
-  property class and a count above a thousand are each refused where the pattern is written, which
-  is the only place a pattern that would have been recognised differently can still be declined
-  rather than quietly answered.
+- What a pattern says by looking back or ahead. `String.matches` is read where it is written rather
+  than at run time, and what it is read into holds every step the walk could be at rather than
+  trying one way and coming back — so a backreference, a lookaround and a lazy or possessive count
+  are refused, because each of them is a question about a way already taken. A named group and a
+  count above a thousand are refused too. Each is refused where the pattern is written, which is
+  the only place a pattern that would have been recognised differently can still be declined rather
+  than quietly answered.
+
+  What a class names is not refused, and is not written down here either: a name like
+  `\p{IsHiragana}` is a fact about a version of Unicode, so it is asked of the reader whose flavour
+  the language declares the pattern in, one character at a time, and what comes out is placed in the
+  module. A table of this compiler's own would be right on the day it was written.
 
 ## Running it
 

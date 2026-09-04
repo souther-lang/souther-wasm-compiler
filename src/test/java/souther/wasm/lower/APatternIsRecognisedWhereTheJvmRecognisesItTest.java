@@ -63,6 +63,29 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
         "^$",
         "a\\$",
         "^\\$a$",
+        "\\p{Alpha}+",
+        "\\p{Digit}{3}",
+        "\\p{IsHiragana}+",
+        "\\p{L}+",
+        "\\P{Alpha}+",
+        "[\\p{Alpha}0-9]+",
+        "\\p{Alnum}-\\p{Alnum}",
+        "(?i)abc",
+        "(?i)ABC",
+        "(?i)[a-c]+",
+        "(?i)a\\.b",
+        "(?i)\\p{Alpha}+",
+        "(?i)[^a-c]+",
+        "(?i)x|Y",
+        "(?i)ひらがな",
+        "\\bword\\b",
+        "\\ba",
+        "a\\b",
+        "\\b",
+        "a\\bb",
+        "a\\b b",
+        "\\w+\\b",
+        "[a-z]+\\b[0-9]*",
     };
 
     private static final String[] SUBJECTS = {
@@ -70,6 +93,9 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
         "coloor", "foobaz", "barbaz", "bazbaz", "x", "y", "zz", "z", "123-4567", "123-456",
         "1234-5678", "2026-09-04", "2026-9-04", "hello_world", "9lives", "_x1", "rhythm",
         "aeiou", "xyz", "+42", "-7", "42", "4 2", "  ", "\t", "a@b.io", "a@b.info", "c",
+        "ひらがな", "ひa", "abc123", "a-1", "ABC", "e\u0301",
+        "abc", "AbC", "aBc", "A.B", "a.b", "X", "x", "Y", "y", "aC", "Ab",
+        "word", "a word", "words", "a b", "a-b", "ab", "a_b", "abc1",
         "ac", "bc", "abc\n", "\n", "é", "日本",
         "acd", "bcd", "acbcd", "d", "abcd", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaab", "..", ".", "a-c", "-", "192.168.0.1", "1.2.3",
@@ -91,8 +117,11 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
 
     @Test
     void refusesAPatternItWouldHaveHadToGuessAt() {
+        // Every one of these is a pattern the language takes and this does not read. A pattern the
+        // language itself refuses — a property nobody has heard of — never arrives, so it is not
+        // among them: what would be tested is the language's answer and not this one.
         for (String pattern : new String[] {
-            "(a)\\1", "(?=a)b", "a*?", "a*+", "(?<name>a)", "\\p{Alpha}", "a^b", "a$b",
+            "(a)\\1", "(?=a)b", "a*?", "a*+", "(?<name>a)", "a^b", "a$b", "a(?i)b", "(a)(?i)b",
         }) {
             assertThatThrownBy(() -> compiled(pattern))
                     .describedAs(pattern)

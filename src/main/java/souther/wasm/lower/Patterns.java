@@ -3,6 +3,10 @@ package souther.wasm.lower;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.List;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
@@ -39,15 +43,21 @@ final class Patterns {
     private static final int GO = 4;
     /** The whole of it has been recognised. */
     private static final int DONE = 5;
+    /** Where a word begins or ends, which stands between characters and reads none. */
+    private static final int BOUNDARY = 6;
 
     private final WasmFragment fragment;
     private final String pattern;
     private int at;
 
-    private Patterns(WasmFragment fragment, String pattern) {
+    private Patterns(WasmFragment fragment, String pattern, boolean eitherCase) {
         this.fragment = fragment;
         this.pattern = pattern;
+        this.eitherCase = eitherCase;
     }
+
+    /** Whether a character stands for itself or for itself and the other case of itself. */
+    private final boolean eitherCase;
 
     /**
      * Places the machine that recognises a pattern and answers where it is.
@@ -56,7 +66,10 @@ final class Patterns {
      * @param pattern the pattern as it was written
      */
     static int place(WasmFragment fragment, String pattern) {
-        Patterns held = new Patterns(fragment, wholeOf(pattern));
+        String written = wholeOf(pattern);
+        boolean eitherCase = written.startsWith(EITHER_CASE);
+        Patterns held = new Patterns(fragment,
+                eitherCase ? written.substring(EITHER_CASE.length()) : written, eitherCase);
         List<int[]> steps = held.choice();
         if (held.at != held.pattern.length()) {
             throw held.notRead();
@@ -95,6 +108,16 @@ final class Patterns {
         }
         return slashes % 2 == 0 ? held.substring(0, held.length() - 1) : held;
     }
+
+    /**
+     * What says a pattern is about a character whichever case it is written in.
+     *
+     * <p>Taken only at the front, where it is about the whole pattern. Written in the middle it is
+     * about what follows it and not about what precedes it, and what refuses that is not this: it
+     * is that a group opening with a question mark and no colon is a group this does not read. So
+     * one written in the middle is refused whether or not this notices it.
+     */
+    private static final String EITHER_CASE = "(?i)";
 
     /** {@code a|b|c}: one of several, and what recognises it is a walk that is at all of them. */
     private List<int[]> choice() {
@@ -265,9 +288,28 @@ final class Patterns {
             case '^', '$', '*', '+', '?' -> throw notRead();
             default -> {
                 at++;
-                return List.of(new int[] {MATCH_ONE, held, 0});
+                return List.of(oneOf(held));
             }
         }
+    }
+
+    /**
+     * One character, or — where the pattern said either case — a set of the two it is written as.
+     *
+     * <p>Worked out where the pattern is read and not where it is walked, so that what runs is the
+     * same walk over the same steps whichever the pattern said.
+     */
+    private int[] oneOf(int point) {
+        if (!eitherCase) {
+            return new int[] {MATCH_ONE, point, 0};
+        }
+        int lower = Character.toLowerCase(point);
+        int upper = Character.toUpperCase(point);
+        if (lower == upper) {
+            return new int[] {MATCH_ONE, point, 0};
+        }
+        return new int[] {MATCH_CLASS,
+                placeClass(settled(List.of(new int[] {lower, lower}, new int[] {upper, upper}))), 0};
     }
 
     /** A backslash and what follows it: a set of characters, or one written out of the way. */
@@ -279,17 +321,83 @@ final class Patterns {
         char held = pattern.charAt(at++);
         return switch (held) {
             case 'd', 'D', 'w', 'W', 's', 'S' -> new int[] {MATCH_CLASS, placeClass(rangesOf(held)), 0};
+            case 'b' -> new int[] {BOUNDARY, 0, 0};
             case 'n' -> new int[] {MATCH_ONE, '\n', 0};
             case 'r' -> new int[] {MATCH_ONE, '\r', 0};
             case 't' -> new int[] {MATCH_ONE, '\t', 0};
             case '\\', '.', '[', ']', '(', ')', '{', '}', '|', '*', '+', '?', '^', '$', '-', '/' ->
                     new int[] {MATCH_ONE, held, 0};
+            // A class named rather than written out. What it names is not this backend's to say —
+            // the pattern is read in the flavour the language declares it in — so what it stands
+            // for is asked of the reader that owns the flavour, one character at a time.
+            case 'p', 'P' -> new int[] {MATCH_CLASS, placeClass(asked("\\" + held + braced())), 0};
             default -> throw notRead();
         };
     }
 
     /** The last character there is, which is where a set's complement ends. */
     private static final int LAST = 0x10ffff;
+
+    /** What follows a named class, which is the name in braces. */
+    private String braced() {
+        if (at >= pattern.length() || pattern.charAt(at) != '{') {
+            // The one-letter form. A property named by one letter is as much a name as any other.
+            if (at >= pattern.length()) {
+                throw notRead();
+            }
+            return String.valueOf(pattern.charAt(at++));
+        }
+        int close = pattern.indexOf('}', at);
+        if (close < 0) {
+            throw notRead();
+        }
+        String held = pattern.substring(at, close + 1);
+        at = close + 1;
+        return held;
+    }
+
+    /**
+     * The characters a written-out class stands for, asked of the reader whose flavour it is.
+     *
+     * <p>What {@code \p{IsHiragana}} names is a fact about a version of Unicode and not about this
+     * compiler, and the language says which reader settles it. So this asks that reader, character
+     * by character, rather than keeping a table of its own to disagree with it — the table would
+     * be right on the day it was written and wrong on the day the reader was updated.
+     *
+     * <p>Once per class written, which is once per pattern that names one: what comes out is placed
+     * in the module and nothing asks again.
+     */
+    private static List<int[]> asked(String written) {
+        return NAMED.computeIfAbsent(written, held -> {
+            Pattern reader;
+            try {
+                reader = Pattern.compile(held);
+            } catch (PatternSyntaxException e) {
+                // Not a pattern a program can arrive with: the language reads the pattern before
+                // this does and refuses what its own reader refuses. What this catches is this
+                // handing over something it built wrong out of what was written.
+                throw new NotLowered("a class this backend put together and the reader refused: "
+                        + held);
+            }
+            List<int[]> runs = new ArrayList<>();
+            int from = -1;
+            for (int c = 0; c <= LAST; c++) {
+                if (reader.matcher(new String(Character.toChars(c))).matches()) {
+                    from = from < 0 ? c : from;
+                } else if (from >= 0) {
+                    runs.add(new int[] {from, c - 1});
+                    from = -1;
+                }
+            }
+            if (from >= 0) {
+                runs.add(new int[] {from, LAST});
+            }
+            return runs;
+        });
+    }
+
+    /** What each class written out came to, so a pattern naming one twice asks once. */
+    private static final Map<String, List<int[]>> NAMED = new HashMap<>();
 
     /** The characters one of the sets a backslash names stands for, as runs. */
     private static List<int[]> rangesOf(char held) {
@@ -351,6 +459,13 @@ final class Patterns {
             int held;
             if (pattern.charAt(at) == '\\') {
                 char what = pattern.charAt(at + 1);
+                if (what == 'p' || what == 'P') {
+                    // A class named inside a class, which is the characters it stands for thrown
+                    // in with the rest — the same as one a single letter names.
+                    at += 2;
+                    runs.addAll(asked("\\" + what + braced()));
+                    continue;
+                }
                 if ("dDwWsS".indexOf(what) >= 0) {
                     // A set named inside a class is the characters it stands for, thrown in with
                     // the rest. Where it is the negated one it is every character it does not name
@@ -378,7 +493,34 @@ final class Patterns {
             throw notRead();
         }
         at++;
-        return placeClass(away ? without(runs) : settled(runs));
+        // Folded before it is negated and not after: what a class leaves out, where the pattern
+        // said either case, is what neither case of it is.
+        List<int[]> held = eitherCase ? bothCasesOf(runs) : runs;
+        return placeClass(away ? without(held) : settled(held));
+    }
+
+    /**
+     * The runs, and the runs of the other case of every character in them.
+     *
+     * <p>Walked a character at a time because a run is a run of code points and the other case of
+     * one is somewhere else entirely — `a` to `z` has its other case a fixed distance away and the
+     * next alphabet does not, so moving the ends of a run is an answer about one alphabet.
+     */
+    private static List<int[]> bothCasesOf(List<int[]> runs) {
+        List<int[]> held = new ArrayList<>(runs);
+        for (int[] run : runs) {
+            for (int c = run[0]; c <= run[1]; c++) {
+                int lower = Character.toLowerCase(c);
+                int upper = Character.toUpperCase(c);
+                if (lower != c) {
+                    held.add(new int[] {lower, lower});
+                }
+                if (upper != c) {
+                    held.add(new int[] {upper, upper});
+                }
+            }
+        }
+        return held;
     }
 
     /**
