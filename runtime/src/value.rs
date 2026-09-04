@@ -483,7 +483,10 @@ pub unsafe extern "C" fn __souther_closure_captured(cell: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_builder(descriptor: u32) -> u32 {
     let cell = header(TAG_BUILDER, descriptor);
-    let _ = alloc(4 + 4 * INITIAL_ROOM);
+    // How many it holds, how many it has room for, and the room: three things and not two. The
+    // arena hands out exactly what is asked for, so a cell asked for too little ends where the
+    // next one begins, and the last place written is the next cell's first word.
+    let _ = alloc(8 + 4 * INITIAL_ROOM);
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, 0);
     core::ptr::write_unaligned((cell as usize + HEADER + 4) as *mut u32, INITIAL_ROOM);
     cell
@@ -520,7 +523,7 @@ unsafe fn grown(builder: u32, value: u32) -> u32 {
     }
     let descriptor = core::ptr::read_unaligned((builder as usize + 4) as *const u32);
     let wider = header(TAG_BUILDER, descriptor);
-    let _ = alloc(4 + 4 * (room * 2 + 1));
+    let _ = alloc(8 + 4 * (room * 2 + 1));
     core::ptr::write_unaligned((wider as usize + HEADER) as *mut u32, held + 1);
     core::ptr::write_unaligned((wider as usize + HEADER + 4) as *mut u32, room * 2 + 1);
     for i in 0..held {

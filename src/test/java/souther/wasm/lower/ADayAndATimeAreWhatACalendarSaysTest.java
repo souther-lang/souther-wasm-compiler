@@ -1,7 +1,9 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -121,6 +123,49 @@ class ADayAndATimeAreWhatACalendarSaysTest {
                 .isEqualTo(value(quoted("2024-02-29")));
         assertThat(answerOf(module, "diary.of", "2024,13,1" + fallback))
                 .isEqualTo(value(quoted("1970-01-01")));
+    }
+
+    @Test
+    void saysSoWhereADayIsPastWhatOneIsHeldIn() {
+        Running module = compiled();
+
+        // A day is held as one number of days from a fixed one, and a reader takes years this
+        // cannot count that far to. Taking such a year would put a value here saying a different
+        // day than the text did — which is the one thing the reading exists not to do.
+        for (String written : new String[] {
+            "+999999999-12-31", "+10000000-01-01", "-999999999-01-01", "-10000000-01-01",
+        }) {
+            assertThat(readableByTheJvm(written))
+                    .describedAs(written + " is a day to java.time").isTrue();
+            assertThat(answerOf(module, "diary.same", quoted(written)))
+                    .describedAs(written).contains("\"expected\":\"Date\"");
+        }
+    }
+
+    @Test
+    void endsTheCallWhereMovingADayLeavesTheCalendar() {
+        Running module = compiled();
+
+        // The same answer moving by days already gave. Moving by months and by years reached one
+        // by wrapping round, which is a day nobody asked for and nothing marks as wrong.
+        for (String[] far : new String[][] {
+            {"diary.monthsOn", "90000000000"}, {"diary.yearsOn", "9000000000"},
+            {"diary.later", "9000000000"},
+        }) {
+            assertThatThrownBy(() -> answerOf(module, far[0], quoted("2026-09-04") + "," + far[1]))
+                    .describedAs(far[0] + " by " + far[1])
+                    .isInstanceOf(ChicoryException.class);
+        }
+    }
+
+    /** Whether {@code java.time} reads it, which is what says the day itself is not the problem. */
+    private static boolean readableByTheJvm(String written) {
+        try {
+            LocalDate.parse(written);
+            return true;
+        } catch (java.time.format.DateTimeParseException ignored) {
+            return false;
+        }
     }
 
     @Test

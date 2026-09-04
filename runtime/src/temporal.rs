@@ -61,14 +61,34 @@ pub fn civil(days: i32) -> (i64, u32, u32) {
 }
 
 /// Which day a year, month and day is, counted the same way.
-pub fn days(year: i64, month: u32, day: u32) -> i32 {
+/// Which day a year, month and day is, without saying whether a day can be held there.
+///
+/// The two questions are asked in two places because the answers belong to two people. Text a
+/// caller wrote that names a day this cannot hold is bad input and is refused with the rest; a
+/// computation that walks off the end is the model asking for a day there is not, and ends the
+/// call. Working the number out is the same either way.
+pub fn day_count(year: i64, month: u32, day: u32) -> i64 {
     let y = if month <= 2 { year - 1 } else { year };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let year_of_era = y - era * 400;
     let months = if month > 2 { month - 3 } else { month + 9 } as i64;
     let day_of_year = (153 * months + 2) / 5 + day as i64 - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    (era * 146_097 + day_of_era - 719_468) as i32
+    era * 146_097 + day_of_era - 719_468
+}
+
+/// Whether a day is one this holds, which is whether the number of days fits what holds it.
+pub fn holds_a_day(held: i64) -> bool {
+    held >= i32::MIN as i64 && held <= i32::MAX as i64
+}
+
+/// Which day a year, month and day is, ending the call where it is not one this holds.
+pub unsafe fn days(year: i64, month: u32, day: u32) -> i32 {
+    let held = day_count(year, month, day);
+    if !holds_a_day(held) {
+        abort(REASON_OUT_OF_RANGE, 0, year as u64, held as u64);
+    }
+    held as i32
 }
 
 /// How many days a month of a year has.
@@ -88,16 +108,29 @@ pub fn month_length(year: i64, month: u32) -> u32 {
 
 /// Whether a year, month and day names a day there is.
 pub fn is_a_day(year: i64, month: u32, day: u32) -> bool {
-    (1..=12).contains(&month) && day >= 1 && day <= month_length(year, month)
+    // And a day this holds. A year a reader takes and this counts past what a day is held in is
+    // not a day here, and saying so is what stops one crossing as a different day than it was.
+    (1..=12).contains(&month)
+        && day >= 1
+        && day <= month_length(year, month)
+        && holds_a_day(day_count(year, month, day))
 }
 
 /// The same day of a later or earlier month, kept inside the month it lands in.
 ///
 /// A month has as many days as it has, so the last of January a month later is the last of
 /// February and not the first of March.
-pub fn moved_by_months(days_from_epoch: i32, by: i64) -> i32 {
+pub unsafe fn moved_by_months(days_from_epoch: i32, by: i64) -> i32 {
     let (year, month, day) = civil(days_from_epoch);
-    let months = year * 12 + (month as i64 - 1) + by;
+    // The same as moving by days: a month count that leaves what a year is held in is a day the
+    // calendar does not reach, and the call ends rather than the day wrapping round to another one.
+    let months = match (year.checked_mul(12))
+        .and_then(|held| held.checked_add(month as i64 - 1))
+        .and_then(|held| held.checked_add(by))
+    {
+        Some(held) => held,
+        None => abort(REASON_OUT_OF_RANGE, 0, by as u64, year as u64),
+    };
     let held_year = months.div_euclid(12);
     let held_month = (months.rem_euclid(12) + 1) as u32;
     let length = month_length(held_year, held_month);
@@ -217,7 +250,7 @@ pub unsafe fn read_day(at: u32, length: u32) -> Option<i32> {
     if !is_a_day(year, month, day) {
         return None;
     }
-    Some(days(year, month, day))
+    Some(day_count(year, month, day) as i32)
 }
 
 /// Reads a time of day as a clock writes one, or answers nothing.

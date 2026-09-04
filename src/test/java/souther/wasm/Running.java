@@ -91,6 +91,11 @@ public final class Running {
         instance.export(export).apply();
     }
 
+    /** Calls an export taking three numbers and answering nothing. */
+    public void run(String export, int first, int second, int third) {
+        instance.export(export).apply(first, second, third);
+    }
+
     /** Calls an export taking four numbers and answering one. */
     public int call(String export, int first, int second, int third, int fourth) {
         return (int) instance.export(export).apply(first, second, third, fourth)[0];
