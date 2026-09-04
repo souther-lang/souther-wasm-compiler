@@ -98,6 +98,18 @@ program compiled: what stopped goes to the error stream, and it says which kind 
 a program the language refuses answers differently from one this backend does not write yet, and
 both differently from a command line that named no compile.
 
+## What a call costs
+
+Reading, sorting and settling grow with what they were given and not with the square of it. That
+is asked of the build rather than written down here, because a number written down here would be
+this machine's on the day it was measured: `WhatACallCostsGrowsWithWhatItWasGivenTest` hands each
+of them four times as much and requires it to cost well under sixteen times as much.
+
+A loose bound on purpose. It does not say a call is fast — it says that reading an object, sorting
+a list and settling a set have not gone back to asking every part about every other part, which
+three of them were doing while every other test passed. A test that hands over three of something
+cannot tell the two shapes apart.
+
 ## Building
 
     mvn test
