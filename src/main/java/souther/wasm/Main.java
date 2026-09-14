@@ -17,6 +17,7 @@ import souther.compiler.diag.DiagnosticRenderer;
 import souther.compiler.diag.HumanRenderer;
 import souther.compiler.diag.SourceContext;
 import souther.compiler.diag.SourceContextResolver;
+import souther.compiler.diag.SourceNames;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.query.Compilation;
 import souther.wasm.link.WitText;
@@ -207,20 +208,30 @@ public final class Main {
     }
 
     /**
-     * What to quote for each source a report names: the text this command read, under the path it
-     * was named by.
+     * What to quote for each source a report names: the text this command read, under the name a
+     * reader is shown it by.
      *
      * <p>A report names a source by the position it was handed over in, which is the one thing this
      * knows its own list by. A name that is none of them is about a source this compile did not hand
      * over, and answering it with a file that happens to be here would draw a caret in a text the
      * report says nothing about.
+     *
+     * <p>The layout is told which source its text is, so that the same thing is refused a second
+     * time where it is a type error rather than a missed comparison: a layout that knows its source
+     * will not resolve a place from another one. A text handed over with no name is a text nobody
+     * can tell apart, and this one is told apart by the id it was compiled under.
+     *
+     * <p>The names are {@link SourceNames}, so a reader is shown {@code model.sou} where that is
+     * unambiguous and enough of the path to tell two apart where it is not — the naming every other
+     * report of this language is read under.
      */
     private static SourceContextResolver quoting(List<Path> files, List<String> texts) {
+        List<String> names = SourceNames.of(files.stream().map(Path::toString).toList());
         return SourceContextResolver.memoized(id -> {
             for (int i = 0; i < texts.size(); i++) {
                 if (Compilation.idOfSourceIndex(i).equals(id)) {
-                    return new SourceContext(files.get(i).toString(), texts.get(i),
-                            SourceLayout.of(texts.get(i)));
+                    return new SourceContext(names.get(i), texts.get(i),
+                            SourceLayout.of(texts.get(i), id));
                 }
             }
             return null;
