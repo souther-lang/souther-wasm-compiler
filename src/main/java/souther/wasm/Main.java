@@ -9,9 +9,16 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
+import souther.compiler.cst.SourceLayout;
 import souther.compiler.diag.CompileException;
+import souther.compiler.diag.DiagnosticRenderer;
+import souther.compiler.diag.HumanRenderer;
+import souther.compiler.diag.SourceContext;
+import souther.compiler.diag.SourceContextResolver;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.query.Compilation;
 import souther.wasm.link.WitText;
 import souther.wasm.lower.NotLowered;
 import souther.wasm.lower.WasmCompiler;
@@ -117,8 +124,8 @@ public final class Main {
 
         byte[] written;
         String offers = null;
+        List<String> read = new ArrayList<>(files.size());
         try {
-            List<String> read = new ArrayList<>(files.size());
             for (Path file : files) {
                 read.add(Files.readString(file, StandardCharsets.UTF_8));
             }
@@ -131,7 +138,7 @@ public final class Main {
                         WasmCompiler.offered(program), WasmCompiler.reachedOutFor(program));
             }
         } catch (CompileException e) {
-            problems.println(e.getMessage());
+            say(e, files, read, problems);
             return REFUSED;
         } catch (IllegalArgumentException e) {
             // A program that compiles but offers two behaviors one name, which is a refusal of
@@ -174,6 +181,51 @@ public final class Main {
     private static final int REFUSED = 1;
     /** A command line naming no compile this could run. */
     private static final int WRONG_COMMAND = 2;
+
+    /**
+     * Says why the language refused a program, quoting the source each diagnostic points into.
+     *
+     * <p>Where a report points is a place in a text; a line and a column are what that text is laid
+     * out as, so they belong to whoever holds the text rather than to an exception on its way up a
+     * stack. This command holds the texts it compiled, which is why the numbers are worked out here.
+     * An error that carries no diagnostic is a site not yet reporting through the catalog, and what
+     * it says is the whole of what there is to say about it.
+     *
+     * <p>No colour and English: this stream is as often a log or a pipe as a terminal, and every
+     * other sentence this command writes is English.
+     */
+    private static void say(CompileException e, List<Path> files, List<String> texts,
+                            PrintStream problems) {
+        if (e.diagnostic() == null) {
+            problems.println(e.getMessage());
+            return;
+        }
+        for (String line : DiagnosticRenderer.renderAll(e.locatedDiagnostics(),
+                quoting(files, texts), new HumanRenderer(false), Locale.ENGLISH)) {
+            problems.println(line);
+        }
+    }
+
+    /**
+     * What to quote for each source a report names: the text this command read, under the path it
+     * was named by.
+     *
+     * <p>A report names a source by the position it was handed over in, which is the one thing this
+     * knows its own list by. A name that is none of them is about a source this compile did not hand
+     * over, and answering it with a file that happens to be here would draw a caret in a text the
+     * report says nothing about.
+     */
+    private static SourceContextResolver quoting(List<Path> files, List<String> texts) {
+        return SourceContextResolver.memoized(id -> {
+            for (int i = 0; i < texts.size(); i++) {
+                if (Compilation.idOfSourceIndex(i).equals(id)) {
+                    return new SourceContext(files.get(i).toString(), texts.get(i),
+                            SourceLayout.of(texts.get(i)));
+                }
+            }
+            return null;
+        });
+    }
 
     /**
      * The sources a command line named: a file as itself, a directory as the {@code .sou} files

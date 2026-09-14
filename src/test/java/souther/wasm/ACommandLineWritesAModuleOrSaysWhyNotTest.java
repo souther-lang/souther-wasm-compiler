@@ -173,6 +173,28 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void saysWhereARefusedProgramIsWrittenAndQuotesIt(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("bad.sou"), """
+                module bad
+
+                behavior x : (n: Int) -> Int
+
+                let x (n) = n + missing
+                """);
+
+        Ran ran = run(source.toString(), "-o", room.resolve("out.wasm").toString());
+
+        // A line and a column are what a text is laid out as, so what the compile answers with
+        // carries neither and this command works them out from the text it read. Said as the file,
+        // the place in it and the line itself: a reader given the sentence alone has to go looking
+        // for which of the sources it was about.
+        assertThat(ran.complained())
+                .contains("E1023")
+                .contains("bad.sou:5:17")
+                .contains("let x (n) = n + missing");
+    }
+
+    @Test
     void leavesNothingWhereTheModuleWouldHaveGoneWhenTheLanguageRefuses(@TempDir Path room)
             throws IOException {
         Path source = Files.writeString(room.resolve("bad.sou"), """
