@@ -177,6 +177,9 @@ the tests here had no fixture for came from running them.
 
     mvn test
 
+The compiler this reads a program through is a published artifact, so a build resolves it the way
+it resolves anything else and there is nothing to install first.
+
 ## Licence
 
 Eclipse Public License 2.0, except for `src/main/java/souther/wasm/emit`, which is a copy of

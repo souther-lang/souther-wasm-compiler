@@ -21,18 +21,6 @@ jobs:
           java-version: '25'
           cache: maven
 
-      # The compiler this reads a program through is not published anywhere, so a runner has to
-      # build it. Only what a CheckedProgram is reachable from is wanted, which is why this
-      # installs rather than builds the whole of it.
-      - name: Check out the Souther compiler
-        uses: actions/checkout@v5
-        with:
-          repository: souther-lang/souther
-          ref: develop
-          path: souther
-      - name: Install the Souther compiler
-        run: mvn -B --no-transfer-progress -f souther/pom.xml install -DskipTests -Dmaven.javadoc.skip=true
-
       - name: Build and test
         run: mvn -B --no-transfer-progress verify
 
