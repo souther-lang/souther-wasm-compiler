@@ -173,6 +173,59 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void saysWhereARefusedProgramIsWrittenAndQuotesIt(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("bad.sou"), """
+                module bad
+
+                behavior x : (n: Int) -> Int
+
+                let x (n) = n + missing
+                """);
+
+        Ran ran = run(source.toString(), "-o", room.resolve("out.wasm").toString());
+
+        // A line and a column are what a text is laid out as, so what the compile answers with
+        // carries neither and this command works them out from the text it read. Said as the file,
+        // the place in it and the line itself: a reader given the sentence alone has to go looking
+        // for which of the sources it was about.
+        assertThat(ran.complained())
+                .contains("E1023")
+                .contains("bad.sou:5:17")
+                .contains("let x (n) = n + missing");
+    }
+
+    @Test
+    void quotesTheSourceTheReportIsAboutAndNotAnotherOneCompiledBesideIt(@TempDir Path room)
+            throws IOException {
+        Files.writeString(room.resolve("a.sou"), """
+                module a
+
+                behavior fine : (n: Int) -> Int
+
+                let fine (n) = n + 1
+                """);
+        Files.writeString(room.resolve("b.sou"), """
+                module b
+
+                behavior broken : (n: Int) -> Int
+
+                let broken (n) = n + missing
+                """);
+
+        Ran ran = run(room.toString(), "-o", room.resolve("out.wasm").toString());
+
+        // Which source a report is about is the one it names, and this command knows its sources
+        // by the position each was handed over in. Read off anything else — the first file, the
+        // only one that failed to read — and a caret lands in a text the report says nothing
+        // about, at numbers belonging to a line the author never wrote there.
+        assertThat(ran.complained())
+                .contains("b.sou:5:22")
+                .contains("let broken (n) = n + missing")
+                .doesNotContain("a.sou")
+                .doesNotContain("let fine (n) = n + 1");
+    }
+
+    @Test
     void leavesNothingWhereTheModuleWouldHaveGoneWhenTheLanguageRefuses(@TempDir Path room)
             throws IOException {
         Path source = Files.writeString(room.resolve("bad.sou"), """
