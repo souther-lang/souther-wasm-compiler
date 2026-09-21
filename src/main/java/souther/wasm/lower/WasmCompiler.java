@@ -1095,8 +1095,8 @@ public final class WasmCompiler {
             }
             if (kernel == Kernel.LIST_SORT_BY) {
                 // Sorting by what a block answers wants the type of what it answers, which is the
-                // block's own result and not the list's element — the checker already proved this
-                // Type ordered and settled it on the call.
+                // block's own result and not the list's element — the checker already checked the
+                // ordering requirement against this Type and settled it on the call.
                 out.constant(shapes.of(orderingSubject(call)));
             }
             TypeSymbol.LanguageCase absent = answeredCase(kernel);
@@ -1131,10 +1131,9 @@ public final class WasmCompiler {
          *  rather than re-derived from the block's declared type, so this backend never disagrees with
          *  what the checker settled. */
         private souther.compiler.types.Type orderingSubject(Core.Call call) {
-            // The call cannot be built without this settlement (CallElaborator settles it for every
-            // sortBy application), so a different one is the checker's contract broken and not a
-            // capability this backend lacks — the same distinction `recognised` draws for
-            // String.matches's settled pattern.
+            // CallElaborator cannot produce a sortBy application without this settlement, so a
+            // different one here is the checker's contract broken and not a capability this backend
+            // lacks — the same distinction `recognised` draws for String.matches's settled pattern.
             Core.CallSettlement.OrderingSubject settled =
                     (Core.CallSettlement.OrderingSubject) call.settlement();
             return settled.type();
