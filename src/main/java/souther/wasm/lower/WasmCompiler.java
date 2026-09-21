@@ -216,7 +216,7 @@ public final class WasmCompiler {
             }
         }
 
-        Emitter emitter = new Emitter(fragment, calls, shapes, reached);
+        Emitter emitter = new Emitter(program, fragment, calls, shapes, reached);
         for (Written each : written) {
             fragment.write(each.index(), emitter.overValues(each));
         }
@@ -472,6 +472,7 @@ public final class WasmCompiler {
      */
     private static final class Emitter {
 
+        private final CheckedProgram program;
         private final WasmFragment fragment;
         private final Runtime calls;
         private final Descriptors shapes;
@@ -481,8 +482,9 @@ public final class WasmCompiler {
         private Map<BindingId, Integer> locals;
         private Object writing;
 
-        Emitter(WasmFragment fragment, Runtime calls, Descriptors shapes,
+        Emitter(CheckedProgram program, WasmFragment fragment, Runtime calls, Descriptors shapes,
                 Map<ValueName, Integer> reached) {
+            this.program = program;
             this.fragment = fragment;
             this.calls = calls;
             this.shapes = shapes;
@@ -1091,9 +1093,9 @@ public final class WasmCompiler {
             if (each != null) {
                 out.constant(each);
             }
-            String absent = ANSWERS_A_CASE.get(kernel);
+            TypeSymbol.LanguageCase absent = answeredCase(kernel);
             if (absent != null) {
-                out.constant(shapes.ofMember(caseNamed(call.type(), absent)));
+                out.constant(shapes.ofMember(absent));
             }
             out.call(calls.of(operation));
         }
@@ -1131,23 +1133,6 @@ public final class WasmCompiler {
             };
         }
 
-        /**
-         * The kernels that answer either a value or a named case, and which case each names.
-         *
-         * <p>Written down because the library's own signature writes it: {@code Int.divide} answers
-         * {@code Int | DivisionByZero} and the case is that one. Reading it off the result type as
-         * "the member that is not the value" would be working out what the declaration already
-         * says, and would say something else the day a kernel answers two cases.
-         */
-        private static final Map<Kernel, String> ANSWERS_A_CASE = Map.of(
-                Kernel.INT_TRUNCATING_DIVIDE, "DivisionByZero",
-                Kernel.INT_TRUNCATING_REMAINDER, "DivisionByZero",
-                Kernel.DECIMAL_DIVIDE, "DivisionByZero",
-                Kernel.DATE_FROM_PARTS, "NotADate",
-                Kernel.TIME_FROM_PARTS, "NotATime",
-                Kernel.STRING_TO_INT, "NotANumber",
-                Kernel.STRING_TO_DECIMAL, "NotANumber");
-
         /** What a sort's key answers, which is what its order is asked of. */
         private souther.compiler.types.Type keyType(Core.Call call) {
             if (call.args().get(0).type() instanceof souther.compiler.types.Type.FnOf key) {
@@ -1176,16 +1161,22 @@ public final class WasmCompiler {
                 Kernel.DECIMAL_ROUND, 1,
                 Kernel.DECIMAL_DIVIDE, 3);
 
-        /** The alternative of a set that goes by a name. */
-        private static TypeSymbol caseNamed(souther.compiler.types.Type answered, String name) {
-            if (answered instanceof souther.compiler.types.Type.Union alternatives) {
-                for (TypeSymbol member : alternatives.members()) {
-                    if (member.name().equals(name)) {
-                        return member;
-                    }
-                }
-            }
-            throw new NotLowered("a kernel answering " + name + " was typed as " + answered);
+        /**
+         * The case a kernel answers with, as the kernel's declaration carries it.
+         *
+         * <p>The runtime takes one case descriptor, so a kernel declaring more than one is refused
+         * here. What the language can say is wider than what this runtime can carry, and the
+         * difference is kept in this method.
+         */
+        private TypeSymbol.LanguageCase answeredCase(Kernel kernel) {
+            java.util.Set<TypeSymbol.LanguageCase> declared =
+                    program.kernelSignature(kernel).languageCaseMembers();
+            return switch (declared.size()) {
+                case 0 -> null;
+                case 1 -> declared.iterator().next();
+                default -> throw new NotLowered(writing + " reaches " + kernel
+                        + ", which declares more than one case; this runtime carries one");
+            };
         }
 
         /**
