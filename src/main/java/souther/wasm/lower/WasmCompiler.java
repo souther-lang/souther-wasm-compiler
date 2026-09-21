@@ -1068,17 +1068,17 @@ public final class WasmCompiler {
                 return;
             }
             String operation = abiNameOf(kernel);
-            Integer rounds = TAKES_A_MODE.get(kernel);
+            var parameters = program.kernelSignature(kernel).parameters();
             for (int i = 0; i < call.args().size(); i++) {
                 value(out, call.args().get(i));
                 // A way of rounding goes over as its place among the ones the language declares.
                 // Which argument that is comes from the operation's own declaration: a value of
                 // one of them is typed as the case it is, not as the set it belongs to.
-                if (rounds != null && rounds == i) {
+                if (isRoundingMode(parameters.get(i))) {
                     out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
                 }
             }
-            if (BUILDS_A_LIST.contains(kernel)) {
+            if (TAKES_RESULT_DESCRIPTOR.contains(kernel)) {
                 out.constant(shapes.of(call.type()));
             }
             if (kernel == Kernel.LIST_SUM || kernel == Kernel.LIST_PRODUCT) {
@@ -1152,11 +1152,11 @@ public final class WasmCompiler {
         private static final Map<Kernel, Integer> SECONDS_OF = Map.of(
                 Kernel.DATETIME_ADD_MINUTES, 60, Kernel.DATETIME_ADD_HOURS, 3600);
 
-        /** The operations told a way of rounding, and which of their arguments says it. */
-        private static final Map<Kernel, Integer> TAKES_A_MODE = Map.of(
-                Kernel.DECIMAL_TO_INT, 0,
-                Kernel.DECIMAL_ROUND, 1,
-                Kernel.DECIMAL_DIVIDE, 3);
+        /** Whether {@code parameter} is the language's one way of naming how to round. */
+        private static boolean isRoundingMode(souther.compiler.types.Type parameter) {
+            return parameter instanceof souther.compiler.types.Type.Ref ref
+                    && ref.name().name().equals("RoundingMode");
+        }
 
         /**
          * The case a kernel answers with, as the kernel's declaration carries it.
@@ -1177,13 +1177,16 @@ public final class WasmCompiler {
         }
 
         /**
-         * The kernels told what they build.
+         * The kernels whose runtime call takes an extra operand: the descriptor of what it builds.
          *
          * <p>A collection knows what it holds by the descriptor its cell carries, and one being
-         * made has no cell yet. So an operation that makes one is handed the type it is making,
-         * which the declaration answered and the values it was given may not have an example of.
+         * made has no cell yet, so its runtime function is handed one as an argument rather than
+         * reading it off a value it may have none of. Which type that descriptor names is a
+         * semantic fact this backend never restates — it is {@code call.type()}, read at the one
+         * site below that pushes it. What this set answers instead is a fact of this runtime's own
+         * ABI: which operations were built to take that extra operand at all.
          */
-        private static final Set<Kernel> BUILDS_A_LIST = Set.of(
+        private static final Set<Kernel> TAKES_RESULT_DESCRIPTOR = Set.of(
                 Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
                 Kernel.STRING_WORDS, Kernel.STRING_LINES,
                 Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE,
