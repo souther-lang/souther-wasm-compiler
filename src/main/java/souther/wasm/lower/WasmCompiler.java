@@ -385,7 +385,7 @@ public final class WasmCompiler {
         case INT_MULTIPLY -> RuntimeAbi.Kernels.INT_MULTIPLY;
         case INT_COMPARE -> RuntimeAbi.Kernels.INT_COMPARE;
         case INT_FLOOR_MOD -> RuntimeAbi.Kernels.INT_FLOOR_MOD;
-        case INT_DIVIDE -> RuntimeAbi.Kernels.INT_DIVIDE;
+        case INT_TRUNCATING_DIVIDE -> RuntimeAbi.Kernels.INT_DIVIDE;
         case INT_TRUNCATING_REMAINDER -> RuntimeAbi.Kernels.INT_TRUNCATING_REMAINDER;
         case STRING_TO_INT -> RuntimeAbi.Kernels.STRING_TO_INT;
         case STRING_FROM_DECIMAL -> RuntimeAbi.Kernels.STRING_FROM_DECIMAL;
@@ -444,6 +444,11 @@ public final class WasmCompiler {
         case MAP_REMOVE -> RuntimeAbi.Kernels.MAP_REMOVE;
         case MAP_TO_LIST -> RuntimeAbi.Kernels.MAP_TO_LIST;
         case MAP_FROM_LIST -> RuntimeAbi.Kernels.MAP_FROM_LIST;
+        case RATIONAL_FROM_INT, RATIONAL_FROM_DECIMAL, RATIONAL_TO_WHOLE_NUMBER,
+                RATIONAL_TO_FINITE_DECIMAL, RATIONAL_TO_INT, RATIONAL_TO_DECIMAL, RATIONAL_ADD,
+                RATIONAL_SUBTRACT, RATIONAL_MULTIPLY, RATIONAL_DIVIDE, RATIONAL_COMPARE ->
+                throw new NotLowered(kernel + " is a Rational operation, which this backend does"
+                        + " not write yet");
         default -> throw new NotLowered(kernel + " is an intrinsic this backend does not"
                 + " write yet, which the library declared after this switch was last read");
     };
@@ -796,8 +801,8 @@ public final class WasmCompiler {
                     }
                 }
                 case Core.Neg opposite -> {
-                    boolean amount = opposite.operand().type()
-                            == souther.compiler.types.Type.Prim.DECIMAL;
+                    boolean amount = amountsAreWorkedOut(
+                            opposite.operand().type(), opposite.type());
                     value(out, opposite.operand());
                     out.call(calls.of(amount
                             ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
@@ -953,6 +958,7 @@ public final class WasmCompiler {
             }
             ValueName name = switch (declaration.reaches()) {
                 case Core.Reaches.AHelper helper -> helper.declaration();
+                case Core.Reaches.APublishedValue published -> published.declaration();
                 case Core.Reaches.ABehavior reaches -> reaches.behavior();
             };
             Integer index = reached.get(name);
@@ -1134,7 +1140,7 @@ public final class WasmCompiler {
          * says, and would say something else the day a kernel answers two cases.
          */
         private static final Map<Kernel, String> ANSWERS_A_CASE = Map.of(
-                Kernel.INT_DIVIDE, "DivisionByZero",
+                Kernel.INT_TRUNCATING_DIVIDE, "DivisionByZero",
                 Kernel.INT_TRUNCATING_REMAINDER, "DivisionByZero",
                 Kernel.DECIMAL_DIVIDE, "DivisionByZero",
                 Kernel.DATE_FROM_PARTS, "NotADate",
@@ -1422,6 +1428,10 @@ public final class WasmCompiler {
         }
 
         private void comparison(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
+            // Both sides, because a comparison across Int and Rational is one the language allows
+            // and the descriptor below is only the left one's.
+            refuseWhatIsNotWritten("compares", binary.left().type());
+            refuseWhatIsNotWritten("compares", binary.right().type());
             value(out, binary.left());
             value(out, binary.right());
             out.constant(shapes.of(binary.left().type()))
@@ -1431,9 +1441,33 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.BOOL));
         }
 
+        /**
+         * Whether arithmetic over these types is the runtime's on amounts, and not on whole
+         * numbers.
+         *
+         * <p>Asked of the operand and of the answer, because they part company: a quotient of two
+         * Ints is a Rational while its operands stay Ints. Deciding on the operand alone reads a
+         * Rational as the Int it does not hold. What this backend knows it does not write is
+         * refused here, before the choice between the two things it does, so it can never be the
+         * else of that choice.
+         */
+        private boolean amountsAreWorkedOut(souther.compiler.types.Type operand,
+                souther.compiler.types.Type answer) {
+            refuseWhatIsNotWritten("works out", operand);
+            refuseWhatIsNotWritten("works out", answer);
+            return operand == souther.compiler.types.Type.Prim.DECIMAL;
+        }
+
+        private void refuseWhatIsNotWritten(String doing, souther.compiler.types.Type type) {
+            if (type == souther.compiler.types.Type.Prim.RATIONAL) {
+                throw new NotLowered(writing + " " + doing + " a Rational, which this backend does"
+                        + " not write yet");
+            }
+        }
+
         private void arithmetic(
                 BodyWriter out, Core.Binary binary, String whole, String amount) {
-            boolean amounts = binary.left().type() == souther.compiler.types.Type.Prim.DECIMAL;
+            boolean amounts = amountsAreWorkedOut(binary.left().type(), binary.type());
             if (amounts && amount == null) {
                 throw new NotLowered(writing + " works out an amount with " + binary.op());
             }

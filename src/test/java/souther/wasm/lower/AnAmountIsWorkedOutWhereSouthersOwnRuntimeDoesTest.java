@@ -49,23 +49,6 @@ class AnAmountIsWorkedOutWhereSouthersOwnRuntimeDoesTest {
     }
 
     @Test
-    void dividesWhereSouthersRuntimeDivides() {
-        Running module = compiled();
-
-        for (String left : AMOUNTS) {
-            for (String right : AMOUNTS) {
-                if (new BigDecimal(right).signum() == 0) {
-                    continue;
-                }
-                assertThat(answerOf(module, "pricing.quotient", "[" + left + "," + right + "]"))
-                        .describedAs(left + " / " + right)
-                        .isEqualTo(written(
-                                DecimalMath.divide(new BigDecimal(left), new BigDecimal(right))));
-            }
-        }
-    }
-
-    @Test
     void roundsToAScaleWhereSouthersRuntimeDoes() {
         Running module = compiled();
 
@@ -121,10 +104,6 @@ class AnAmountIsWorkedOutWhereSouthersOwnRuntimeDoesTest {
                 behavior product : (a: Decimal, b: Decimal) -> Decimal
 
                 let product (a, b) = a * b
-
-                behavior quotient : (a: Decimal, b: Decimal) -> Decimal
-
-                let quotient (a, b) = a / b
 
                 behavior rounded : (d: Decimal, places: Int) -> Decimal
 

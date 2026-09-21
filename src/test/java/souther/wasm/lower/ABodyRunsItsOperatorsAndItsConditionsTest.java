@@ -1,6 +1,7 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
@@ -34,10 +35,6 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
 
                 let product (a, b) = a * b
 
-                behavior quotient : (a: Int, b: Int) -> Int
-
-                let quotient (a, b) = a / b
-
                 behavior difference : (a: Int, b: Int) -> Int
 
                 let difference (a, b) = a - b
@@ -46,8 +43,6 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
         assertThat(answerOf(module, "counting.sum", "[2, 3]")).isEqualTo("{\"value\":5}");
         assertThat(answerOf(module, "counting.difference", "[2, 3]")).isEqualTo("{\"value\":-1}");
         assertThat(answerOf(module, "counting.product", "[2, 3]")).isEqualTo("{\"value\":6}");
-        assertThat(answerOf(module, "counting.quotient", "[7, 2]")).isEqualTo("{\"value\":3}");
-        assertThat(answerOf(module, "counting.quotient", "[-7, 2]")).isEqualTo("{\"value\":-3}");
     }
 
     @Test
@@ -58,16 +53,33 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
                 behavior sum : (a: Int, b: Int) -> Int
 
                 let sum (a, b) = a + b
-
-                behavior quotient : (a: Int, b: Int) -> Int
-
-                let quotient (a, b) = a / b
                 """);
 
         assertThat(abortOf(module, "counting.sum",
                 "[9223372036854775807, 1]")).contains(AbortReason.INT_OVERFLOW);
-        assertThat(abortOf(module, "counting.quotient", "[1, 0]"))
-                .contains(AbortReason.DIVISION_BY_ZERO);
+    }
+
+    /**
+     * A quotient of two Ints is a Rational while its operands stay Ints, so the operands say
+     * nothing about it. What this witnesses is the refusal and nothing else: the helper takes the
+     * quotient and answers a constant, so no Rational kernel stands between the division and the
+     * refusal, and a compile that goes through is an Int division written for a Rational.
+     */
+    @Test
+    void refusesAnExactQuotientUntilRationalsAreWritten() {
+        CheckedProgram program = CheckedProgram.of(List.of("""
+                module counting
+
+                behavior halved : (a: Int, b: Int) -> Int
+
+                let ignoring (exact: Rational): Int = 1
+
+                let halved (a, b) = ignoring(a / b)
+                """));
+
+        assertThatThrownBy(() -> WasmCompiler.compile(program))
+                .isInstanceOf(NotLowered.class)
+                .hasMessageContaining("Rational");
     }
 
     @Test
@@ -150,18 +162,18 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
 
                 behavior safe : (a: Int, b: Int) -> Bool
 
-                let safe (a, b) = b == 0 || a / b > 1
+                let safe (a, b) = b == 0 || Int.floorMod(a, b) > 1
 
                 behavior both : (a: Int, b: Int) -> Bool
 
-                let both (a, b) = b /= 0 && a / b > 1
+                let both (a, b) = b /= 0 && Int.floorMod(a, b) > 1
                 """);
 
-        // The division would end the call if it ran, and the first operand says it does not.
+        // The floor modulo would end the call if it ran, and the first operand says it does not.
         assertThat(answerOf(module, "guarding.safe", "[1, 0]")).isEqualTo("{\"value\":true}");
         assertThat(answerOf(module, "guarding.both", "[1, 0]")).isEqualTo("{\"value\":false}");
-        assertThat(answerOf(module, "guarding.safe", "[4, 2]")).isEqualTo("{\"value\":true}");
-        assertThat(answerOf(module, "guarding.both", "[4, 2]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "guarding.safe", "[5, 3]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "guarding.both", "[5, 3]")).isEqualTo("{\"value\":true}");
     }
 
     private static Optional<AbortReason> abortOf(Running module, String export, String arguments) {
