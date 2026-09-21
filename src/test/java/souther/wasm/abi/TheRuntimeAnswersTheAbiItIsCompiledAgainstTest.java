@@ -25,6 +25,22 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
     }
 
     @Test
+    void keepsUnrelatedCellsInACaptureEnvironmentWithoutClaimingATypeForThem() {
+        Running runtime = Running.bareRuntime();
+
+        int number = runtime.call(RuntimeAbi.INT, 7);
+        int text = runtime.staged("kept");
+        int cells = runtime.call(RuntimeAbi.CAPTURES, 3);
+        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 0, number);
+        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 1, text);
+        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 2, cells);
+
+        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 0)).isEqualTo(number);
+        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 1)).isEqualTo(text);
+        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 2)).isEqualTo(cells);
+    }
+
+    @Test
     void placesTheArenaAboveEverythingStaticItWasToldAbout() {
         Running runtime = Running.bareRuntime();
         byte[] module = Running.runtimeModule();

@@ -24,6 +24,7 @@
 
 #![no_std]
 
+mod captures;
 mod decimal;
 mod descriptor;
 mod issues;
@@ -42,7 +43,7 @@ const PAGE: usize = 65536;
 
 /// What this module's callers are compiled against. A linker that reads a different number is
 /// looking at a runtime it was not built for.
-const ABI_VERSION: u32 = 1;
+const ABI_VERSION: u32 = 2;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
