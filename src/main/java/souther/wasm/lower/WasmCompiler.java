@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import souther.compiler.core.BlockReaches;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
 import souther.compiler.core.Kernel;
@@ -189,7 +190,7 @@ public final class WasmCompiler {
                 reached.put(helper.declares(), index);
                 written.add(new Written(index, helper.parameters().stream()
                         .map(CheckedHelper.Parameter::binder).toList(), helper.body(),
-                        helper.declares()));
+                        helper.declares(), Set.of()));
             }
             for (CheckedBehavior behavior : module.behaviors()) {
                 int arity = behavior.signature().takes().size();
@@ -212,7 +213,8 @@ public final class WasmCompiler {
                     continue;
                 }
                 Body body = bodyOf(behavior);
-                written.add(new Written(index, body.parameters(), body.body(), behavior.name()));
+                written.add(new Written(index, body.parameters(), body.body(), behavior.name(),
+                        Set.copyOf(behavior.requirements())));
             }
         }
 
@@ -307,8 +309,13 @@ public final class WasmCompiler {
     private record Composed(int index, CheckedBehavior behavior, Composition composition) {
     }
 
-    /** One function to write: where it goes, what it binds, and what it answers. */
-    private record Written(int index, List<Core.Binder> parameters, Core body, ValueName declares) {
+    /**
+     * One function to write: where it goes, what it binds, what it answers, and the behaviors
+     * its construction requires injected, which a block written inside it is asked what it reaches
+     * against.
+     */
+    private record Written(int index, List<Core.Binder> parameters, Core body, ValueName declares,
+            Set<ValueName.Behavior> requirements) {
     }
 
     /** What a behavior's implementation says, or why this backend cannot write it. */
@@ -487,6 +494,7 @@ public final class WasmCompiler {
         private BodyWriter out;
         private Map<BindingId, Integer> locals;
         private Object writing;
+        private Set<ValueName.Behavior> requirementsInScope = Set.of();
 
         Emitter(CheckedProgram program, WasmFragment fragment, Runtime calls, Descriptors shapes,
                 Map<ValueName, Integer> reached) {
@@ -502,6 +510,7 @@ public final class WasmCompiler {
             out = new BodyWriter(written.parameters().size(), 0);
             locals = new HashMap<>();
             writing = written.declares();
+            requirementsInScope = written.requirements();
             for (int i = 0; i < written.parameters().size(); i++) {
                 locals.put(written.parameters().get(i).binding(), i);
             }
@@ -522,6 +531,7 @@ public final class WasmCompiler {
             out = new BodyWriter(takes.size(), 0);
             locals = new HashMap<>();
             writing = held.behavior().name();
+            requirementsInScope = Set.copyOf(held.behavior().requirements());
             int running = out.narrow();
 
             List<Composition.Stage> stages = held.composition().stages();
@@ -568,6 +578,7 @@ public final class WasmCompiler {
             out = new BodyWriter(takes.size(), 1);
             locals = new HashMap<>();
             writing = crossing.behavior().name();
+            requirementsInScope = Set.copyOf(crossing.behavior().requirements());
             int written = out.wide(0);
             int document = out.narrow();
 
@@ -614,6 +625,7 @@ public final class WasmCompiler {
             out = new BodyWriter(1, 0);
             locals = new HashMap<>();
             writing = name;
+            requirementsInScope = Set.of();
             List<ValueShape.Field> fields = shapes.fieldsOf(name);
             for (int i = 0; i < fields.size(); i++) {
                 int local = out.narrow();
@@ -642,6 +654,7 @@ public final class WasmCompiler {
             out = new BodyWriter(2, 1);
             locals = new HashMap<>();
             writing = behavior.name();
+            requirementsInScope = Set.copyOf(behavior.requirements());
             int packed = out.wide(0);
             int document = out.narrow();
             var takes = behavior.signature().takes();
@@ -874,9 +887,13 @@ public final class WasmCompiler {
          * so the block answers the same afterwards however the body it left goes on.
          */
         private void closure(BodyWriter out, Core.Block block) {
-            List<BindingId> captured = FreeReads.of(block).stream()
-                    .filter(locals::containsKey)
-                    .toList();
+            List<Core.Read> captured = BlockReaches.of(block, requirementsInScope).bindings();
+            for (Core.Read read : captured) {
+                if (!locals.containsKey(read.binding())) {
+                    throw new IllegalStateException(writing + ": a block reaches " + read.name()
+                            + " but the Wasm frame around it does not hold it");
+                }
+            }
             int slot = fragment.slot(blockFunction(block, captured));
             int room = scratch();
             out.constant(captured.size())
@@ -885,7 +902,7 @@ public final class WasmCompiler {
             for (int i = 0; i < captured.size(); i++) {
                 out.localGet(room)
                         .constant(i)
-                        .localGet(locals.get(captured.get(i)))
+                        .localGet(locals.get(captured.get(i).binding()))
                         .call(calls.of(RuntimeAbi.CAPTURE_SET));
             }
             out.constant(slot).localGet(room).call(calls.of(RuntimeAbi.CLOSURE));
@@ -898,7 +915,7 @@ public final class WasmCompiler {
          * which binding — belongs to one function at a time. What is around it is saved and put
          * back, because a block is written in the middle of writing the body it appears in.
          */
-        private int blockFunction(Core.Block block, List<BindingId> captured) {
+        private int blockFunction(Core.Block block, List<Core.Read> captured) {
             int index = fragment.declare(overCells(fragment, 1 + block.params().size()));
             BodyWriter around = out;
             Map<BindingId, Integer> outer = locals;
@@ -912,7 +929,7 @@ public final class WasmCompiler {
             for (int i = 0; i < captured.size(); i++) {
                 int local = out.narrow();
                 out.localGet(0).constant(i).call(calls.of(RuntimeAbi.CAPTURE_GET)).localSet(local);
-                locals.put(captured.get(i), local);
+                locals.put(captured.get(i).binding(), local);
             }
             value(out, block.body());
             byte[] body = out.body();
@@ -1057,17 +1074,17 @@ public final class WasmCompiler {
                 return;
             }
             String operation = abiNameOf(kernel);
-            Integer rounds = TAKES_A_MODE.get(kernel);
+            var parameters = program.kernelSignature(kernel).parameters();
             for (int i = 0; i < call.args().size(); i++) {
                 value(out, call.args().get(i));
                 // A way of rounding goes over as its place among the ones the language declares.
                 // Which argument that is comes from the operation's own declaration: a value of
                 // one of them is typed as the case it is, not as the set it belongs to.
-                if (rounds != null && rounds == i) {
+                if (isRoundingMode(parameters.get(i))) {
                     out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
                 }
             }
-            if (BUILDS_A_LIST.contains(kernel)) {
+            if (TAKES_RESULT_DESCRIPTOR.contains(kernel)) {
                 out.constant(shapes.of(call.type()));
             }
             if (kernel == Kernel.LIST_SUM || kernel == Kernel.LIST_PRODUCT) {
@@ -1116,11 +1133,11 @@ public final class WasmCompiler {
             throw new NotLowered(writing + " sorts by something that is not written as a function");
         }
 
-        /** The operations told a way of rounding, and which of their arguments says it. */
-        private static final Map<Kernel, Integer> TAKES_A_MODE = Map.of(
-                Kernel.DECIMAL_TO_INT, 0,
-                Kernel.DECIMAL_ROUND, 1,
-                Kernel.DECIMAL_DIVIDE, 3);
+        /** Whether {@code parameter} is the language's one way of naming how to round. */
+        private static boolean isRoundingMode(souther.compiler.types.Type parameter) {
+            return parameter instanceof souther.compiler.types.Type.Ref ref
+                    && ref.name().name().equals("RoundingMode");
+        }
 
         /**
          * The case a kernel answers with, as the kernel's declaration carries it.
@@ -1141,13 +1158,16 @@ public final class WasmCompiler {
         }
 
         /**
-         * The kernels told what they build.
+         * The kernels whose runtime call takes an extra operand: the descriptor of what it builds.
          *
          * <p>A collection knows what it holds by the descriptor its cell carries, and one being
-         * made has no cell yet. So an operation that makes one is handed the type it is making,
-         * which the declaration answered and the values it was given may not have an example of.
+         * made has no cell yet, so its runtime function is handed one as an argument rather than
+         * reading it off a value it may have none of. Which type that descriptor names is a
+         * semantic fact this backend never restates — it is {@code call.type()}, read at the one
+         * site below that pushes it. What this set answers instead is a fact of this runtime's own
+         * ABI: which operations were built to take that extra operand at all.
          */
-        private static final Set<Kernel> BUILDS_A_LIST = Set.of(
+        private static final Set<Kernel> TAKES_RESULT_DESCRIPTOR = Set.of(
                 Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
                 Kernel.STRING_WORDS, Kernel.STRING_LINES,
                 Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE,
