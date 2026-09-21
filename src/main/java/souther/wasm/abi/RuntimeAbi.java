@@ -314,7 +314,7 @@ public final class RuntimeAbi {
         /** {@code (i32 sub, i32 s) -> i32}. */
         public static final String STRING_CONTAINS = "__souther_string_contains";
 
-        /** {@code String.matches(pattern, s)}, told the machine the pattern was read into. */
+        /** {@code String.matches(pattern, s)}, told the machine the pattern was compiled into. */
         public static final String STRING_MATCHES = "__souther_string_matches";
 
         /** {@code String.fromDecimal(d)}. */

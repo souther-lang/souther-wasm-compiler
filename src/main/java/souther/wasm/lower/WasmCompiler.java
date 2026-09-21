@@ -1099,9 +1099,9 @@ public final class WasmCompiler {
          * <p>What crosses is the machine that recognises the pattern rather than the pattern
          * itself, so the runtime holds no reader for one. What the pattern says is not decided
          * here: the call carries the text the checker proved, and this only places it as a machine.
-         * A pattern written in a way this backend does not read is refused before the program
-         * runs, which is the only place a program that would have been recognised differently can
-         * still be declined.
+         * A settled pattern containing a construct this backend does not lower is refused before
+         * the program runs, which is the only place a program that would have been recognised
+         * differently can still be declined.
          */
         private void recognised(BodyWriter out, Core.Call call) {
             // The call cannot be built without this settlement, so a different one is the
