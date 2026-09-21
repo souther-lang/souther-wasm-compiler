@@ -13,7 +13,6 @@ import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.Type;
 import souther.compiler.types.TypeKey;
 import souther.compiler.types.TypeSymbol;
-import souther.compiler.types.TypeSymbols;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
 
@@ -130,13 +129,21 @@ final class Descriptors {
         return product(name).fields();
     }
 
-    /** The set of ways to round, by the module that declares it and not by how it is spelled. */
-    private static final TypeSymbol.AtModule ROUNDING_MODE =
-            TypeSymbols.declared(new TypeKey("souther.decimal", "RoundingMode"));
+    /**
+     * Where the set of ways to round is declared.
+     *
+     * <p>An address, compared against the one an identity already carries. An identity is not
+     * built from it here: what a declaration is the identity of is for the checker to say.
+     */
+    private static final TypeKey ROUNDING_MODE = new TypeKey("souther.decimal", "RoundingMode");
 
     /** Whether {@code parameter} is the language's one way of naming how to round. */
     static boolean isRoundingMode(Type parameter) {
-        return parameter instanceof Type.Ref ref && ref.name().equals(ROUNDING_MODE);
+        return parameter instanceof Type.Ref ref && isRoundingMode(ref.name());
+    }
+
+    private static boolean isRoundingMode(TypeSymbol symbol) {
+        return symbol instanceof TypeSymbol.AtModule named && named.key().equals(ROUNDING_MODE);
     }
 
     /**
@@ -148,7 +155,7 @@ final class Descriptors {
      */
     int roundingModes() {
         for (CheckedData each : program.languageDeclarations()) {
-            if (each instanceof CheckedData.Sum held && held.name().equals(ROUNDING_MODE)) {
+            if (each instanceof CheckedData.Sum held && isRoundingMode(held.name())) {
                 return ofDeclared(held.name());
             }
         }
