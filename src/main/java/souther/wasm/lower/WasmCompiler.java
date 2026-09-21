@@ -1094,36 +1094,23 @@ public final class WasmCompiler {
         }
 
         /**
-         * {@code String.matches}, whose pattern is a literal and so is read here.
+         * {@code String.matches}, whose pattern text the checker has already settled.
          *
          * <p>What crosses is the machine that recognises the pattern rather than the pattern
-         * itself, so the runtime holds no reader for one. A pattern written in a way this backend
-         * does not read is refused where it is written, which is the only place a program that
-         * would have been recognised differently can still be declined.
+         * itself, so the runtime holds no reader for one. What the pattern says is not decided
+         * here: the call carries the text the checker proved, and this only places it as a machine.
+         * A pattern written in a way this backend does not read is refused before the program
+         * runs, which is the only place a program that would have been recognised differently can
+         * still be declined.
          */
         private void recognised(BodyWriter out, Core.Call call) {
+            // The call cannot be built without this settlement, so a different one is the
+            // checker's contract broken and not something this backend lacks.
+            Core.CallSettlement.StringMatches settled =
+                    (Core.CallSettlement.StringMatches) call.settlement();
             value(out, call.args().get(1));
-            out.constant(Patterns.place(fragment, spelt(call.args().get(0))))
+            out.constant(Patterns.place(fragment, settled.pattern()))
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
-        }
-
-        /**
-         * The text an expression comes to, for a pattern that has to be settled where it is
-         * written.
-         *
-         * <p>Written out is not the same as written in one piece. A pattern shared between several
-         * types is named once and joined onto what tells them apart, and what reaches here is the
-         * joining rather than the text — so the joining is done here, which is where the language
-         * says it can be.
-         */
-        private String spelt(Core expression) {
-            return switch (expression) {
-                case Core.Str written -> written.value();
-                case Core.Binary joined when joined.op() == BinOp.CONCAT ->
-                        spelt(joined.left()) + spelt(joined.right());
-                default -> throw new NotLowered(writing
-                        + " matches against a pattern this backend cannot settle where it stands");
-            };
         }
 
         /** What a sort's key answers, which is what its order is asked of. */

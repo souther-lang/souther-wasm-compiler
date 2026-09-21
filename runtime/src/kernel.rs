@@ -94,8 +94,8 @@ pub unsafe extern "C" fn __souther_string_contains(part: u32, text: u32) -> u32 
     value::__souther_bool(u32::from(index_of(text, part).is_some()))
 }
 
-/// `String.matches(pattern, s)`, where the pattern was read where it was written and reaches here
-/// as the machine that recognises it.
+/// `String.matches(pattern, s)`, where the pattern text the checker settled was compiled ahead of
+/// the run and reaches here as the machine that recognises it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_matches(text: u32, machine: u32) -> u32 {
     value::__souther_bool(u32::from(regex::matches(

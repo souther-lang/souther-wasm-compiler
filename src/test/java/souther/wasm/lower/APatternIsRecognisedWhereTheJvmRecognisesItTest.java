@@ -14,8 +14,8 @@ import souther.wasm.abi.RuntimeAbi;
 /**
  * Whether a string is what a pattern describes, against what the JVM says.
  *
- * <p>The pattern is a literal, so it is read where it is written and what runs is the machine it
- * was read into. What that machine must agree with is {@link Pattern#matches}, because that is what
+ * <p>The checker settles the pattern text and this compiles it ahead of the run, so what runs is the
+ * machine it was compiled into. What that machine must agree with is {@link Pattern#matches}, because that is what
  * the other backend calls, so every pattern here is run both ways.
  */
 class APatternIsRecognisedWhereTheJvmRecognisesItTest {
@@ -133,6 +133,23 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
                     .describedAs(pattern)
                     .isInstanceOf(NotLowered.class);
         }
+    }
+
+    @Test
+    void usesThePatternTheCheckerSettledUnderALocalBinding() {
+        Running module = Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+                module checking
+
+                behavior fits : (s: String) -> Bool
+
+                let fits (s) = {
+                    let tail = "[0-9]{4}"
+                    String.matches("AB-" ++ tail, s)
+                }
+                """))));
+
+        assertThat(answerOf(module, "\"AB-1234\"")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "\"AB-123\"")).isEqualTo("{\"value\":false}");
     }
 
     private static Running compiled(String pattern) {
