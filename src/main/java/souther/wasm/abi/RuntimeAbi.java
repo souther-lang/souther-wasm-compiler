@@ -38,7 +38,7 @@ public final class RuntimeAbi {
     }
 
     /** The version {@link #ABI_VERSION} answers for a runtime this compiler emits against. */
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";

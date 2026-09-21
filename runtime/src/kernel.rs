@@ -747,8 +747,8 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
     }
 }
 
-/// The furthest one either way, or nothing where there is none: the latest when `latest`.
-unsafe fn list_furthest(list: u32, latest: bool) -> u32 {
+/// The furthest one either way, or nothing where there is none: the greatest when `maximum`.
+unsafe fn list_furthest(list: u32, maximum: bool) -> u32 {
     let held = __souther_list_length(list);
     if held == 0 {
         return value::__souther_none();
@@ -759,7 +759,7 @@ unsafe fn list_furthest(list: u32, latest: bool) -> u32 {
     for i in 1..held {
         let each = __souther_list_get(list, i);
         let against = order::ranked(each, best, element);
-        if (latest && against > 0) || (!latest && against < 0) {
+        if (maximum && against > 0) || (!maximum && against < 0) {
             best = each;
         }
     }
