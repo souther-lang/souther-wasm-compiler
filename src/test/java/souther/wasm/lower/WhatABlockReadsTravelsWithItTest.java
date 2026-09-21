@@ -10,19 +10,11 @@ import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
 /**
- * What a block reads that something around it bound.
+ * What a block reads from around it arrives inside it, in the slot it was put in.
  *
- * <p>A block written where a value goes leaves the body it was written in, so every read whose
- * binding it does not make itself has to travel with it. Which reads those are is found by walking
- * the block — and a walk that treats an expression it does not know as a leaf leaves one behind
- * quietly: the block is written, the read lands where nothing bound it, and what says so is the
- * emitter meeting a binding nothing put anywhere.
- *
- * <p>So each of these puts a read inside a block underneath an expression that holds other
- * expressions, and none of them is unusual — a tuple was the one that was missed. What stops the
- * next one being missed is not this list, which cannot know what will be added: it is that the walk
- * refuses an expression it does not name rather than treating it as a leaf. Taking an arm out of
- * the walk is what these run against, and the answer is the refusal.
+ * <p>Which bindings a block reaches is the compiler's answer, tested with it. What is left here is
+ * how this backend carries them: the block's creation and its body index the same ordered list, so
+ * a pair of captures swapped, or a capture that is not an Int, changes the answer.
  */
 class WhatABlockReadsTravelsWithItTest {
 
@@ -68,6 +60,22 @@ class WhatABlockReadsTravelsWithItTest {
                 .isEqualTo("{\"value\":[11,12]}");
     }
 
+    @Test
+    void keepsTwoCapturesApart() {
+        Running module = compiled();
+
+        assertThat(answerOf(module, "carrying.twoApart", "[1,2],10,3"))
+                .isEqualTo("{\"value\":[7,17]}");
+    }
+
+    @Test
+    void carriesCapturesOfDifferentTypes() {
+        Running module = compiled();
+
+        assertThat(answerOf(module, "carrying.mixed", "[1,2],\"n\",3"))
+                .isEqualTo("{\"value\":[\"n1:3\",\"n2:3\"]}");
+    }
+
     private static Running compiled() {
         return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
                 module carrying
@@ -111,6 +119,14 @@ class WhatABlockReadsTravelsWithItTest {
                     let raised = by
                     List.map(x -> (x + raised, x) |> tupleFirst, xs)
                 }
+
+                behavior twoApart : (xs: List<Int>, by: Int, less: Int) -> List<Int>
+
+                let twoApart (xs, by, less) = List.map(x -> x * by - less, xs)
+
+                behavior mixed : (xs: List<Int>, tag: String, n: Int) -> List<String>
+
+                let mixed (xs, tag, n) = List.map(x -> String.concat([tag, String.fromInt(x), ":", String.fromInt(n)]), xs)
 
                 let tupleFirst (pair: (Int, Int)): Int = {
                     let (first, _) = pair
