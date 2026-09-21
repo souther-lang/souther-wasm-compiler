@@ -1068,13 +1068,13 @@ public final class WasmCompiler {
                 return;
             }
             String operation = abiNameOf(kernel);
-            Integer rounds = TAKES_A_MODE.get(kernel);
+            var parameters = program.kernelSignature(kernel).parameters();
             for (int i = 0; i < call.args().size(); i++) {
                 value(out, call.args().get(i));
                 // A way of rounding goes over as its place among the ones the language declares.
                 // Which argument that is comes from the operation's own declaration: a value of
                 // one of them is typed as the case it is, not as the set it belongs to.
-                if (rounds != null && rounds == i) {
+                if (isRoundingMode(parameters.get(i))) {
                     out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
                 }
             }
@@ -1152,11 +1152,11 @@ public final class WasmCompiler {
         private static final Map<Kernel, Integer> SECONDS_OF = Map.of(
                 Kernel.DATETIME_ADD_MINUTES, 60, Kernel.DATETIME_ADD_HOURS, 3600);
 
-        /** The operations told a way of rounding, and which of their arguments says it. */
-        private static final Map<Kernel, Integer> TAKES_A_MODE = Map.of(
-                Kernel.DECIMAL_TO_INT, 0,
-                Kernel.DECIMAL_ROUND, 1,
-                Kernel.DECIMAL_DIVIDE, 3);
+        /** Whether {@code parameter} is the language's one way of naming how to round. */
+        private static boolean isRoundingMode(souther.compiler.types.Type parameter) {
+            return parameter instanceof souther.compiler.types.Type.Ref ref
+                    && ref.name().name().equals("RoundingMode");
+        }
 
         /**
          * The case a kernel answers with, as the kernel's declaration carries it.
