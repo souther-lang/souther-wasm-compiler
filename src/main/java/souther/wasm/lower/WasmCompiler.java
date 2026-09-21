@@ -1095,8 +1095,9 @@ public final class WasmCompiler {
             }
             if (kernel == Kernel.LIST_SORT_BY) {
                 // Sorting by what a block answers wants the type of what it answers, which is the
-                // block's own result and not the list's element.
-                out.constant(shapes.of(keyType(call)));
+                // block's own result and not the list's element — the checker already checked the
+                // ordering requirement against this Type and settled it on the call.
+                out.constant(shapes.of(orderingSubject(call)));
             }
             TypeSymbol.LanguageCase absent = answeredCase(kernel);
             if (absent != null) {
@@ -1125,12 +1126,17 @@ public final class WasmCompiler {
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
         }
 
-        /** What a sort's key answers, which is what its order is asked of. */
-        private souther.compiler.types.Type keyType(Core.Call call) {
-            if (call.args().get(0).type() instanceof souther.compiler.types.Type.FnOf key) {
-                return key.result();
-            }
-            throw new NotLowered(writing + " sorts by something that is not written as a function");
+        /** The Type a {@code sortBy} call's ordering requirement was checked against — the key
+         *  block's result, not the list's element. Read off {@link Core.CallSettlement.OrderingSubject}
+         *  rather than re-derived from the block's declared type, so this backend never disagrees with
+         *  what the checker settled. */
+        private souther.compiler.types.Type orderingSubject(Core.Call call) {
+            // CallElaborator cannot produce a sortBy application without this settlement, so a
+            // different one here is the checker's contract broken and not a capability this backend
+            // lacks — the same distinction `recognised` draws for String.matches's settled pattern.
+            Core.CallSettlement.OrderingSubject settled =
+                    (Core.CallSettlement.OrderingSubject) call.settlement();
+            return settled.type();
         }
 
         /**
