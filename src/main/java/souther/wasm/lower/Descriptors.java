@@ -11,7 +11,9 @@ import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.Type;
+import souther.compiler.types.TypeKey;
 import souther.compiler.types.TypeSymbol;
+import souther.compiler.types.TypeSymbols;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
 
@@ -128,6 +130,15 @@ final class Descriptors {
         return product(name).fields();
     }
 
+    /** The set of ways to round, by the module that declares it and not by how it is spelled. */
+    private static final TypeSymbol.AtModule ROUNDING_MODE =
+            TypeSymbols.declared(new TypeKey("souther.decimal", "RoundingMode"));
+
+    /** Whether {@code parameter} is the language's one way of naming how to round. */
+    static boolean isRoundingMode(Type parameter) {
+        return parameter instanceof Type.Ref ref && ref.name().equals(ROUNDING_MODE);
+    }
+
     /**
      * The set of ways to round, which the language declares.
      *
@@ -137,7 +148,7 @@ final class Descriptors {
      */
     int roundingModes() {
         for (CheckedData each : program.languageDeclarations()) {
-            if (each instanceof CheckedData.Sum held && held.name().name().equals("RoundingMode")) {
+            if (each instanceof CheckedData.Sum held && held.name().equals(ROUNDING_MODE)) {
                 return ofDeclared(held.name());
             }
         }
