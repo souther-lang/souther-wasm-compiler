@@ -866,18 +866,16 @@ public final class WasmCompiler {
                     .toList();
             int slot = fragment.slot(blockFunction(block, captured));
             int room = scratch();
-            out.constant(slot)
-                    .constant(shapes.of(anyList()))
-                    .constant(captured.size())
-                    .call(calls.of(RuntimeAbi.LIST))
+            out.constant(captured.size())
+                    .call(calls.of(RuntimeAbi.CAPTURES))
                     .localSet(room);
             for (int i = 0; i < captured.size(); i++) {
                 out.localGet(room)
                         .constant(i)
                         .localGet(locals.get(captured.get(i)))
-                        .call(calls.of(RuntimeAbi.LIST_SET));
+                        .call(calls.of(RuntimeAbi.CAPTURE_SET));
             }
-            out.localGet(room).call(calls.of(RuntimeAbi.CLOSURE));
+            out.constant(slot).localGet(room).call(calls.of(RuntimeAbi.CLOSURE));
         }
 
         /**
@@ -900,7 +898,7 @@ public final class WasmCompiler {
             }
             for (int i = 0; i < captured.size(); i++) {
                 int local = out.narrow();
-                out.localGet(0).constant(i).call(calls.of(RuntimeAbi.LIST_GET)).localSet(local);
+                out.localGet(0).constant(i).call(calls.of(RuntimeAbi.CAPTURE_GET)).localSet(local);
                 locals.put(captured.get(i), local);
             }
             value(out, block.body());
@@ -924,11 +922,6 @@ public final class WasmCompiler {
             out.localGet(closure)
                     .call(calls.of(RuntimeAbi.CLOSURE_SLOT))
                     .callSlot(overCells(fragment, 1 + applied.args().size()));
-        }
-
-        /** A list of values, whatever they are: what a closure carries what it read in. */
-        private souther.compiler.types.Type anyList() {
-            return new souther.compiler.types.Type.ListOf(souther.compiler.types.Type.Prim.INT);
         }
 
         /**

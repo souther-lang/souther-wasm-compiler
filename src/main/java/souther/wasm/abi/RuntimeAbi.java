@@ -38,7 +38,7 @@ public final class RuntimeAbi {
     }
 
     /** The version {@link #ABI_VERSION} answers for a runtime this compiler emits against. */
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";
@@ -200,6 +200,15 @@ public final class RuntimeAbi {
 
     /** {@code (i32 cell) -> i32}: what a closure was written among. */
     public static final String CLOSURE_CAPTURED = "__souther_closure_captured";
+
+    /** {@code (i32 count) -> i32}: room for that many cells a closure reads from around it. */
+    public static final String CAPTURES = "__souther_captures";
+
+    /** {@code (i32 captures, i32 index, i32 value) -> ()}: puts a cell at a position. */
+    public static final String CAPTURE_SET = "__souther_capture_set";
+
+    /** {@code (i32 captures, i32 index) -> i32}: the cell at a position. */
+    public static final String CAPTURE_GET = "__souther_capture_get";
 
     /** {@code (i32 descriptor) -> i32}: a list that grows. */
     public static final String BUILDER = "__souther_builder";

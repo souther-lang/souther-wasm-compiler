@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! +0  u32 tag
-//! +4  u32 length for a String, the descriptor for a record or a unit, nothing otherwise
+//! +4  what the tag makes of it: a length, a count, a slot, a descriptor, a scale, a day
 //! +8  payload
 //! ```
 //!
