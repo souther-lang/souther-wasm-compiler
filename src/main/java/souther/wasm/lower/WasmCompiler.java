@@ -1078,7 +1078,7 @@ public final class WasmCompiler {
                     out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
                 }
             }
-            if (BUILDS_A_LIST.contains(kernel)) {
+            if (TAKES_RESULT_DESCRIPTOR.contains(kernel)) {
                 out.constant(shapes.of(call.type()));
             }
             if (kernel == Kernel.LIST_SUM || kernel == Kernel.LIST_PRODUCT) {
@@ -1177,13 +1177,16 @@ public final class WasmCompiler {
         }
 
         /**
-         * The kernels told what they build.
+         * The kernels whose runtime call takes an extra operand: the descriptor of what it builds.
          *
          * <p>A collection knows what it holds by the descriptor its cell carries, and one being
-         * made has no cell yet. So an operation that makes one is handed the type it is making,
-         * which the declaration answered and the values it was given may not have an example of.
+         * made has no cell yet, so its runtime function is handed one as an argument rather than
+         * reading it off a value it may have none of. Which type that descriptor names is a
+         * semantic fact this backend never restates — it is {@code call.type()}, read at the one
+         * site below that pushes it. What this set answers instead is a fact of this runtime's own
+         * ABI: which operations were built to take that extra operand at all.
          */
-        private static final Set<Kernel> BUILDS_A_LIST = Set.of(
+        private static final Set<Kernel> TAKES_RESULT_DESCRIPTOR = Set.of(
                 Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
                 Kernel.STRING_WORDS, Kernel.STRING_LINES,
                 Kernel.LIST_REVERSE, Kernel.LIST_RANGE_INCLUSIVE,
