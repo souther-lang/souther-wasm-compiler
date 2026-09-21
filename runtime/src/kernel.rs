@@ -747,9 +747,8 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
     }
 }
 
-/// `List.max(xs)` and `List.min(xs)`: the furthest one either way, or nothing where there is none.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_list_furthest(list: u32, latest: u32) -> u32 {
+/// The furthest one either way, or nothing where there is none: the greatest when `maximum`.
+unsafe fn list_furthest(list: u32, maximum: bool) -> u32 {
     let held = __souther_list_length(list);
     if held == 0 {
         return value::__souther_none();
@@ -760,11 +759,23 @@ pub unsafe extern "C" fn __souther_list_furthest(list: u32, latest: u32) -> u32 
     for i in 1..held {
         let each = __souther_list_get(list, i);
         let against = order::ranked(each, best, element);
-        if (latest != 0 && against > 0) || (latest == 0 && against < 0) {
+        if (maximum && against > 0) || (!maximum && against < 0) {
             best = each;
         }
     }
     value::__souther_some(best)
+}
+
+/// `List.max(xs)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_max(list: u32) -> u32 {
+    list_furthest(list, true)
+}
+
+/// `List.min(xs)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_min(list: u32) -> u32 {
+    list_furthest(list, false)
 }
 
 /// `List.sortBy(key, xs)`: the elements in the order what the block answers of each places them.
@@ -1315,15 +1326,38 @@ pub unsafe extern "C" fn __souther_date_days_between(from: u32, to: u32) -> u32 
     __souther_int(temporal::day(to) as i64 - temporal::day(from) as i64)
 }
 
-/// `Date.year(d)`, `Date.month(d)` and `Date.day(d)`, told which of the three by the number.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_date_part(cell: u32, which: u32) -> u32 {
+enum DatePart {
+    Year,
+    Month,
+    Day,
+}
+
+/// One walk over what a day is, which `Date.year`, `Date.month` and `Date.day` differ from in the last step.
+unsafe fn date_part(cell: u32, part: DatePart) -> u32 {
     let (year, month, day) = temporal::civil(temporal::day(cell));
-    __souther_int(match which {
-        0 => year,
-        1 => month as i64,
-        _ => day as i64,
+    __souther_int(match part {
+        DatePart::Year => year,
+        DatePart::Month => month as i64,
+        DatePart::Day => day as i64,
     })
+}
+
+/// `Date.year(d)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_date_year(cell: u32) -> u32 {
+    date_part(cell, DatePart::Year)
+}
+
+/// `Date.month(d)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_date_month(cell: u32) -> u32 {
+    date_part(cell, DatePart::Month)
+}
+
+/// `Date.day(d)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_date_day(cell: u32) -> u32 {
+    date_part(cell, DatePart::Day)
 }
 
 /// `Date.fromParts(year, month, day)`, or the case those parts name no day.
@@ -1371,27 +1405,61 @@ pub unsafe extern "C" fn __souther_time_from_parts(
     temporal::made(value::TAG_TIME, 0, (h * 3600 + m * 60 + s) as i32)
 }
 
-/// `Time.hour(t)`, `Time.minute(t)` and `Time.second(t)`.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_time_part(cell: u32, which: u32) -> u32 {
+enum TimePart {
+    Hour,
+    Minute,
+    Second,
+}
+
+/// One walk over what a time is, which `Time.hour`, `Time.minute` and `Time.second` differ from in the last step.
+unsafe fn time_part(cell: u32, part: TimePart) -> u32 {
     let held = temporal::second(cell) as i64;
-    __souther_int(match which {
-        0 => held / 3600,
-        1 => held / 60 % 60,
-        _ => held % 60,
+    __souther_int(match part {
+        TimePart::Hour => held / 3600,
+        TimePart::Minute => held / 60 % 60,
+        TimePart::Second => held % 60,
     })
 }
 
-/// `DateTime.addMinutes(minutes, dt)` and `DateTime.addHours(hours, dt)`, told which by the second.
+/// `Time.hour(t)`.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_datetime_add(by: u32, cell: u32, each: u32) -> u32 {
-    let seconds = __souther_int_value(by) * each as i64;
+pub unsafe extern "C" fn __souther_time_hour(cell: u32) -> u32 {
+    time_part(cell, TimePart::Hour)
+}
+
+/// `Time.minute(t)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_time_minute(cell: u32) -> u32 {
+    time_part(cell, TimePart::Minute)
+}
+
+/// `Time.second(t)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_time_second(cell: u32) -> u32 {
+    time_part(cell, TimePart::Second)
+}
+
+/// Moves a moment by `by` steps of `each` seconds.
+unsafe fn datetime_add(by: u32, cell: u32, each: i64) -> u32 {
+    let seconds = __souther_int_value(by) * each;
     let held = temporal::moment(cell) + seconds;
     let day = held.div_euclid(86_400);
     if day > i32::MAX as i64 || day < i32::MIN as i64 {
         abort(REASON_OUT_OF_RANGE, 0, day as u64, 0);
     }
     temporal::made(value::TAG_DATE_TIME, day as i32, held.rem_euclid(86_400) as i32)
+}
+
+/// `DateTime.addMinutes(minutes, dt)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_datetime_add_minutes(by: u32, cell: u32) -> u32 {
+    datetime_add(by, cell, 60)
+}
+
+/// `DateTime.addHours(hours, dt)`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_datetime_add_hours(by: u32, cell: u32) -> u32 {
+    datetime_add(by, cell, 3600)
 }
 
 /// `DateTime.minutesBetween(from, to)`, which counts whole minutes.

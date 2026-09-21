@@ -29,7 +29,7 @@ class ADayAndATimeAreWhatACalendarSaysTest {
         "2023-01-31", "2023-05-31", "2100-01-31", "1900-01-31",
     };
 
-    private static final String[] TIMES = {"00:00", "09:30", "23:59:59", "12:00:01"};
+    private static final String[] TIMES = {"00:00", "09:30", "23:59:59", "12:00:01", "12:34:56"};
 
     @Test
     void callsADayWhatACalendarCallsIt() {
@@ -94,6 +94,10 @@ class ADayAndATimeAreWhatACalendarSaysTest {
                     .isEqualTo(value(quoted(held.toString())));
             assertThat(answerOf(module, "diary.hour", quoted(written)))
                     .describedAs(written).isEqualTo(value(Integer.toString(held.getHour())));
+            assertThat(answerOf(module, "diary.minute", quoted(written)))
+                    .describedAs(written).isEqualTo(value(Integer.toString(held.getMinute())));
+            assertThat(answerOf(module, "diary.second", quoted(written)))
+                    .describedAs(written).isEqualTo(value(Integer.toString(held.getSecond())));
         }
     }
 
@@ -110,6 +114,10 @@ class ADayAndATimeAreWhatACalendarSaysTest {
                 .isEqualTo(value(quoted(held.toLocalTime().toString())));
         assertThat(answerOf(module, "diary.minutesOn", quoted(held.toString()) + ",90"))
                 .isEqualTo(value(quoted(held.plusMinutes(90).toString())));
+        assertThat(answerOf(module, "diary.hoursOn", quoted(held.toString()) + ",30"))
+                .isEqualTo(value(quoted(held.plusHours(30).toString())));
+        assertThat(answerOf(module, "diary.hoursOn", quoted(held.toString()) + ",-10"))
+                .isEqualTo(value(quoted(held.minusHours(10).toString())));
     }
 
     @Test
@@ -230,6 +238,18 @@ class ADayAndATimeAreWhatACalendarSaysTest {
                 behavior hour : (t: Time) -> Int
 
                 let hour (t) = Time.hour(t)
+
+                behavior minute : (t: Time) -> Int
+
+                let minute (t) = Time.minute(t)
+
+                behavior second : (t: Time) -> Int
+
+                let second (t) = Time.second(t)
+
+                behavior hoursOn : (dt: DateTime, by: Int) -> DateTime
+
+                let hoursOn (dt, by) = DateTime.addHours(by, dt)
 
                 behavior joined : (d: Date, t: Time) -> DateTime
 

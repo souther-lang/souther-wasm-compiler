@@ -413,18 +413,24 @@ public final class WasmCompiler {
         case DATE_ADD_MONTHS -> RuntimeAbi.Kernels.DATE_ADD_MONTHS;
         case DATE_ADD_YEARS -> RuntimeAbi.Kernels.DATE_ADD_YEARS;
         case DATE_DAYS_BETWEEN -> RuntimeAbi.Kernels.DATE_DAYS_BETWEEN;
-        case DATE_YEAR, DATE_MONTH, DATE_DAY -> RuntimeAbi.Kernels.DATE_PART;
+        case DATE_YEAR -> RuntimeAbi.Kernels.DATE_YEAR;
+        case DATE_MONTH -> RuntimeAbi.Kernels.DATE_MONTH;
+        case DATE_DAY -> RuntimeAbi.Kernels.DATE_DAY;
         case DATE_FROM_PARTS -> RuntimeAbi.Kernels.DATE_FROM_PARTS;
         case TIME_FROM_PARTS -> RuntimeAbi.Kernels.TIME_FROM_PARTS;
-        case TIME_HOUR, TIME_MINUTE, TIME_SECOND -> RuntimeAbi.Kernels.TIME_PART;
-        case DATETIME_ADD_MINUTES, DATETIME_ADD_HOURS -> RuntimeAbi.Kernels.DATETIME_ADD;
+        case TIME_HOUR -> RuntimeAbi.Kernels.TIME_HOUR;
+        case TIME_MINUTE -> RuntimeAbi.Kernels.TIME_MINUTE;
+        case TIME_SECOND -> RuntimeAbi.Kernels.TIME_SECOND;
+        case DATETIME_ADD_MINUTES -> RuntimeAbi.Kernels.DATETIME_ADD_MINUTES;
+        case DATETIME_ADD_HOURS -> RuntimeAbi.Kernels.DATETIME_ADD_HOURS;
         case DATETIME_MINUTES_BETWEEN -> RuntimeAbi.Kernels.DATETIME_MINUTES_BETWEEN;
         case DATETIME_TO_DATE -> RuntimeAbi.Kernels.DATETIME_TO_DATE;
         case DATETIME_TO_TIME -> RuntimeAbi.Kernels.DATETIME_TO_TIME;
         case DATETIME_FROM_DATE_AND_TIME -> RuntimeAbi.Kernels.DATETIME_FROM_PARTS;
         case LIST_SORT -> RuntimeAbi.Kernels.LIST_SORT;
         case LIST_SORT_BY -> RuntimeAbi.Kernels.LIST_SORT_BY;
-        case LIST_MAX, LIST_MIN -> RuntimeAbi.Kernels.LIST_FURTHEST;
+        case LIST_MAX -> RuntimeAbi.Kernels.LIST_MAX;
+        case LIST_MIN -> RuntimeAbi.Kernels.LIST_MIN;
         case LIST_REVERSE -> RuntimeAbi.Kernels.LIST_REVERSE;
         case LIST_SUM -> RuntimeAbi.Kernels.LIST_SUM;
         case LIST_PRODUCT -> RuntimeAbi.Kernels.LIST_PRODUCT;
@@ -1092,17 +1098,6 @@ public final class WasmCompiler {
                 // block's own result and not the list's element.
                 out.constant(shapes.of(keyType(call)));
             }
-            if (kernel == Kernel.LIST_MAX || kernel == Kernel.LIST_MIN) {
-                out.constant(kernel == Kernel.LIST_MAX ? 1 : 0);
-            }
-            Integer which = PART_OF.get(kernel);
-            if (which != null) {
-                out.constant(which);
-            }
-            Integer each = SECONDS_OF.get(kernel);
-            if (each != null) {
-                out.constant(each);
-            }
             TypeSymbol.LanguageCase absent = answeredCase(kernel);
             if (absent != null) {
                 out.constant(shapes.ofMember(absent));
@@ -1137,20 +1132,6 @@ public final class WasmCompiler {
             }
             throw new NotLowered(writing + " sorts by something that is not written as a function");
         }
-
-        /**
-         * The operations that read one part of a day or a time, and which part each reads.
-         *
-         * <p>One operation with a number saying which, because reading a year and reading a month
-         * are one walk over what a day is and differ in the last step alone.
-         */
-        private static final Map<Kernel, Integer> PART_OF = Map.of(
-                Kernel.DATE_YEAR, 0, Kernel.DATE_MONTH, 1, Kernel.DATE_DAY, 2,
-                Kernel.TIME_HOUR, 0, Kernel.TIME_MINUTE, 1, Kernel.TIME_SECOND, 2);
-
-        /** The operations that move a moment, and how many seconds each of their steps is. */
-        private static final Map<Kernel, Integer> SECONDS_OF = Map.of(
-                Kernel.DATETIME_ADD_MINUTES, 60, Kernel.DATETIME_ADD_HOURS, 3600);
 
         /** Whether {@code parameter} is the language's one way of naming how to round. */
         private static boolean isRoundingMode(souther.compiler.types.Type parameter) {
