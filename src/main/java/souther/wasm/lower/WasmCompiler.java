@@ -1080,7 +1080,7 @@ public final class WasmCompiler {
                 // A way of rounding goes over as its place among the ones the language declares.
                 // Which argument that is comes from the operation's own declaration: a value of
                 // one of them is typed as the case it is, not as the set it belongs to.
-                if (isRoundingMode(parameters.get(i))) {
+                if (Descriptors.isRoundingMode(parameters.get(i))) {
                     out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
                 }
             }
@@ -1131,12 +1131,6 @@ public final class WasmCompiler {
                 return key.result();
             }
             throw new NotLowered(writing + " sorts by something that is not written as a function");
-        }
-
-        /** Whether {@code parameter} is the language's one way of naming how to round. */
-        private static boolean isRoundingMode(souther.compiler.types.Type parameter) {
-            return parameter instanceof souther.compiler.types.Type.Ref ref
-                    && ref.name().name().equals("RoundingMode");
         }
 
         /**
