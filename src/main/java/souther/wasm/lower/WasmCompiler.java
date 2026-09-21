@@ -1095,8 +1095,9 @@ public final class WasmCompiler {
             }
             if (kernel == Kernel.LIST_SORT_BY) {
                 // Sorting by what a block answers wants the type of what it answers, which is the
-                // block's own result and not the list's element.
-                out.constant(shapes.of(keyType(call)));
+                // block's own result and not the list's element — the checker already proved this
+                // Type ordered and settled it on the call.
+                out.constant(shapes.of(orderingSubject(call)));
             }
             TypeSymbol.LanguageCase absent = answeredCase(kernel);
             if (absent != null) {
@@ -1125,12 +1126,15 @@ public final class WasmCompiler {
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
         }
 
-        /** What a sort's key answers, which is what its order is asked of. */
-        private souther.compiler.types.Type keyType(Core.Call call) {
-            if (call.args().get(0).type() instanceof souther.compiler.types.Type.FnOf key) {
-                return key.result();
+        /** The Type the checker proved ordered for a {@code sortBy} call — the key block's result,
+         *  not the list's element. Read off {@link Core.CallSettlement.OrderingSubject} rather than
+         *  re-derived from the block's declared type, so this backend never disagrees with what the
+         *  checker settled. */
+        private souther.compiler.types.Type orderingSubject(Core.Call call) {
+            if (call.settlement() instanceof Core.CallSettlement.OrderingSubject subject) {
+                return subject.type();
             }
-            throw new NotLowered(writing + " sorts by something that is not written as a function");
+            throw new NotLowered(writing + " reaches sortBy with no ordering the checker settled");
         }
 
         /** Whether {@code parameter} is the language's one way of naming how to round. */
