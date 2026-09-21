@@ -29,15 +29,17 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
         Running runtime = Running.bareRuntime();
 
         int number = runtime.call(RuntimeAbi.INT, 7);
-        int text = runtime.staged("kept");
+        byte[] kept = "kept".getBytes(StandardCharsets.UTF_8);
+        int text = runtime.call(RuntimeAbi.STRING, runtime.staged("kept"), kept.length);
+        int truth = runtime.call(RuntimeAbi.BOOL, 1);
         int cells = runtime.call(RuntimeAbi.CAPTURES, 3);
         runtime.run(RuntimeAbi.CAPTURE_SET, cells, 0, number);
         runtime.run(RuntimeAbi.CAPTURE_SET, cells, 1, text);
-        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 2, cells);
+        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 2, truth);
 
         assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 0)).isEqualTo(number);
         assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 1)).isEqualTo(text);
-        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 2)).isEqualTo(cells);
+        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 2)).isEqualTo(truth);
     }
 
     @Test
