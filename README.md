@@ -165,13 +165,19 @@ module carries.
 
 ## What it has been run against
 
-Every project in [souther-lang/examples](https://github.com/souther-lang/examples) compiles, and
-the build compiles all of them on every push rather than leaving that sentence to be true when it
-was written. A project whose modules come from another one is given both, the way a build gives it
-both.
+The projects in [souther-lang/examples](https://github.com/souther-lang/examples) are the programs
+this is meant to compile, and they are not written against it. Every defect the tests here had no
+fixture for came from running them.
 
-Those are the programs this is meant to compile, and they are not written against it. Every defect
-the tests here had no fixture for came from running them.
+The build does not run them. They follow the compiler's own releases, so a build that compiled
+whatever they held would fail whenever the two were a release apart, for a reason that is in neither
+this repository's change nor the compiler's. Compile them by hand where that is the question:
+
+```sh
+java -jar target/*-cli.jar <project>/src/main/souther -o /tmp/<project>.wasm
+```
+
+`invoicing` is written against a module `sharedmoney` publishes, so it takes both directories.
 
 ## Building
 

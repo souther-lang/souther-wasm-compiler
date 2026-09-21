@@ -62,7 +62,7 @@ final class Descriptors {
     private final WasmFragment fragment;
     private final Map<Type, Integer> placed = new HashMap<>();
     private final Map<TypeSymbol.AtModule, Integer> byName = new HashMap<>();
-    private final Map<String, Integer> languageCases = new HashMap<>();
+    private final Map<TypeSymbol.LanguageCase, Integer> languageCases = new HashMap<>();
 
     private final ToIntFunction<TypeSymbol.AtModule> checks;
 
@@ -182,23 +182,9 @@ final class Descriptors {
     int ofMember(TypeSymbol name) {
         return switch (name) {
             case TypeSymbol.AtModule declared -> ofDeclared(declared);
-            case TypeSymbol.Primitive scalar -> of(scalarNamed(scalar.name()));
-            default -> languageCases.computeIfAbsent(name.name(), each -> scalar(KIND_UNIT));
-        };
-    }
-
-    private static Type scalarNamed(String written) {
-        return switch (written) {
-            case "Int" -> Type.Prim.INT;
-            case "Bool" -> Type.Prim.BOOL;
-            case "String" -> Type.Prim.STRING;
-            case "Decimal" -> Type.Prim.DECIMAL;
-            case "Date" -> Type.Prim.DATE;
-            case "Time" -> Type.Prim.TIME;
-            case "DateTime" -> Type.Prim.DATETIME;
-            case "Instant" -> Type.Prim.INSTANT;
-            default -> throw new NotLowered("a " + written
-                    + " among alternatives, which this backend does not write yet");
+            case TypeSymbol.Primitive scalar -> of(scalar.primitive());
+            case TypeSymbol.LanguageCase given ->
+                    languageCases.computeIfAbsent(given, each -> scalar(KIND_UNIT));
         };
     }
 
