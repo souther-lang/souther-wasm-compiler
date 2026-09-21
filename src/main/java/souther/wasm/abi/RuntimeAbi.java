@@ -405,16 +405,26 @@ public final class RuntimeAbi {
         public static final String DATE_ADD_YEARS = "__souther_date_add_years";
         /** {@code (i32 from, i32 to) -> i32}. */
         public static final String DATE_DAYS_BETWEEN = "__souther_date_days_between";
-        /** {@code (i32 d, i32 which) -> i32}: the year, the month or the day. */
-        public static final String DATE_PART = "__souther_date_part";
+        /** {@code (i32 d) -> i32}. */
+        public static final String DATE_YEAR = "__souther_date_year";
+        /** {@code (i32 d) -> i32}. */
+        public static final String DATE_MONTH = "__souther_date_month";
+        /** {@code (i32 d) -> i32}. */
+        public static final String DATE_DAY = "__souther_date_day";
         /** {@code (i32 year, i32 month, i32 day, i32 absent) -> i32}. */
         public static final String DATE_FROM_PARTS = "__souther_date_from_parts";
         /** {@code (i32 hour, i32 minute, i32 second, i32 absent) -> i32}. */
         public static final String TIME_FROM_PARTS = "__souther_time_from_parts";
-        /** {@code (i32 t, i32 which) -> i32}: the hour, the minute or the second. */
-        public static final String TIME_PART = "__souther_time_part";
-        /** {@code (i32 by, i32 dt, i32 seconds) -> i32}. */
-        public static final String DATETIME_ADD = "__souther_datetime_add";
+        /** {@code (i32 t) -> i32}. */
+        public static final String TIME_HOUR = "__souther_time_hour";
+        /** {@code (i32 t) -> i32}. */
+        public static final String TIME_MINUTE = "__souther_time_minute";
+        /** {@code (i32 t) -> i32}. */
+        public static final String TIME_SECOND = "__souther_time_second";
+        /** {@code (i32 by, i32 dt) -> i32}. */
+        public static final String DATETIME_ADD_MINUTES = "__souther_datetime_add_minutes";
+        /** {@code (i32 by, i32 dt) -> i32}. */
+        public static final String DATETIME_ADD_HOURS = "__souther_datetime_add_hours";
         /** {@code (i32 from, i32 to) -> i32}. */
         public static final String DATETIME_MINUTES_BETWEEN = "__souther_datetime_minutes_between";
         /** {@code (i32 dt) -> i32}. */
@@ -427,8 +437,10 @@ public final class RuntimeAbi {
         public static final String LIST_SORT = "__souther_list_sort";
         /** {@code (i32 key, i32 xs, i32 descriptor, i32 keys) -> i32}. */
         public static final String LIST_SORT_BY = "__souther_list_sort_by";
-        /** {@code (i32 xs, i32 latest) -> i32}: the furthest either way. */
-        public static final String LIST_FURTHEST = "__souther_list_furthest";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String LIST_MAX = "__souther_list_max";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String LIST_MIN = "__souther_list_min";
         /** {@code (i32 xs) -> i32}. */
         public static final String LIST_LENGTH = "__souther_list_size";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */
