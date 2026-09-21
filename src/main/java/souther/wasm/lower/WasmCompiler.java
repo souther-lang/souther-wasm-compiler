@@ -1126,15 +1126,18 @@ public final class WasmCompiler {
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
         }
 
-        /** The Type the checker proved ordered for a {@code sortBy} call — the key block's result,
-         *  not the list's element. Read off {@link Core.CallSettlement.OrderingSubject} rather than
-         *  re-derived from the block's declared type, so this backend never disagrees with what the
-         *  checker settled. */
+        /** The Type a {@code sortBy} call's ordering requirement was checked against — the key
+         *  block's result, not the list's element. Read off {@link Core.CallSettlement.OrderingSubject}
+         *  rather than re-derived from the block's declared type, so this backend never disagrees with
+         *  what the checker settled. */
         private souther.compiler.types.Type orderingSubject(Core.Call call) {
-            if (call.settlement() instanceof Core.CallSettlement.OrderingSubject subject) {
-                return subject.type();
-            }
-            throw new NotLowered(writing + " reaches sortBy with no ordering the checker settled");
+            // The call cannot be built without this settlement (CallElaborator settles it for every
+            // sortBy application), so a different one is the checker's contract broken and not a
+            // capability this backend lacks — the same distinction `recognised` draws for
+            // String.matches's settled pattern.
+            Core.CallSettlement.OrderingSubject settled =
+                    (Core.CallSettlement.OrderingSubject) call.settlement();
+            return settled.type();
         }
 
         /** Whether {@code parameter} is the language's one way of naming how to round. */
