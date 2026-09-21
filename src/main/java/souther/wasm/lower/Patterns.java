@@ -12,13 +12,12 @@ import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
 
 /**
- * A pattern read once, where it is written, and placed as the machine that recognises it.
+ * A pattern the checker settled, placed once as the machine that recognises it.
  *
- * <p>The language asks for the pattern to be a literal, so nothing is read at run time: what is
- * placed is a list of steps, and what runs is a walk over them. That is also why a construct this
- * does not know is refused here rather than answered wrongly later — the pattern is in front of
- * this compiler, and a program that would have been recognised differently is one it can decline
- * to write.
+ * <p>The text arrives already settled, so nothing is read at run time: what is placed is a list of
+ * steps, and what runs is a walk over them. That is also why a construct this does not know is
+ * refused here rather than answered wrongly later — the text is in front of this compiler, and a
+ * program that would have been recognised differently is one it can decline to write.
  *
  * <p>What is admitted is what a format asks for: characters, any character, a class, a group, a
  * choice, and the counts. What is not is what looks back or ahead — a reference to a group already

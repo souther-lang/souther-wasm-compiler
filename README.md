@@ -108,11 +108,12 @@ call reaches and what it does with a buffer too short to hold the answer.
 
 ## What is not written yet
 
-- What a pattern says by looking back or ahead. `String.matches` is read where it is written rather
-  than at run time, and what it is read into holds every step the walk could be at rather than
-  trying one way and coming back — so a backreference, a lookaround and a lazy or possessive count
+- What a pattern says by looking back or ahead. The checker settles the text of a `String.matches`
+  pattern, and this compiles that text into a machine before the program runs rather than at run
+  time. What it is compiled into holds every step the walk could be at rather than trying one way
+  and coming back — so a backreference, a lookaround and a lazy or possessive count
   are refused, because each of them is a question about a way already taken. A named group and a
-  count above a thousand are refused too. Each is refused where the pattern is written, which is
+  count above a thousand are refused too. Each is refused when the pattern is compiled, which is
   the only place a pattern that would have been recognised differently can still be declined rather
   than quietly answered.
 

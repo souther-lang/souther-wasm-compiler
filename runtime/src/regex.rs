@@ -1,6 +1,6 @@
 //! Whether the whole of a string is what a pattern describes.
 //!
-//! The pattern was read where it was written and is here as a list of steps, so nothing is parsed
+//! The pattern text the checker settled was compiled ahead of the run and is here as a list of steps, so nothing is parsed
 //! at run time. The walk keeps every step it could be at rather than trying one and coming back:
 //! there is no way to refer to what a group matched, so which of several ways the pattern was
 //! satisfied never has to be known, and holding them all at once is the whole of it. That also
@@ -13,7 +13,7 @@
 //! ```
 //!
 //! A set of characters sits on its own, as the runs it names and nothing else. What a class
-//! leaves out was worked out where the pattern was read, so this only ever asks whether a
+//! leaves out was worked out when the pattern was compiled, so this only ever asks whether a
 //! character is in one of the runs:
 //!
 //! ```text
