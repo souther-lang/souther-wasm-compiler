@@ -6,8 +6,7 @@
 //!
 //! ```text
 //! +0  u32 tag
-//! +4  u32 length for a String, how many for a tuple, the table slot for a closure, the
-//!     descriptor for a record, a unit, a list, a map or a builder, nothing otherwise
+//! +4  what the tag makes of it: a length, a count, a slot, a descriptor, a scale, a day
 //! +8  payload
 //! ```
 //!
