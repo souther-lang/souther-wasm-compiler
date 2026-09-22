@@ -251,15 +251,15 @@ pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
     }
 }
 
-/// The unary `-` on `Int`. Only the sign moves, and the one number that has no opposite an `Int`
-/// holds ends the call rather than coming back as itself.
+/// The unary `-` on `Int`. Total, unlike `+`/`-`/`*` (spec: `Core.Neg` is `AbortSet.NONE`, not
+/// `REQUIRED_FORM_HAS_NO_PLACE` — traced against `souther.compiler.abort.AbortSites` and
+/// `souther.compiler.codegen.BodyGen`, which emits this as bytecode's own `lneg`): `MIN_VALUE` is
+/// the one `Int` whose negation is not representable as a positive `Int`, but two's-complement
+/// negation of it wraps back to `MIN_VALUE` rather than raising, on the JVM and here alike, so
+/// `wrapping_neg` and not `checked_neg` is this operator's actual, total arithmetic.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_negate(cell: u32) -> u32 {
-    let held = __souther_int_value(cell);
-    match held.checked_neg() {
-        Some(opposite) => __souther_int(opposite),
-        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0),
-    }
+    __souther_int(__souther_int_value(cell).wrapping_neg())
 }
 
 /// The `-` operator on `Int`.

@@ -262,6 +262,109 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
         }
     }
 
+    /**
+     * Every {@code Int} operation this backend writes, against {@code souther-runtime}'s account of
+     * it, at the values most likely to disagree — {@code MIN_VALUE}, {@code MAX_VALUE}, and the
+     * pairs immediately around a divisor of {@code -1}, where two's-complement arithmetic and
+     * checked arithmetic part company. Unlike a regression test written for one known-bad pair, this
+     * sweeps every combination the boundary values make, so the next operation that misreads a
+     * {@code checked_*}/{@code wrapping_*} choice the way {@code truncatingRemainder} and unary
+     * {@code -} once did fails here rather than needing its own pair found by hand first (#23's
+     * follow-up: a conformance barrier between {@code AbortSites}/{@code KernelContracts} and this
+     * runtime's actual behavior, for the one family — {@code Int} arithmetic — every semantic
+     * mismatch found so far but one has come from).
+     */
+    @Test
+    void everyIntOperationAgreesWithSouthersRuntimeAtTheEdgesOfWhatAnIntHolds() {
+        Running module = compiled("""
+                module edges
+
+                behavior negated : (a: Int) -> Int
+
+                let negated (a) = -a
+
+                behavior remainder : (a: Int, b: Int) -> Int
+
+                let remainder (a, b) = match Int.truncatingRemainder(a, b) with
+                    | Int as r -> r
+                    | DivisionByZero -> 0
+
+                behavior sum : (a: Int, b: Int) -> Int
+
+                let sum (a, b) = a + b
+
+                behavior difference : (a: Int, b: Int) -> Int
+
+                let difference (a, b) = a - b
+
+                behavior product : (a: Int, b: Int) -> Int
+
+                let product (a, b) = a * b
+
+                behavior halved : (a: Int, b: Int) -> Int
+
+                let halved (a, b) = match Int.truncatingDivide(a, b) with
+                    | Int as q -> q
+                    | DivisionByZero -> 0
+                """);
+
+        long[] boundaries = {
+            Long.MIN_VALUE, Long.MIN_VALUE + 1, -2, -1, 0, 1, 2, Long.MAX_VALUE - 1, Long.MAX_VALUE,
+        };
+
+        for (long a : boundaries) {
+            assertThat(answerOf(module, "edges.negated", array(a)))
+                    .describedAs("-(" + a + ")")
+                    .isEqualTo(value(Long.toString(-a)));
+
+            for (long b : boundaries) {
+                agrees(module, "edges.sum", a, b, () -> IntMath.addExact(a, b));
+                agrees(module, "edges.difference", a, b, () -> IntMath.subtractExact(a, b));
+                agrees(module, "edges.product", a, b, () -> IntMath.multiplyExact(a, b));
+
+                if (b == 0) {
+                    continue;
+                }
+                assertThat(answerOf(module, "edges.remainder", array(a, b)))
+                        .describedAs(a + " truncatingRemainder " + b)
+                        .isEqualTo(value(Long.toString(a % b)));
+                agrees(module, "edges.halved", a, b, () -> IntMath.divideExact(a, b));
+            }
+        }
+    }
+
+    /**
+     * Runs {@code export(a, b)} on the compiled module and requires it to agree with {@code jvm} —
+     * the overflow-checked {@code IntMath} operation {@code souther-runtime} answers the same
+     * behavior with — on both halves of what "agree" means: raising where and only where the other
+     * one does ({@link souther.runtime.ConstraintViolation} against a trap), and, where neither
+     * does, the exact same value. Checking only one half would have missed a wrong answer that
+     * happens not to trap as easily as it would have missed a trap that should not have happened.
+     */
+    private static void agrees(Running module, String export, long a, long b,
+            java.util.function.LongSupplier jvm) {
+        String description = export + "(" + a + ", " + b + ")";
+        Long expected;
+        try {
+            expected = jvm.getAsLong();
+        } catch (souther.runtime.ConstraintViolation _) {
+            expected = null;
+        }
+        if (expected == null) {
+            // answerOf's own mark is lost with the exception it throws, so this takes one first
+            // and resets it itself — the same recipe an aborted call asks any caller to follow.
+            int mark = module.call(RuntimeAbi.ALLOC_MARK);
+            assertThatThrownBy(() -> answerOf(module, export, array(a, b)))
+                    .describedAs(description)
+                    .isInstanceOf(com.dylibso.chicory.wasm.ChicoryException.class);
+            module.call(RuntimeAbi.ALLOC_RESET, mark);
+        } else {
+            assertThat(answerOf(module, export, array(a, b)))
+                    .describedAs(description)
+                    .isEqualTo(value(Long.toString(expected)));
+        }
+    }
+
     @Test
     void walksAListWhereSouthersOwnAccountDoes() {
         Running module = compiled("""
@@ -356,6 +459,10 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
 
     private static String array(long a, long b) {
         return "[" + a + "," + b + "]";
+    }
+
+    private static String array(long a) {
+        return "[" + a + "]";
     }
 
     /** A string as JSON writes it — matching the control-character escaping

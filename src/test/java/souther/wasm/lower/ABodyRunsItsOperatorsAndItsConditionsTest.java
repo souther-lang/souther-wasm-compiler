@@ -61,6 +61,30 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
     }
 
     /**
+     * Unlike {@code +}/{@code -}/{@code *}, unary {@code -} is total: {@code AbortSites} answers
+     * {@code Core.Neg} with {@code AbortSet.NONE}, not {@code REQUIRED_FORM_HAS_NO_PLACE}, because
+     * two's-complement negation of {@code MIN_VALUE} wraps back to {@code MIN_VALUE} rather than
+     * overflowing — the same {@code lneg} bytecode the JVM backend emits for it, uncontested.
+     * Regression for the fix that read {@code checked_neg}'s one refusal as an abort instead.
+     */
+    @Test
+    void negatesTheOneIntWhoseOppositeIsItself() {
+        Running module = compiled("""
+                module counting
+
+                behavior negated : (a: Int) -> Int
+
+                let negated (a) = -a
+                """);
+
+        // answerOf itself is the regression: it would throw ChicoryException, uncaught, where
+        // this still trapped.
+        assertThat(answerOf(module, "counting.negated", "[-9223372036854775808]"))
+                .isEqualTo("{\"value\":-9223372036854775808}");
+        assertThat(answerOf(module, "counting.negated", "[5]")).isEqualTo("{\"value\":-5}");
+    }
+
+    /**
      * A truncating remainder's magnitude never exceeds the divisor's, so it always has a place —
      * unlike {@code Int.truncatingDivide}, which does refuse the one pair whose quotient does not
      * (spec §stdlib-int; {@code KernelContracts.INT_TRUNCATING_REMAINDER -> AbortSet.NONE}). Rust's
