@@ -231,6 +231,72 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
         }
     }
 
+    /**
+     * {@code String.padLeft}/{@code padRight} at the widths most likely to disagree — a hugely
+     * negative one included, which {@code Strings.pad}'s own {@code length(s) >= width} answers
+     * unchanged on the JVM (trivially true against any negative width) rather than refusing.
+     * {@code padding()}'s own {@code missing = wanted - current} could answer that width with a
+     * wrapped positive number instead — the release profile has overflow checks off — and read
+     * the wrapped value as one to abort over; this is that bug's regression, and, alongside it,
+     * the ordinary widths right at the edge of needing to pad at all.
+     */
+    @Test
+    void padsAtTheWidthsMostLikelyToWrap() {
+        Running module = compiled("""
+                module wording
+
+                behavior widened : (n: Int, p: String, s: String) -> String
+
+                let widened (n, p, s) = String.padLeft(n, p, s)
+
+                behavior lengthened : (n: Int, p: String, s: String) -> String
+
+                let lengthened (n, p, s) = String.padRight(n, p, s)
+                """);
+
+        for (String text : new String[] {"", "x", "ごきげんよう"}) {
+            long current = Strings.codePoints(text).size();
+            for (long width : new long[] {
+                Long.MIN_VALUE, -1, 0, current, current + 1, Long.MAX_VALUE,
+            }) {
+                padAgrees(module, "wording.widened", text, "-", width,
+                        () -> Strings.padLeft(text, width, "-"));
+                padAgrees(module, "wording.lengthened", text, "-", width,
+                        () -> Strings.padRight(text, width, "-"));
+            }
+        }
+    }
+
+    /**
+     * Runs {@code export(width, "-", text)} on the compiled module and requires it to agree with
+     * {@code jvm} — the same operation {@code souther-runtime}'s own {@code Strings.pad} answers —
+     * on both halves of "agree": raising where and only where the other one does
+     * ({@link souther.runtime.ConstraintViolation} against a trap), and, where neither does, the
+     * exact same text.
+     */
+    private static void padAgrees(Running module, String export, String text, String pad,
+            long width, java.util.function.Supplier<String> jvm) {
+        String description = export + "(" + width + ", " + text + ")";
+        String arguments = array(Long.toString(width), quoted(pad), quoted(text));
+        String expected;
+        try {
+            expected = jvm.get();
+        } catch (souther.runtime.ConstraintViolation _) {
+            expected = null;
+        }
+        if (expected == null) {
+            int mark = module.call(RuntimeAbi.ALLOC_MARK);
+            assertThatThrownBy(() -> answerOf(module, export, arguments))
+                    .describedAs(description)
+                    .isInstanceOf(com.dylibso.chicory.wasm.ChicoryException.class);
+            module.call(RuntimeAbi.ALLOC_RESET, mark);
+        } else {
+            assertThat(answerOf(module, export, arguments))
+                    .describedAs(description)
+                    .isEqualTo(value(quoted(expected)));
+        }
+    }
+
     @Test
     void countsWhereSouthersRuntimeCounts() {
         Running module = compiled("""

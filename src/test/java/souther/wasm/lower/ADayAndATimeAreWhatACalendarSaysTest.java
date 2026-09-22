@@ -166,6 +166,45 @@ class ADayAndATimeAreWhatACalendarSaysTest {
         }
     }
 
+    /**
+     * The shift {@code souther-compiler}'s own {@code CalendarArithmeticOffTheEndOfTheRangeAborts
+     * Test} runs every temporal shift past — {@code Long.MAX_VALUE} — is not merely far past what
+     * a calendar holds; it is far enough that {@code years * 12} or {@code minutes * 60} itself
+     * leaves what an {@code Int} holds before this backend ever asks whether the shift does. The
+     * release profile has overflow checks off, so a multiplication left unchecked there would
+     * wrap — silently, to whichever value the wraparound happens to land on — and this could then
+     * answer a day or a moment nobody asked for rather than refuse a shift that has no place; the
+     * huge-but-not-{@code Long.MAX_VALUE} shifts above do not exercise that path, because their
+     * product still fits an {@code Int} on the way to the day count that actually refuses them.
+     * Regression for the fix that read such a wrapped product as the count to shift by.
+     */
+    @Test
+    void endsTheCallWhereTheShiftItselfLeavesWhatAnIntHolds() {
+        Running module = compiled();
+
+        for (String[] far : new String[][] {
+            {"diary.later", "2026-09-04"}, {"diary.monthsOn", "2026-09-04"},
+            {"diary.yearsOn", "2026-09-04"},
+        }) {
+            assertThatThrownBy(() -> answerOf(
+                    module, far[0], quoted(far[1]) + "," + Long.MIN_VALUE))
+                    .describedAs(far[0] + " by MIN_VALUE").isInstanceOf(ChicoryException.class);
+            assertThatThrownBy(() -> answerOf(
+                    module, far[0], quoted(far[1]) + "," + Long.MAX_VALUE))
+                    .describedAs(far[0] + " by MAX_VALUE").isInstanceOf(ChicoryException.class);
+        }
+        for (String[] far : new String[][] {
+            {"diary.minutesOn", "2026-09-04T09:30"}, {"diary.hoursOn", "2026-09-04T09:30"},
+        }) {
+            assertThatThrownBy(() -> answerOf(
+                    module, far[0], quoted(far[1]) + "," + Long.MIN_VALUE))
+                    .describedAs(far[0] + " by MIN_VALUE").isInstanceOf(ChicoryException.class);
+            assertThatThrownBy(() -> answerOf(
+                    module, far[0], quoted(far[1]) + "," + Long.MAX_VALUE))
+                    .describedAs(far[0] + " by MAX_VALUE").isInstanceOf(ChicoryException.class);
+        }
+    }
+
     /** Whether {@code java.time} reads it, which is what says the day itself is not the problem. */
     private static boolean readableByTheJvm(String written) {
         try {

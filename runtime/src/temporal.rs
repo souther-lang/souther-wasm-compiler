@@ -478,11 +478,21 @@ unsafe fn zone(at: u32, length: u32, from: u32) -> Option<(i64, u32)> {
 }
 
 /// A day so many days later, or an end to the call where that is not a day a calendar reaches.
+///
+/// `checked_add` and not a raw `+`: the release profile turns overflow checks off, so a raw `+`
+/// would not trap on the way past what an `i64` holds — it would wrap, silently, to whichever
+/// value the wraparound happens to land on. Answering off a wrapped `held` is not this function
+/// refusing what has no place; it is this function answering a different shift than it was asked
+/// to run (issue #23's follow-up: `Date.addYears` and `DateTime.addMinutes`/`addHours` read a
+/// `checked_mul`'s own overflow that same unchecked way, before this ever saw the count).
 pub unsafe fn moved(days_from_epoch: i32, by: i64) -> i32 {
-    let held = days_from_epoch as i64 + by;
-    if held > i32::MAX as i64 || held < i32::MIN as i64 {
-        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0);
-    }
+    let held = match (days_from_epoch as i64).checked_add(by) {
+        Some(held) if held <= i32::MAX as i64 && held >= i32::MIN as i64 => held,
+        Some(held) => {
+            abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0);
+        }
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, by as u64, days_from_epoch as u64),
+    };
     held as i32
 }
 

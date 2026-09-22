@@ -349,12 +349,21 @@ pub unsafe extern "C" fn __souther_string_pad_right(width: u32, pad: u32, text: 
 }
 
 /// What brings a string up to exactly a width in code points, cut so a long pad does not overshoot.
+///
+/// `wanted <= current` first and the subtraction after: the other order around, a hugely negative
+/// `wanted` (`String.padLeft(MIN_VALUE, ...)`, say) would answer `wanted - current` with a wrapped
+/// positive `missing` instead of the negative one that arithmetic actually has — the release
+/// profile has overflow checks off — and read that wrapped value as a width to abort over, where
+/// `Strings.pad`'s own `length(s) >= width` on the JVM (trivially true against any negative width)
+/// answers the text unchanged instead. Checking the sign before subtracting needs no wrap to avoid,
+/// where subtracting first and asking whether the answer looks negative can be lied to by one.
 unsafe fn padding(width: u32, pad: u32, text: u32) -> u32 {
     let wanted = __souther_int_value(width);
-    let missing = wanted - code_points(text) as i64;
-    if missing <= 0 || __souther_string_length(pad) == 0 {
+    let current = code_points(text) as i64;
+    if wanted <= current || __souther_string_length(pad) == 0 {
         return __souther_string(0, 0);
     }
+    let missing = wanted - current;
     if missing > u32::MAX as i64 {
         abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, wanted as u64, 0);
     }
@@ -1328,11 +1337,18 @@ pub unsafe extern "C" fn __souther_date_add_months(by: u32, cell: u32) -> u32 {
     temporal::made(temporal::tag_of(cell), held, temporal::second(cell))
 }
 
-/// `Date.addYears(years, d)`.
+/// `Date.addYears(years, d)`: as many months, twelve to the year. `checked_mul`, not a raw `*` —
+/// the release profile has overflow checks off, so a raw `*` would wrap a huge `years` down to a
+/// small month count instead of trapping, and `moved_by_months` below would then run a shift
+/// nothing asked for rather than refuse one that has no place.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_date_add_years(by: u32, cell: u32) -> u32 {
     let years = __souther_int_value(by);
-    let held = temporal::moved_by_months(temporal::day(cell), years * 12);
+    let months = match years.checked_mul(12) {
+        Some(months) => months,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, years as u64, 0),
+    };
+    let held = temporal::moved_by_months(temporal::day(cell), months);
     temporal::made(temporal::tag_of(cell), held, temporal::second(cell))
 }
 
@@ -1456,9 +1472,19 @@ pub unsafe extern "C" fn __souther_time_second(cell: u32) -> u32 {
 }
 
 /// Moves a moment by `by` steps of `each` seconds.
+/// `checked_mul` and `checked_add`, not raw `*`/`+`: the release profile has overflow checks off,
+/// so either would wrap a huge `by` down to a small offset instead of trapping, and this would
+/// then answer a moment nothing asked for rather than refuse a shift that has no place.
 unsafe fn datetime_add(by: u32, cell: u32, each: i64) -> u32 {
-    let seconds = __souther_int_value(by) * each;
-    let held = temporal::moment(cell) + seconds;
+    let steps = __souther_int_value(by);
+    let seconds = match steps.checked_mul(each) {
+        Some(seconds) => seconds,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, steps as u64, each as u64),
+    };
+    let held = match temporal::moment(cell).checked_add(seconds) {
+        Some(held) => held,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, seconds as u64, 0),
+    };
     let day = held.div_euclid(86_400);
     if day > i32::MAX as i64 || day < i32::MIN as i64 {
         abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, day as u64, 0);

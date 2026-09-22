@@ -23,21 +23,36 @@ import souther.compiler.abort.AbortKind;
 * runtime implementation is compiled once, independent of any call site, and its abort behaviour
  * is checked against {@code KernelContracts} directly rather than re-derived per call.
  *
- * <p>What was actually missing — and let three call sites disagree with {@code KernelContracts}
+ * <p>What was actually missing — and let five call sites disagree with {@code KernelContracts}
  * while every existing test stayed green ({@code String.toDecimal}, {@code
- * Int.truncatingRemainder}, unary {@code -}, issue #23's follow-up) — was not that absence of a
- * per-call read, but an executable barrier tying a kernel's hand-written Rust behaviour back to
- * what {@code AbortSites}/{@code KernelContracts} declares for it. {@code
- * AKernelMeansWhatSouthersOwnRuntimeSaysTest#everyIntOperationAgreesWithSouthersRuntimeAtTheEdgesOfWhatAnIntHolds}
- * is that barrier for {@code Int} arithmetic — every combination of {@code MIN_VALUE}, {@code
- * MAX_VALUE} and their neighbours, checked against {@code souther-runtime}'s own overflow-checked
- * behaviour rather than one pair chosen by hand per bug — and {@code
- * AnAmountAndAnOptionCrossToWhatSouthersOwnRuntimeSaysTest}'s differential corpus plays the same
- * role for {@code Decimal} parsing. Both were verified to actually catch what they are meant to:
- * each of the three bugs above reproduces as a failure with its fix reverted. Every other kernel
- * family (temporal arithmetic, {@code List}, {@code String}) still relies on the hand-audited call
- * graph and its own smaller differential spot-checks rather than an equivalent boundary sweep —
- * an honest gap, not a closed one, and the next family to extend this to if one turns up broken.
+ * Int.truncatingRemainder}, unary {@code -}, {@code Date.addYears}, {@code DateTime.addMinutes}/
+ * {@code addHours}, {@code String.padLeft}/{@code padRight}; issue #23's follow-up) — was not that
+ * absence of a per-call read, but an executable barrier tying a kernel's hand-written Rust
+ * behaviour back to what {@code AbortSites}/{@code KernelContracts} declares for it. The temporal
+ * and padding mismatches share a second, narrower root under the first: the release profile has
+ * Rust's overflow checks off, so a raw {@code *}/{@code +}/{@code -} on a boundary {@code Int}
+ * does not trap — it wraps, silently, and a bounds check downstream can be lied to by the wrapped
+ * value (a huge shift landing back inside what a calendar holds; a huge negative width reading as
+ * a huge positive one). {@code checked_mul}/{@code checked_add}, or reordering a subtraction
+ * behind the sign check it would otherwise undermine, closes each site as it is found; nothing
+ * here forbids raw arithmetic in general, so this is a per-site discipline, not a lint.
+ *
+ * <p>{@code AKernelMeansWhatSouthersOwnRuntimeSaysTest#everyIntOperationAgreesWithSouthersRuntimeAtTheEdgesOfWhatAnIntHolds}
+ * is the executable barrier for {@code Int} arithmetic — every combination of {@code MIN_VALUE},
+ * {@code MAX_VALUE} and their neighbours, checked against {@code souther-runtime}'s own
+ * overflow-checked behaviour rather than one pair chosen by hand per bug — {@code
+ * ADayAndATimeAreWhatACalendarSaysTest#endsTheCallWhereTheShiftItselfLeavesWhatAnIntHolds} plays
+ * the same role for every temporal shift at {@code MIN_VALUE}/{@code MAX_VALUE} (ported from
+ * {@code souther-compiler}'s own {@code CalendarArithmeticOffTheEndOfTheRangeAbortsTest}, which
+ * this backend was never run against), {@code
+ * AKernelMeansWhatSouthersOwnRuntimeSaysTest#padsAtTheWidthsMostLikelyToWrap} for padding at its
+ * own boundary widths, and {@code AnAmountAndAnOptionCrossToWhatSouthersOwnRuntimeSaysTest}'s
+ * differential corpus for {@code Decimal} parsing. All four were verified to actually catch what
+ * they are meant to: each of the five bugs above reproduces as a failure with its fix reverted.
+ * Every other kernel family ({@code List}, most of {@code String}) still relies on the
+ * hand-audited call graph and its own smaller differential spot-checks rather than an equivalent
+ * boundary sweep — an honest gap, not a closed one, and the next family to extend this to if one
+ * turns up broken.
  *
  * <p>What this class owns is only the smaller fact every carrier's mapping has to answer for once
  * the kind is known: the number a host reads it as on this one ABI.
