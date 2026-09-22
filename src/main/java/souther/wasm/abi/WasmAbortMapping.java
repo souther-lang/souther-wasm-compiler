@@ -23,19 +23,23 @@ import souther.compiler.abort.AbortKind;
 * runtime implementation is compiled once, independent of any call site, and its abort behaviour
  * is checked against {@code KernelContracts} directly rather than re-derived per call.
  *
- * <p>What was actually missing — and let five call sites disagree with {@code KernelContracts}
+ * <p>What was actually missing — and let six call sites disagree with {@code KernelContracts}
  * while every existing test stayed green ({@code String.toDecimal}, {@code
  * Int.truncatingRemainder}, unary {@code -}, {@code Date.addYears}, {@code DateTime.addMinutes}/
- * {@code addHours}, {@code String.padLeft}/{@code padRight}; issue #23's follow-up) — was not that
- * absence of a per-call read, but an executable barrier tying a kernel's hand-written Rust
- * behaviour back to what {@code AbortSites}/{@code KernelContracts} declares for it. The temporal
- * and padding mismatches share a second, narrower root under the first: the release profile has
- * Rust's overflow checks off, so a raw {@code *}/{@code +}/{@code -} on a boundary {@code Int}
- * does not trap — it wraps, silently, and a bounds check downstream can be lied to by the wrapped
- * value (a huge shift landing back inside what a calendar holds; a huge negative width reading as
- * a huge positive one). {@code checked_mul}/{@code checked_add}, or reordering a subtraction
- * behind the sign check it would otherwise undermine, closes each site as it is found; nothing
- * here forbids raw arithmetic in general, so this is a per-site discipline, not a lint.
+ * {@code addHours}, {@code String.padLeft}/{@code padRight}, and {@code Date.addMonths}/
+ * {@code addYears} again at {@code day_count}'s own arithmetic; issue #23's follow-up) — was not
+ * that absence of a per-call read, but an executable barrier tying a kernel's hand-written Rust
+ * behaviour back to what {@code AbortSites}/{@code KernelContracts} declares for it. Four of the
+ * six share a second, narrower root under the first: the release profile has Rust's overflow
+ * checks off, so a raw {@code *}/{@code +}/{@code -} on a boundary {@code Int} does not trap — it
+ * wraps, silently, and a bounds check downstream can be lied to by the wrapped value (a huge shift
+ * landing back inside what a calendar holds; a huge negative width reading as a huge positive
+ * one). {@code checked_mul}/{@code checked_add}, or reordering a subtraction behind the sign check
+ * it would otherwise undermine, closes each site as it is found — except where the arithmetic that
+ * needs to stay honest is itself what decides whether a value is in range ({@code day_count}),
+ * where the fix is a wider intermediate type ({@code i128}) rather than a checked operation with
+ * nothing sensible left to do on overflow. Nothing here forbids raw arithmetic in general, so this
+ * is a per-site discipline, not a lint.
  *
  * <p>{@code AKernelMeansWhatSouthersOwnRuntimeSaysTest#everyIntOperationAgreesWithSouthersRuntimeAtTheEdgesOfWhatAnIntHolds}
  * is the executable barrier for {@code Int} arithmetic — every combination of {@code MIN_VALUE},
@@ -48,8 +52,16 @@ import souther.compiler.abort.AbortKind;
  * AKernelMeansWhatSouthersOwnRuntimeSaysTest#padsAtTheWidthsMostLikelyToWrap} for padding at its
  * own boundary widths, and {@code AnAmountAndAnOptionCrossToWhatSouthersOwnRuntimeSaysTest}'s
  * differential corpus for {@code Decimal} parsing. All four were verified to actually catch what
- * they are meant to: each of the five bugs above reproduces as a failure with its fix reverted.
- * Every other kernel family ({@code List}, most of {@code String}) still relies on the
+ * they are meant to: each of the first five bugs above reproduces as a failure with its fix
+ * reverted. The sixth is the limit of what any of them can catch by construction: an endpoint
+ * sweep only ever runs {@code MIN_VALUE}/{@code MAX_VALUE} themselves, and this bug needed an
+ * intermediate value large enough to overflow {@code day_count}'s own arithmetic while landing —
+ * by coincidence, not by refusal — back inside a day this holds, which no endpoint reaches by
+ * definition. {@code
+ * ADayAndATimeAreWhatACalendarSaysTest#endsTheCallWhereTheIntermediateYearItselfOverflowsRatherThanJustTheEndpoints}
+ * is that case, fixed to the literal values it was found at rather than swept, because nothing
+ * general enough to search the space between two endpoints for a coincidental re-entry exists
+ * here yet. Every other kernel family ({@code List}, most of {@code String}) still relies on the
  * hand-audited call graph and its own smaller differential spot-checks rather than an equivalent
  * boundary sweep — an honest gap, not a closed one, and the next family to extend this to if one
  * turns up broken.

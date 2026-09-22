@@ -205,6 +205,30 @@ class ADayAndATimeAreWhatACalendarSaysTest {
         }
     }
 
+    /**
+     * The one endpoint {@code MIN_VALUE}/{@code MAX_VALUE} alone cannot stand in for: a shift far
+     * enough to overflow {@code day_count}'s own {@code era * 146_097} on the way to the day it
+     * names, at a magnitude that lands back inside what a day holds by coincidence rather than
+     * refusing outright the way an endpoint shift does. Neither temporal endpoint reaches this —
+     * {@code MAX_VALUE} fails {@code checked_mul}/{@code checked_add} before {@code day_count} ever
+     * runs, and {@code MIN_VALUE}'s wrap happens to land outside what a day holds anyway — so this
+     * is the case a boundary sweep of endpoints by itself would still have missed, and the reason
+     * {@code day_count} answers in {@code i128} rather than {@code i64} now.
+     */
+    @Test
+    void endsTheCallWhereTheIntermediateYearItselfOverflowsRatherThanJustTheEndpoints() {
+        Running module = compiled();
+
+        for (String[] far : new String[][] {
+            {"diary.monthsOn", "606065638325558100"},
+            {"diary.yearsOn", "50505469860463175"},
+        }) {
+            assertThatThrownBy(() -> answerOf(module, far[0], quoted("2026-09-04") + "," + far[1]))
+                    .describedAs(far[0] + " by " + far[1])
+                    .isInstanceOf(ChicoryException.class);
+        }
+    }
+
     /** Whether {@code java.time} reads it, which is what says the day itself is not the problem. */
     private static boolean readableByTheJvm(String written) {
         try {
