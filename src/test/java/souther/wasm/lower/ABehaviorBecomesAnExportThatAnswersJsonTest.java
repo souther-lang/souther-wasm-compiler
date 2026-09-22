@@ -193,6 +193,28 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 "\"expected\":\"String\"");
     }
 
+    /**
+     * A number the boundary is asked to read as a {@code Decimal} but whose exponent has no place
+     * in one is a decode failure like any other — reported as an issue, never ending the call —
+     * for the same reason {@code String.toDecimal} never ends it either: both read the same shared
+     * {@code decimal::parse}, and only that function's own caller may decide what "could not be
+     * read" means (regression for the fix that let this one call site decide it by aborting).
+     */
+    @Test
+    void saysSoWhereANumbersExponentHasNoPlaceInADecimalRatherThanEndingTheCall() {
+        Running module = compiled("""
+                module strict
+
+                behavior echo : (d: Decimal) -> Decimal
+
+                let echo (d) = d
+                """);
+
+        assertThat(answerOf(module, "strict.echo", "[1e99999999999]")).isEqualTo(
+                "{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"Decimal\"}}]}");
+    }
+
     @Test
     void endsTheCallOnInputThatIsNotOneDocument() {
         Running module = compiled("""

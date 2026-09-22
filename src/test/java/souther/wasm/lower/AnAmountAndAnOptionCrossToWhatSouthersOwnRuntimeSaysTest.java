@@ -30,6 +30,10 @@ class AnAmountAndAnOptionCrossToWhatSouthersOwnRuntimeSaysTest {
     private static final String[] WRITTEN = {
         "0", "1", "-1", "1000.00", ".5", "5.", "1e3", "1E+3", "1e-3", "+7", "-7.25",
         "", " ", "1.2.3", "abc", "1,000", "0x10", "12345678901234567890.12345",
+        // An exponent, or a scale, past what a Decimal holds is answered as NotANumber the same
+        // way bad syntax is (KernelContracts: STRING_TO_DECIMAL -> AbortSet.NONE) — regression for
+        // the fix that stopped this ending the call instead.
+        "1e99999999999", "1e-99999999999", "1.0e-2147483647",
     };
 
     @Test

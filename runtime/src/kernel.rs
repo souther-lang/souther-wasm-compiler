@@ -18,7 +18,10 @@ use crate::value::{
     __souther_list_length, __souther_list_set, __souther_string, __souther_string_bytes,
     __souther_string_length,
 };
-use crate::{abort, alloc, next_free, REASON_INVALID_BOUNDS, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use crate::{
+    abort, alloc, next_free, REASON_BACKEND_INVARIANT_BROKEN, REASON_INVALID_BOUNDS,
+    REASON_REQUIRED_FORM_HAS_NO_PLACE,
+};
 
 /// `String.length`: how many code points, which is what a character is here.
 #[no_mangle]
@@ -116,10 +119,18 @@ pub unsafe extern "C" fn __souther_instant_written(at: u32, length: u32) -> u32 
 ///
 /// The text sits in static memory and the value is built where it is used, because a value lives
 /// on the arena and the arena is reset between calls. What the text says was settled where it was
-/// written, so nothing here can fail to read it.
+/// written, so nothing here can fail to read it — `decimal::parse` answering zero for it is this
+/// compiler emitting a literal it should have rejected, not a Souther program ending without a
+/// value; `String.toDecimal` and the JSON boundary decoder are `decimal::parse`'s other two
+/// callers, and neither may abort here (spec: `String.toDecimal` never aborts; a boundary failure
+/// is an issue), which is why that choice belongs to each caller and not to `parse` itself.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_decimal_written(at: u32, length: u32) -> u32 {
-    crate::decimal::parse(at, length)
+    let held = crate::decimal::parse(at, length);
+    if held == 0 {
+        abort(REASON_BACKEND_INVARIANT_BROKEN, 0, at as u64, length as u64);
+    }
+    held
 }
 
 /// A day a body wrote down, read from the text it was written as.
@@ -583,17 +594,20 @@ pub unsafe extern "C" fn __souther_int_divide(dividend: u32, divisor: u32, absen
 }
 
 /// `Int.truncatingRemainder(dividend, divisor)`: the remainder of a truncating division, so its
-/// sign is the dividend's, or the case a zero divisor is.
+/// sign is the dividend's, or the case a zero divisor is. Total once past that case (spec
+/// §stdlib-int): unlike the quotient, a truncating remainder's magnitude never exceeds the
+/// divisor's, so it always has a place — `checked_rem` answers `None` for `MIN_VALUE % -1`
+/// because computing the *quotient* first would overflow, not because the remainder itself does,
+/// and the true remainder there is 0 (the JVM's own `lrem` answers exactly that, uncontested,
+/// because bytecode `lrem` never raises for it either). `Int.floorMod` below reads `checked_rem`
+/// the identical way for the identical reason.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_int_remainder(dividend: u32, divisor: u32, absent: u32) -> u32 {
     let (a, b) = (__souther_int_value(dividend), __souther_int_value(divisor));
     if b == 0 {
         return value::__souther_unit(absent);
     }
-    match a.checked_rem(b) {
-        Some(rest) => __souther_int(rest),
-        None => abort(crate::REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
-    }
+    __souther_int(a.checked_rem(b).unwrap_or(0))
 }
 
 /// `String.toInt(s)`: the whole number the text is, or the case it is not one.

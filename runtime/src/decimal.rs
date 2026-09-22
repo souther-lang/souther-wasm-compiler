@@ -288,8 +288,15 @@ unsafe fn copy(from: u32, length: u32) -> u32 {
 
 /// Reads a number as it was written into the amount it names.
 ///
-/// Answers zero where the text is not a number, which is what a reader of a document has to be
-/// told rather than ended for.
+/// Answers zero where the text is not a number — including where it names an exponent or a scale
+/// `Decimal` has no room for, exactly as it does for a syntax `Decimal` has no room for — which is
+/// what a reader of a document has to be told rather than ended for. This one function is called
+/// from three places whose provenance is not the same (`String.toDecimal`, which the language
+/// declares never aborts; the JSON boundary decoder, which reports a bad document as an issue and
+/// not an abort; and a `Decimal` literal a body wrote down, which the checker settles is always
+/// one of these bytes read back, so a zero there is this compiler's own bug and not the language's)
+/// — so the choice of what "could not be read" becomes belongs to whichever of those three is
+/// calling, and this stays total instead of making that choice on their behalf.
 pub unsafe fn parse(at: u32, length: u32) -> u32 {
     let mut i = 0;
     let negative = length > 0 && core::ptr::read(at as *const u8) == b'-';
@@ -349,7 +356,8 @@ pub unsafe fn parse(at: u32, length: u32) -> u32 {
             }
             power = power * 10 + (byte - b'0') as i64;
             if power > i32::MAX as i64 {
-                abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, power as u64, 0);
+                // Not this function's call to make — see the doc comment above.
+                return 0;
             }
             i += 1;
         }
@@ -362,7 +370,8 @@ pub unsafe fn parse(at: u32, length: u32) -> u32 {
         return 0;
     }
     if held > i32::MAX as i64 || held < i32::MIN as i64 {
-        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0);
+        // Not this function's call to make — see the doc comment above.
+        return 0;
     }
     of_digits(out, written, held as i32, negative)
 }

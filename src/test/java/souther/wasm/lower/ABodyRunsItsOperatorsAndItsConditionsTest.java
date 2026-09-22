@@ -61,6 +61,34 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
     }
 
     /**
+     * A truncating remainder's magnitude never exceeds the divisor's, so it always has a place —
+     * unlike {@code Int.truncatingDivide}, which does refuse the one pair whose quotient does not
+     * (spec §stdlib-int; {@code KernelContracts.INT_TRUNCATING_REMAINDER -> AbortSet.NONE}). Rust's
+     * {@code checked_rem} answers {@code None} for {@code MIN_VALUE % -1} because computing the
+     * quotient first would overflow, not because the remainder does — its true value is 0, the same
+     * answer the JVM's raw {@code lrem} gives for the identical pair — and a runtime call site that
+     * read that {@code None} as an abort broke this operation's own totality (regression for the
+     * fix that stopped it).
+     */
+    @Test
+    void aTruncatingRemainderNeverOverflowsEvenWhereItsQuotientWould() {
+        Running module = compiled("""
+                module counting
+
+                behavior remainder : (a: Int, b: Int) -> Int
+
+                let remainder (a, b) = match Int.truncatingRemainder(a, b) with
+                    | Int as r -> r
+                    | DivisionByZero -> 0
+                """);
+
+        // answerOf itself is the regression: it would throw ChicoryException, uncaught, where this
+        // still trapped.
+        assertThat(answerOf(module, "counting.remainder", "[-9223372036854775808, -1]"))
+                .isEqualTo("{\"value\":0}");
+    }
+
+    /**
      * A quotient of two Ints is a Rational while its operands stay Ints, so the operands say
      * nothing about it. What this witnesses is the refusal and nothing else: the helper takes the
      * quotient and answers a constant, so no Rational kernel stands between the division and the

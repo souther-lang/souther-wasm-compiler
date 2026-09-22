@@ -12,10 +12,23 @@ import souther.compiler.abort.AbortKind;
  *
  * <p>What is emitted here is a representation, never a reclassification. Whether a site can abort,
  * and which {@link AbortKind} it can abort for, is answered by {@code CheckedProgram} —
- * {@code abortsAt}, {@code kernel(...).aborts()}, {@code EnsuresEnforcement.aborts()} — and this
- * backend reads that answer rather than rederiving it from {@code Core}'s own shape. What this
- * class owns is only the smaller fact every carrier's mapping has to answer for once the kind is
- * known: the number a host reads it as on this one ABI.
+ * {@code abortsAt}, {@code kernel(...).aborts()}, {@code EnsuresEnforcement.aborts()}. Where a
+ * {@code Core} site's own abort set varies with the program being compiled ({@code Construct},
+ * {@code Unreachable}), {@code WasmCompiler}'s lowering reads that answer at lowering time and
+ * never rederives it from {@code Core}'s own shape. A kernel's does not vary that way: which
+ * {@link AbortKind}s a call to it can end without a value for is a fact about the kernel's
+ * identity alone, fixed by {@code KernelContracts} for every program alike — the same reason
+ * {@code souther.compiler.codegen.JvmAbortMapping}'s own reference lowering ({@code BodyGen})
+ * never reads {@code abortsAt}/{@code kernel(...).aborts()} for a kernel call either: a kernel's
+ * runtime implementation is compiled once, independent of any call site, and its abort behaviour
+ * is checked against {@code KernelContracts} directly rather than re-derived per call. This is
+ * still an open surface on this backend: {@code runtime/src/kernel.rs} and {@code decimal.rs}
+ * declare each kernel's abort behaviour by hand, held to {@code KernelContracts} only by targeted
+ * regression tests for the kernels found to disagree with it (issue #23's follow-up), not yet by
+ * an exhaustive conformance test the way reason numbers and {@code RoundingMode} ordinals are.
+ *
+ * <p>What this class owns is only the smaller fact every carrier's mapping has to answer for once
+ * the kind is known: the number a host reads it as on this one ABI.
  *
  * <p>Not a table this backend derives by re-reading {@code souther-runtime}'s Rust source: it is
  * read here, once, and {@code runtime/src/lib.rs}'s own {@code REASON_*} constants are held to
