@@ -31,9 +31,6 @@ pub(crate) unsafe fn uppercase(text: u32) -> u32 {
     recase(text, false)
 }
 
-/// GREEK CAPITAL LETTER SIGMA — the one code point Unicode 18.0.0's `Final_Sigma` condition names.
-const GREEK_CAPITAL_SIGMA: u32 = 0x3A3;
-
 unsafe fn recase(text: u32, lower: bool) -> u32 {
     let bytes = __souther_string_bytes(text);
     let length = __souther_string_length(text);
@@ -46,21 +43,19 @@ unsafe fn recase(text: u32, lower: bool) -> u32 {
         let point = code_point_at(bytes + at, width);
         let next = at + width;
 
-        if lower
-            && point == GREEK_CAPITAL_SIGMA
-            && cased_before
-            && !cased_before_next_cased(bytes, next, length)
-        {
-            // `lookup` cannot miss here: GREEK_CAPITAL_SIGMA is the code point FINAL_SIGMA is
-            // keyed on, and this branch is only taken when `point == GREEK_CAPITAL_SIGMA`.
-            written += put_mapped(lookup(FINAL_SIGMA, point).unwrap_or_else(|| {
-                abort(REASON_INVARIANT_VIOLATION, 0, point as u64, 0)
-            }));
-        } else {
-            match lookup(if lower { LOWER } else { UPPER }, point) {
+        // `FINAL_SIGMA` — not a hardcoded code point — is the one authority on which code points
+        // it applies to: a table lookup miss means "not a Final_Sigma candidate at all", the same
+        // way a `LOWER`/`UPPER` miss means "maps to itself". A version bump that widens which code
+        // points carry the condition needs only regeneration; nothing here assumes it stays one.
+        let contextual = if lower { lookup(FINAL_SIGMA, point) } else { None };
+        match contextual {
+            Some(mapped) if cased_before && !cased_before_next_cased(bytes, next, length) => {
+                written += put_mapped(mapped);
+            }
+            _ => match lookup(if lower { LOWER } else { UPPER }, point) {
                 Some(mapped) => written += put_mapped(mapped),
                 None => written += put_code_point(point),
-            }
+            },
         }
 
         // The original code point decides `cased_before`, not its mapping: Final_Sigma is stated

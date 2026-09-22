@@ -21,8 +21,15 @@ jobs:
           java-version: '25'
           cache: maven
 
+      # `-U`: this build depends on `souther-runtime` as a SNAPSHOT from a separate repository.
+      # setup-java's Maven cache persists `~/.m2/repository` (and Maven's own "already checked
+      # today" markers) across runs, so without `-U` a same-day run can keep resolving a
+      # SNAPSHOT version cached before an upstream souther-runtime change landed, and fail on a
+      # symbol that already exists upstream — not a build failure, a stale-dependency failure
+      # wearing one. `-U` forces every SNAPSHOT (this one and any other) to be checked against
+      # the remote repository on every run, trading a little time for never resolving stale.
       - name: Build and test
-        run: mvn -B --no-transfer-progress verify
+        run: mvn -B -U --no-transfer-progress verify
 
       # What no test can see: a test runs with the whole build's classpath, and the jar carries
       # only what the pom says it does. A program with an example is what tells them apart,
