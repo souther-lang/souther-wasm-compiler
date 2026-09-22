@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import souther.compiler.program.CheckedProgram;
-import souther.runtime.Strings;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -88,8 +87,12 @@ class AStringWhitespaceAlphabetIsExactlyTwentyFiveCodePointsTest {
 
     @Test
     void wordsOfATrimmedStringIsWordsOfTheOriginal() {
+        // WASM.words(WASM.trim(s)) == WASM.words(s) \u2014 both sides of this run inside the same
+        // module. Routing either side through souther.runtime.Strings would make this a
+        // differential test wearing this class's name, checking the JVM and WASM backends agree
+        // rather than checking WASM's own trim and words agree with each other.
         String text = "  the  quick\u3000fox\u00a0 ";
-        assertThat(answerOf(module(), "wording.spoken", array(quoted(Strings.trim(text)))))
+        assertThat(answerOf(module(), "wording.spokenTidied", array(quoted(text))))
                 .isEqualTo(answerOf(module(), "wording.spoken", array(quoted(text))));
     }
 
@@ -113,6 +116,10 @@ class AStringWhitespaceAlphabetIsExactlyTwentyFiveCodePointsTest {
                     behavior spoken : (s: String) -> List<String>
 
                     let spoken (s) = String.words(s)
+
+                    behavior spokenTidied : (s: String) -> List<String>
+
+                    let spokenTidied (s) = String.words(String.trim(s))
                     """))));
         }
         return module;
