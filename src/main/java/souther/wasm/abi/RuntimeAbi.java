@@ -37,8 +37,14 @@ public final class RuntimeAbi {
     private RuntimeAbi() {
     }
 
-    /** The version {@link #ABI_VERSION} answers for a runtime this compiler emits against. */
-    public static final int VERSION = 3;
+    /**
+     * The version {@link #ABI_VERSION} answers for a runtime this compiler emits against.
+     *
+     * <p>Raised to 4 when the reason vocabulary stopped naming Souther's own abort semantics a
+     * second time and started only representing {@code souther.compiler.abort.AbortKind} (issue
+     * #23): see {@code runtime/src/lib.rs}'s own note on its {@code ABI_VERSION} for what changed.
+     */
+    public static final int VERSION = 4;
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";

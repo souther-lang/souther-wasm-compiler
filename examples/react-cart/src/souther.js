@@ -19,12 +19,13 @@ const REASONS = {
   2: "a mark the arena never gave out",
   3: "the arguments were not JSON",
   4: "a value the runtime could not read",
-  5: "a whole number left the range",
+  5: "the answer had no place its type could hold",
   6: "division by zero",
-  7: "no arm of a choice was taken",
+  7: "this backend reached a state the checker settled it never would",
   8: "something that must hold did not",
   9: "a position the program said gets no value",
-  10: "a value outside the range its type reaches",
+  10: "bounds that did not name what they were asked to name",
+  11: "what a behavior answered did not keep what it promised",
 };
 
 /** Where the module says what it reaches out for, and under which numbers. */

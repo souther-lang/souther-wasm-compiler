@@ -45,7 +45,13 @@ const PAGE: usize = 65536;
 
 /// What this module's callers are compiled against. A linker that reads a different number is
 /// looking at a runtime it was not built for.
-const ABI_VERSION: u32 = 3;
+///
+/// Raised to 4 when the reason vocabulary stopped naming Souther's own abort semantics a second
+/// time and started only representing `souther.compiler.abort.AbortKind` (issue #23): several
+/// reason numbers kept their value but changed what they mean (5 generalised from `Int` overflow
+/// alone to every `REQUIRED_FORM_HAS_NO_PLACE` case, 7 from a match falling through alone to any
+/// internal invariant breaking, 8 and 9 were renamed to the language's own names), and 11 is new.
+const ABI_VERSION: u32 = 4;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -278,32 +284,67 @@ const OFF_DESCRIPTOR: usize = 8;
 const OFF_AUX0: usize = 12;
 const OFF_AUX1: usize = 20;
 
-/// The arena asked for more than the engine would map. `aux0` is the size that did not fit.
-pub const REASON_OUT_OF_MEMORY: u32 = 1;
-/// A reset was handed a mark the arena never issued. `aux0` is the mark, `aux1` the top.
-pub const REASON_BAD_MARK: u32 = 2;
-/// What was handed in is not one JSON document. `aux0` is where the reading stopped.
-pub const REASON_MALFORMED_JSON: u32 = 3;
-/// A whole number's arithmetic left the range an `Int` holds. `aux0` and `aux1` are the operands.
-pub const REASON_INT_OVERFLOW: u32 = 5;
-/// A division by zero, which the `/` operator treats as a model bug rather than a case.
-pub const REASON_DIVISION_BY_ZERO: u32 = 6;
-/// A value was made inside a behavior that its type says nothing may be. `aux0` is which of the
-/// type's invariants it breaks.
-pub const REASON_INVARIANT_VIOLATION: u32 = 8;
-/// A position the program said gets no value. `aux0` is where the reason it was written with is
-/// and `aux1` how long it is — in static memory, so it is there after the arena has been reset.
-/// Raised by generated code and named here so that the numbers are all in one list.
-pub const REASON_NOTHING_TO_ANSWER_WITH: u32 = 9;
-/// An index or a count outside what the operation admits. `aux0` is what was asked for.
-pub const REASON_OUT_OF_RANGE: u32 = 10;
-/// A match ran out of arms. The checker settles that one always answers, so reaching this means
-/// the emitter tested for the wrong thing rather than that the model left a case out.
-pub const REASON_NO_ARM: u32 = 7;
+// Two families of reason live in this one number space, and only one of them is this crate's own
+// to define. `REQUIRED_FORM_HAS_NO_PLACE`, `DIVISION_BY_ZERO`, `INVARIANT_NOT_HELD`,
+// `UNREACHABLE_REACHED`, `INVALID_BOUNDS` and `ENSURES_NOT_HELD` represent
+// `souther.compiler.abort.AbortKind` — a Souther program ending without a value, for a reason the
+// specification states as its own. Which number each gets is decided once, by
+// `souther.wasm.abi.WasmAbortMapping`, and repeated here as the same number under the same name so
+// that raising one and reading it agree; nothing here may raise a Souther program abort under a
+// name `WasmAbortMapping` does not also use for it (`TheTwoSidesOfAReasonAgreeOnItsNumberTest`
+// holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE` and
+// `BACKEND_INVARIANT_BROKEN` are this crate's own — a carrier failing to carry an answer through,
+// or this backend's own machinery reaching a state the checker settled it never would — and are
+// this crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
+/// The arena asked for more than the engine would map. `aux0` is the size that did not fit. A
+/// platform failure, not a Souther program ending without a value: `WasmFault::OUT_OF_MEMORY`.
+pub const REASON_OUT_OF_MEMORY: u32 = 1;
+/// A reset was handed a mark the arena never issued. `aux0` is the mark, `aux1` the top. An ABI
+/// failure by whoever calls this module, not a Souther program's own: `WasmFault::BAD_MARK`.
+pub const REASON_BAD_MARK: u32 = 2;
+/// What was handed in is not one JSON document. `aux0` is where the reading stopped. A boundary
+/// failure carrying an argument in, not a Souther program's own: `WasmFault::MALFORMED_JSON`.
+pub const REASON_MALFORMED_JSON: u32 = 3;
 /// A value whose tag nothing here knows. What a decoder was handed never reaches this: a value is
 /// made by generated code, so a tag no one knows means the emitter is wrong rather than the input.
+/// An internal value-representation failure, not a Souther program's own: `WasmFault::NOT_A_VALUE`.
 pub const REASON_NOT_A_VALUE: u32 = 4;
+/// The value an operation would answer with, or a form its own semantics needs on the way there,
+/// has no place in the type it is declared to be (spec
+/// `an-operation-refuses-only-what-its-own-answer-has-no-place-for`): an `Int` or `Decimal` sum,
+/// difference, product or arithmetic result outside what its type holds, a `Decimal` scale outside
+/// what the runtime takes, a temporal shift off the end of what it holds, or `String.repeat`'s,
+/// the padding operations' and `List.rangeInclusive`'s count or span no answer could hold.
+/// `aux0`/`aux1` are what of, where the site has them.
+/// Represents `AbortKind::REQUIRED_FORM_HAS_NO_PLACE`.
+pub const REASON_REQUIRED_FORM_HAS_NO_PLACE: u32 = 5;
+/// A division by zero, which the `/` operator treats as a model bug rather than a case.
+/// Represents `AbortKind::DIVISION_BY_ZERO`.
+pub const REASON_DIVISION_BY_ZERO: u32 = 6;
+/// This backend, or the boundary between it and the compiler that emitted the module calling it,
+/// reached a state the checker settled it never would: a match or an attempted construction fell
+/// through every arm it lowered, or an ordinal this module was handed names no case the compiler
+/// and this crate agreed on — a compiler bug or an ABI mismatch, never a Souther program's own
+/// abort. `WasmFault::BACKEND_INVARIANT_BROKEN`.
+pub const REASON_BACKEND_INVARIANT_BROKEN: u32 = 7;
+/// A value was made inside a behavior that its type says nothing may be. `aux0` is which of the
+/// type's invariants it breaks. Represents `AbortKind::INVARIANT_NOT_HELD`.
+pub const REASON_INVARIANT_NOT_HELD: u32 = 8;
+/// A position the program said gets no value. `aux0` is where the reason it was written with is
+/// and `aux1` how long it is — in static memory, so it is there after the arena has been reset.
+/// Raised by generated code and named here so that the numbers are all in one list. Represents
+/// `AbortKind::UNREACHABLE_REACHED`.
+pub const REASON_UNREACHABLE_REACHED: u32 = 9;
+/// The bounds an operation was given do not name the thing they are asked to name, independent of
+/// what any answer would be: `String.slice` with an index the string has not got, or a
+/// `toExclusive` before `fromInclusive`. `aux0`/`aux1` are what was asked for.
+/// Represents `AbortKind::INVALID_BOUNDS`.
+pub const REASON_INVALID_BOUNDS: u32 = 10;
+/// A behavior's `ensures` did not hold of what it answered. Not yet raised by this crate — nothing
+/// lowered here emits an `ensures` check (see the Java `WasmCompiler`) — reserved here so the
+/// number is fixed before anything does. Represents `AbortKind::ENSURES_NOT_HELD`.
+pub const REASON_ENSURES_NOT_HELD: u32 = 11;
 
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says

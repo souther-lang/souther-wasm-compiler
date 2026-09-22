@@ -9,8 +9,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Running;
-import souther.wasm.abi.AbortReason;
+import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.WasmFault;
 
 /**
  * A Souther source compiled to wasm and called.
@@ -202,10 +203,11 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let echo (n) = n
                 """);
 
-        assertThat(refusalFor(module, "strict.echo", "[1")).contains(AbortReason.MALFORMED_JSON);
+        assertThat(refusalFor(module, "strict.echo", "[1"))
+                .contains(new FailureCause.Wasm(WasmFault.MALFORMED_JSON));
     }
 
-    private static Optional<AbortReason> refusalFor(Running module, String export, String arguments) {
+    private static Optional<FailureCause> refusalFor(Running module, String export, String arguments) {
         int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
         int mark = module.call(RuntimeAbi.ALLOC_MARK);
         try {
@@ -214,7 +216,7 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
         } catch (ChicoryException trapped) {
             var record = module.failureRecord();
             module.call(RuntimeAbi.ALLOC_RESET, mark);
-            return record.describesTrapAfter(snapshot) ? record.namedReason() : Optional.empty();
+            return record.describesTrapAfter(snapshot) ? record.cause() : Optional.empty();
         }
     }
 

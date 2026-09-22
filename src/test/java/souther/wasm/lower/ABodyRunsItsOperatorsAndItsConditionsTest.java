@@ -8,9 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Running;
-import souther.wasm.abi.AbortReason;
+import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.RuntimeAbi;
 
 /**
@@ -55,8 +56,8 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
                 let sum (a, b) = a + b
                 """);
 
-        assertThat(abortOf(module, "counting.sum",
-                "[9223372036854775807, 1]")).contains(AbortReason.INT_OVERFLOW);
+        assertThat(abortOf(module, "counting.sum", "[9223372036854775807, 1]"))
+                .contains(new FailureCause.Language(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
     }
 
     /**
@@ -176,7 +177,7 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
         assertThat(answerOf(module, "guarding.both", "[5, 3]")).isEqualTo("{\"value\":true}");
     }
 
-    private static Optional<AbortReason> abortOf(Running module, String export, String arguments) {
+    private static Optional<FailureCause> abortOf(Running module, String export, String arguments) {
         int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
         int mark = module.call(RuntimeAbi.ALLOC_MARK);
         try {
@@ -185,7 +186,7 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
         } catch (ChicoryException trapped) {
             var record = module.failureRecord();
             module.call(RuntimeAbi.ALLOC_RESET, mark);
-            return record.describesTrapAfter(snapshot) ? record.namedReason() : Optional.empty();
+            return record.describesTrapAfter(snapshot) ? record.cause() : Optional.empty();
         }
     }
 

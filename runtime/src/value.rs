@@ -41,7 +41,7 @@ use crate::issues::{
 };
 use crate::json;
 use crate::text;
-use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_INT_OVERFLOW, REASON_NOT_A_VALUE};
+use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 /// The one value a type with a single value has. `+4` is which type.
 pub const TAG_UNIT: u32 = 0;
@@ -247,7 +247,7 @@ pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
     let (a, b) = (__souther_int_value(left), __souther_int_value(right));
     match a.checked_add(b) {
         Some(sum) => __souther_int(sum),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn __souther_negate(cell: u32) -> u32 {
     let held = __souther_int_value(cell);
     match held.checked_neg() {
         Some(opposite) => __souther_int(opposite),
-        None => abort(REASON_INT_OVERFLOW, 0, held as u64, 0),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0),
     }
 }
 
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn __souther_subtract(left: u32, right: u32) -> u32 {
     let (a, b) = (__souther_int_value(left), __souther_int_value(right));
     match a.checked_sub(b) {
         Some(difference) => __souther_int(difference),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
@@ -278,7 +278,7 @@ pub unsafe extern "C" fn __souther_multiply(left: u32, right: u32) -> u32 {
     let (a, b) = (__souther_int_value(left), __souther_int_value(right));
     match a.checked_mul(b) {
         Some(product) => __souther_int(product),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
@@ -294,7 +294,7 @@ pub unsafe extern "C" fn __souther_divide(left: u32, right: u32) -> u32 {
     }
     match a.checked_div(b) {
         Some(quotient) => __souther_int(quotient),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 

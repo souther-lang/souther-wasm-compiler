@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import souther.compiler.abort.AbortKind;
+import souther.compiler.abort.AbortSet;
 import souther.compiler.core.BlockReaches;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Core;
@@ -28,8 +30,9 @@ import souther.compiler.types.Refinement;
 import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
-import souther.wasm.abi.AbortReason;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.WasmAbortMapping;
+import souther.wasm.abi.WasmFault;
 import souther.wasm.emit.Type;
 import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
@@ -784,7 +787,7 @@ public final class WasmCompiler {
                                 .constant(-1)
                                 .compares(BodyWriter.Comparison.UNEQUAL)
                                 .ifNotZero()
-                                .constant(AbortReason.INVARIANT_VIOLATION.code())
+                                .constant(WasmAbortMapping.representationOf(onlyKindOf(made)))
                                 .constant(shapes.ofDeclared(made.typeName()))
                                 .localGet(broken)
                                 .extendToWide()
@@ -799,7 +802,7 @@ public final class WasmCompiler {
                     // The reason lives in static memory, so a host reading the record after the
                     // arena has been reset still has it.
                     byte[] why = nothing.reason().getBytes(StandardCharsets.UTF_8);
-                    out.constant(AbortReason.NOTHING_TO_ANSWER_WITH.code())
+                    out.constant(WasmAbortMapping.representationOf(onlyKindOf(nothing)))
                             .constant(0)
                             .constant((long) fragment.place(why))
                             .constant((long) why.length)
@@ -1246,7 +1249,7 @@ public final class WasmCompiler {
                 value(out, any.get().body());
                 out.localSet(answer);
             } else {
-                out.constant(AbortReason.NO_ARM.code())
+                out.constant(WasmFault.BACKEND_INVARIANT_BROKEN.code())
                         .constant(shapes.ofDeclared(name))
                         .constant(0L)
                         .constant(0L)
@@ -1296,7 +1299,7 @@ public final class WasmCompiler {
             }
             // The checker settles that one arm answers, so nothing written reaches this. What it
             // stands for is this backend having tested for the wrong thing.
-            out.constant(AbortReason.NO_ARM.code())
+            out.constant(WasmFault.BACKEND_INVARIANT_BROKEN.code())
                     .constant(0)
                     .constant(0L)
                     .constant(0L)
@@ -1467,6 +1470,29 @@ public final class WasmCompiler {
         /** A local nothing else is using, for a value that outlives one instruction. */
         private int scratch() {
             return out.narrow();
+        }
+
+        /**
+         * The one {@link AbortKind} {@code site} can end a run without a value for.
+         *
+         * <p>Read off {@link CheckedProgram#abortsAt}, not decided here: this backend picks how an
+         * {@link AbortKind} is represented on the wasm ABI ({@link WasmAbortMapping}), never which
+         * one a site aborts for — that is the language's own answer, and a second reading of
+         * {@code Core}'s shape to re-derive it is exactly what issue #23 exists to end.
+         *
+         * @throws IllegalStateException where the program answers with other than exactly one
+         *     {@link AbortKind} for {@code site} — every call site this method is used from emits
+         *     one unconditional abort and expects the program to have settled on the one reason
+         *     that abort is for
+         */
+        private AbortKind onlyKindOf(Core site) {
+            AbortSet reasons = program.abortsAt(site);
+            if (reasons.kinds().size() != 1) {
+                throw new IllegalStateException(
+                        "this backend emits one abort for " + site + ", which the program answers "
+                                + reasons.kinds().size() + " reasons for: " + reasons);
+            }
+            return reasons.kinds().iterator().next();
         }
     }
 }

@@ -19,7 +19,7 @@
 use crate::casing_data::{Mapping, CASED, CASE_IGNORABLE, FINAL_SIGMA, LOWER, UPPER};
 use crate::kernel::{character_width, code_point_at};
 use crate::value::{__souther_string, __souther_string_bytes, __souther_string_length};
-use crate::{abort, alloc, next_free, REASON_INVARIANT_VIOLATION};
+use crate::{abort, alloc, next_free, REASON_BACKEND_INVARIANT_BROKEN};
 
 /// `String.lowercase(s)`.
 pub(crate) unsafe fn lowercase(text: u32) -> u32 {
@@ -99,10 +99,13 @@ unsafe fn put_mapped(mapped: &Mapping) -> u32 {
 /// file: nothing this module calls between one `put_code_point` and the next allocates.
 unsafe fn put_code_point(cp: u32) -> u32 {
     // Every code point reaching here came either from this string's own valid UTF-8 (decoded by
-    // `code_point_at`) or from a generated table entry, both already-valid Unicode scalar values.
+    // `code_point_at`) or from a generated table entry, both already-valid Unicode scalar values —
+    // so reaching an invalid one is this crate's own casing table being wrong, not a Souther
+    // program's `data invariant` failing to hold (that is `AbortKind::INVARIANT_NOT_HELD`, raised
+    // only where a construction's own declared clauses do not hold of it).
     let held = match char::from_u32(cp) {
         Some(held) => held,
-        None => abort(REASON_INVARIANT_VIOLATION, 0, cp as u64, 0),
+        None => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, cp as u64, 0),
     };
     let mut room = [0u8; 4];
     let written = held.encode_utf8(&mut room).len();

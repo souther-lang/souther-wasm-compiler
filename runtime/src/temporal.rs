@@ -14,7 +14,7 @@
 //! A `Date` leaves the second at nothing and a `Time` leaves the day at nothing, so the three are
 //! one shape and only what is read off it differs.
 
-use crate::{abort, alloc, REASON_OUT_OF_RANGE};
+use crate::{abort, alloc, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 const OFF_DAY: usize = 4;
 const OFF_SECOND: usize = 8;
@@ -86,7 +86,7 @@ pub fn holds_a_day(held: i64) -> bool {
 pub unsafe fn days(year: i64, month: u32, day: u32) -> i32 {
     let held = day_count(year, month, day);
     if !holds_a_day(held) {
-        abort(REASON_OUT_OF_RANGE, 0, year as u64, held as u64);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, year as u64, held as u64);
     }
     held as i32
 }
@@ -129,7 +129,7 @@ pub unsafe fn moved_by_months(days_from_epoch: i32, by: i64) -> i32 {
         .and_then(|held| held.checked_add(by))
     {
         Some(held) => held,
-        None => abort(REASON_OUT_OF_RANGE, 0, by as u64, year as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, by as u64, year as u64),
     };
     let held_year = months.div_euclid(12);
     let held_month = (months.rem_euclid(12) + 1) as u32;
@@ -481,7 +481,7 @@ unsafe fn zone(at: u32, length: u32, from: u32) -> Option<(i64, u32)> {
 pub unsafe fn moved(days_from_epoch: i32, by: i64) -> i32 {
     let held = days_from_epoch as i64 + by;
     if held > i32::MAX as i64 || held < i32::MIN as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, held as u64, 0);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0);
     }
     held as i32
 }

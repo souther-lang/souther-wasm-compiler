@@ -18,7 +18,7 @@ use crate::value::{
     __souther_list_length, __souther_list_set, __souther_string, __souther_string_bytes,
     __souther_string_length,
 };
-use crate::{abort, alloc, next_free, REASON_OUT_OF_RANGE};
+use crate::{abort, alloc, next_free, REASON_INVALID_BOUNDS, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 /// `String.length`: how many code points, which is what a character is here.
 #[no_mangle]
@@ -35,7 +35,7 @@ pub unsafe extern "C" fn __souther_string_slice(from: u32, to: u32, text: u32) -
     let start = offset_of(text, first, held);
     let end = offset_of(text, last, held);
     if end < start {
-        abort(REASON_OUT_OF_RANGE, 0, last as u64, first as u64);
+        abort(REASON_INVALID_BOUNDS, 0, last as u64, first as u64);
     }
     __souther_string(__souther_string_bytes(text) + start, end - start)
 }
@@ -77,7 +77,7 @@ pub unsafe extern "C" fn __souther_string_repeat(count: u32, text: u32) -> u32 {
         return __souther_string(0, 0);
     }
     if times > u32::MAX as i64 || (times as u64) * (length as u64) > u32::MAX as u64 {
-        abort(REASON_OUT_OF_RANGE, 0, times as u64, length as u64);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, times as u64, length as u64);
     }
     let bytes = __souther_string_bytes(text);
     let out = next_free();
@@ -345,7 +345,7 @@ unsafe fn padding(width: u32, pad: u32, text: u32) -> u32 {
         return __souther_string(0, 0);
     }
     if missing > u32::MAX as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, wanted as u64, 0);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, wanted as u64, 0);
     }
     let each = code_points(pad) as i64;
     let times = (missing + each - 1) / each;
@@ -578,7 +578,7 @@ pub unsafe extern "C" fn __souther_int_divide(dividend: u32, divisor: u32, absen
     }
     match a.checked_div(b) {
         Some(quotient) => __souther_int(quotient),
-        None => abort(crate::REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(crate::REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
@@ -592,7 +592,7 @@ pub unsafe extern "C" fn __souther_int_remainder(dividend: u32, divisor: u32, ab
     }
     match a.checked_rem(b) {
         Some(rest) => __souther_int(rest),
-        None => abort(crate::REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(crate::REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
@@ -861,7 +861,7 @@ pub unsafe extern "C" fn __souther_list_range(first: u32, last: u32, descriptor:
     }
     let span = (to as i128) - (from as i128) + 1;
     if span > u32::MAX as i128 {
-        abort(REASON_OUT_OF_RANGE, 0, from as u64, to as u64);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, from as u64, to as u64);
     }
     let out = __souther_list(descriptor, span as u32);
     for i in 0..span as u32 {
@@ -898,7 +898,7 @@ unsafe fn code_points(text: u32) -> u32 {
 /// The byte a code point index stands at. Out of range ends the call, wherever it was written.
 unsafe fn offset_of(text: u32, index: i64, held: u32) -> u32 {
     if index < 0 || index > held as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, index as u64, held as u64);
+        abort(REASON_INVALID_BOUNDS, 0, index as u64, held as u64);
     }
     let bytes = __souther_string_bytes(text);
     let mut at = 0;
@@ -1447,7 +1447,7 @@ unsafe fn datetime_add(by: u32, cell: u32, each: i64) -> u32 {
     let held = temporal::moment(cell) + seconds;
     let day = held.div_euclid(86_400);
     if day > i32::MAX as i64 || day < i32::MIN as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, day as u64, 0);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, day as u64, 0);
     }
     temporal::made(value::TAG_DATE_TIME, day as i32, held.rem_euclid(86_400) as i32)
 }
