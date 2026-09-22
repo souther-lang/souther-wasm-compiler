@@ -1074,7 +1074,7 @@ public final class WasmCompiler {
                 return;
             }
             String operation = abiNameOf(kernel);
-            var parameters = program.kernelSignature(kernel).parameters();
+            var parameters = program.kernel(kernel).signature().parameters();
             for (int i = 0; i < call.args().size(); i++) {
                 value(out, call.args().get(i));
                 // A way of rounding goes over as its place among the ones the language declares.
@@ -1148,7 +1148,7 @@ public final class WasmCompiler {
          */
         private TypeSymbol.LanguageCase answeredCase(Kernel kernel) {
             java.util.Set<TypeSymbol.LanguageCase> declared =
-                    program.kernelSignature(kernel).languageCaseMembers();
+                    program.kernel(kernel).signature().languageCaseMembers();
             return switch (declared.size()) {
                 case 0 -> null;
                 case 1 -> declared.iterator().next();
