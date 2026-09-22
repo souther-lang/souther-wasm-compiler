@@ -196,17 +196,29 @@ pub unsafe extern "C" fn __souther_string_ends_with(suffix: u32, text: u32) -> u
     ))
 }
 
-/// `String.trim`: what a JVM string's own trim takes off, which is everything at or under a space.
+/// `String.trim`: removes a maximal run of String whitespace (spec §string-whitespace) from each
+/// end, leaving the rest untouched. Scans code points via the existing UTF-8 primitives, so a
+/// character outside the whitespace set stops the run rather than being crossed as a byte would be.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_trim(text: u32) -> u32 {
     let bytes = __souther_string_bytes(text);
     let mut start = 0;
     let mut end = __souther_string_length(text);
-    while start < end && core::ptr::read((bytes + start) as *const u8) <= b' ' {
-        start += 1;
+    while start < end {
+        let width = character_width(core::ptr::read((bytes + start) as *const u8));
+        let point = code_point_at(bytes + start, width);
+        if !string_whitespace(point) {
+            break;
+        }
+        start += width;
     }
-    while end > start && core::ptr::read((bytes + end - 1) as *const u8) <= b' ' {
-        end -= 1;
+    while end > start {
+        let before = start_of_character_before(bytes, end);
+        let point = code_point_at(bytes + before, end - before);
+        if !string_whitespace(point) {
+            break;
+        }
+        end = before;
     }
     __souther_string(bytes + start, end - start)
 }
@@ -268,43 +280,60 @@ unsafe fn put(held: char) -> u32 {
     written as u32
 }
 
-/// `String.words(s)`: the pieces between runs of whitespace, with none empty.
+/// `String.words(s)`: the pieces between runs of String whitespace (spec §string-whitespace),
+/// with none empty. Two passes over `next_word` — one to size the list, one to fill it — since the
+/// list must be allocated to its final length before anything is written into it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_words(text: u32, descriptor: u32) -> u32 {
     let bytes = __souther_string_bytes(text);
     let length = __souther_string_length(text);
     let mut held = 0;
     let mut at = 0;
-    while at < length {
-        while at < length && blank(core::ptr::read((bytes + at) as *const u8)) {
-            at += 1;
-        }
-        if at == length {
-            break;
-        }
+    while let Some((_, end)) = next_word(bytes, length, at) {
         held += 1;
-        while at < length && !blank(core::ptr::read((bytes + at) as *const u8)) {
-            at += 1;
-        }
+        at = end;
     }
     let out = __souther_list(descriptor, held);
     let mut i = 0;
     at = 0;
-    while at < length {
-        while at < length && blank(core::ptr::read((bytes + at) as *const u8)) {
-            at += 1;
-        }
-        if at == length {
-            break;
-        }
-        let start = at;
-        while at < length && !blank(core::ptr::read((bytes + at) as *const u8)) {
-            at += 1;
-        }
-        __souther_list_set(out, i, __souther_string(bytes + start, at - start));
+    while let Some((start, end)) = next_word(bytes, length, at) {
+        __souther_list_set(out, i, __souther_string(bytes + start, end - start));
         i += 1;
+        at = end;
     }
     out
+}
+
+/// The next word in `bytes[0..length]` at or after `at`: the byte range of a maximal run of
+/// non-whitespace code points, skipping any run of String whitespace first. `None` once nothing
+/// but whitespace remains. The one place word boundaries are decided, so `words`'s two passes
+/// cannot drift apart.
+unsafe fn next_word(bytes: u32, length: u32, mut at: u32) -> Option<(u32, u32)> {
+    while at < length {
+        let width = character_width(core::ptr::read((bytes + at) as *const u8));
+        let point = code_point_at(bytes + at, width);
+        if !string_whitespace(point) {
+            break;
+        }
+        at += width;
+    }
+
+    if at == length {
+        return None;
+    }
+
+    let start = at;
+
+    while at < length {
+        let width = character_width(core::ptr::read((bytes + at) as *const u8));
+        let point = code_point_at(bytes + at, width);
+        if string_whitespace(point) {
+            break;
+        }
+        at += width;
+    }
+
+    Some((start, at))
 }
 
 /// `String.lines(s)`: what `split` on a newline gives, after a carriage return before one is gone.
@@ -369,8 +398,25 @@ unsafe fn padding(width: u32, pad: u32, text: u32) -> u32 {
     cut
 }
 
-fn blank(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+/// String whitespace (spec §string-whitespace): the fixed 25-code-point set `trim` and `words`
+/// both scan by. Enumerated rather than read off `char::is_whitespace` or a Unicode table, so a
+/// toolchain's Unicode version does not silently change what a Souther program means. Mirrors
+/// `souther.runtime.Strings.isWhitespace` in the JVM backend exactly.
+fn string_whitespace(point: u32) -> bool {
+    matches!(
+        point,
+        0x0009..=0x000d
+            | 0x0020
+            | 0x0085
+            | 0x00a0
+            | 0x1680
+            | 0x2000..=0x200a
+            | 0x2028
+            | 0x2029
+            | 0x202f
+            | 0x205f
+            | 0x3000
+    )
 }
 
 unsafe fn code_point_at(at: u32, width: u32) -> u32 {
