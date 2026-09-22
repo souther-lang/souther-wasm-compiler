@@ -223,61 +223,17 @@ pub unsafe extern "C" fn __souther_string_trim(text: u32) -> u32 {
     __souther_string(bytes + start, end - start)
 }
 
-/// `String.lowercase(s)` and `String.uppercase(s)`, a character at a time.
+/// `String.lowercase(s)`: Unicode 18.0.0's default case conversion, untailored (issue #21). See
+/// `crate::casing` for the algorithm — this is an ABI wrapper only.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_lowercase(text: u32) -> u32 {
-    recased(text, false)
+    crate::casing::lowercase(text)
 }
 
-/// `String.uppercase(s)`.
+/// `String.uppercase(s)`. See `crate::casing`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_uppercase(text: u32) -> u32 {
-    recased(text, true)
-}
-
-unsafe fn recased(text: u32, up: bool) -> u32 {
-    let bytes = __souther_string_bytes(text);
-    let length = __souther_string_length(text);
-    let out = next_free();
-    let mut total = 0;
-    let mut at = 0;
-    while at < length {
-        let width = character_width(core::ptr::read((bytes + at) as *const u8));
-        let point = code_point_at(bytes + at, width);
-        match char::from_u32(point) {
-            Some(held) => {
-                if up {
-                    for each in held.to_uppercase() {
-                        total += put(each);
-                    }
-                } else {
-                    for each in held.to_lowercase() {
-                        total += put(each);
-                    }
-                }
-            }
-            None => {
-                let piece = alloc(width);
-                core::ptr::copy_nonoverlapping(
-                    (bytes + at) as *const u8,
-                    piece as *mut u8,
-                    width as usize,
-                );
-                total += width;
-            }
-        }
-        at += width;
-    }
-    __souther_string(out, total)
-}
-
-/// Writes one character onto the arena's top and answers how many bytes that took.
-unsafe fn put(held: char) -> u32 {
-    let mut room = [0u8; 4];
-    let written = held.encode_utf8(&mut room).len();
-    let at = alloc(written as u32);
-    core::ptr::copy_nonoverlapping(room.as_ptr(), at as *mut u8, written);
-    written as u32
+    crate::casing::uppercase(text)
 }
 
 /// `String.words(s)`: the pieces between runs of String whitespace (spec §string-whitespace),
@@ -419,7 +375,7 @@ fn string_whitespace(point: u32) -> bool {
     )
 }
 
-unsafe fn code_point_at(at: u32, width: u32) -> u32 {
+pub(crate) unsafe fn code_point_at(at: u32, width: u32) -> u32 {
     let first = core::ptr::read(at as *const u8) as u32;
     match width {
         1 => first,
@@ -961,7 +917,7 @@ unsafe fn start_of_character_before(bytes: u32, at: u32) -> u32 {
     start
 }
 
-fn character_width(first: u8) -> u32 {
+pub(crate) fn character_width(first: u8) -> u32 {
     if first < 0x80 {
         1
     } else if first < 0xe0 {

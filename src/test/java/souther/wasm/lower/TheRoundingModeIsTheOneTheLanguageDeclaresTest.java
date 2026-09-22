@@ -23,7 +23,7 @@ class TheRoundingModeIsTheOneTheLanguageDeclaresTest {
                 let same (d) = d
                 """));
 
-        var parameters = program.kernelSignature(Kernel.DECIMAL_ROUND).parameters();
+        var parameters = program.kernel(Kernel.DECIMAL_ROUND).signature().parameters();
 
         assertThat(Descriptors.isRoundingMode(parameters.get(1))).isTrue();
         assertThat(Descriptors.isRoundingMode(parameters.get(0))).isFalse();

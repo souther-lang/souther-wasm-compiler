@@ -209,9 +209,9 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
 
         for (String text : TEXTS) {
             assertThat(answerOf(module, "wording.quiet", array(quoted(text))))
-                    .describedAs(text).isEqualTo(value(quoted(text.toLowerCase())));
+                    .describedAs(text).isEqualTo(value(quoted(Strings.lowercase(text))));
             assertThat(answerOf(module, "wording.loud", array(quoted(text))))
-                    .describedAs(text).isEqualTo(value(quoted(text.toUpperCase())));
+                    .describedAs(text).isEqualTo(value(quoted(Strings.uppercase(text))));
             assertThat(answerOf(module, "wording.spoken", array(quoted(text))))
                     .describedAs(text).isEqualTo(value(written(Strings.words(text))));
             assertThat(answerOf(module, "wording.rows", array(quoted(text))))
