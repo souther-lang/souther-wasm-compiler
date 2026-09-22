@@ -6,13 +6,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
 import souther.compiler.core.Kernel;
 import souther.compiler.program.CheckedProgram;
 import souther.runtime.IntMath;
 import souther.runtime.Strings;
 import souther.wasm.Running;
-import souther.wasm.link.LinkPlan;
+import souther.wasm.abi.FailureCause;
+import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.link.LinkPlan;
 
 /**
  * What an intrinsic means, against Souther's own account of it.
@@ -242,7 +245,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
      */
     @Test
     void padsAtTheWidthsMostLikelyToWrap() {
-        Running module = compiled("""
+        CheckedProgram program = CheckedProgram.of(List.of("""
                 module wording
 
                 behavior widened : (n: Int, p: String, s: String) -> String
@@ -252,16 +255,19 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
                 behavior lengthened : (n: Int, p: String, s: String) -> String
 
                 let lengthened (n, p, s) = String.padRight(n, p, s)
-                """);
+                """));
+        Running module = Running.linked(WasmCompiler.compile(program));
+        AbortKind expectedLeft = onlyAbortOf(program, Kernel.STRING_PAD_LEFT);
+        AbortKind expectedRight = onlyAbortOf(program, Kernel.STRING_PAD_RIGHT);
 
         for (String text : new String[] {"", "x", "ごきげんよう"}) {
             long current = Strings.codePoints(text).size();
             for (long width : new long[] {
                 Long.MIN_VALUE, -1, 0, current, current + 1, Long.MAX_VALUE,
             }) {
-                padAgrees(module, "wording.widened", text, "-", width,
+                padAgrees(module, "wording.widened", expectedLeft, text, "-", width,
                         () -> Strings.padLeft(text, width, "-"));
-                padAgrees(module, "wording.lengthened", text, "-", width,
+                padAgrees(module, "wording.lengthened", expectedRight, text, "-", width,
                         () -> Strings.padRight(text, width, "-"));
             }
         }
@@ -270,12 +276,14 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     /**
      * Runs {@code export(width, "-", text)} on the compiled module and requires it to agree with
      * {@code jvm} — the same operation {@code souther-runtime}'s own {@code Strings.pad} answers —
-     * on both halves of "agree": raising where and only where the other one does
-     * ({@link souther.runtime.ConstraintViolation} against a trap), and, where neither does, the
-     * exact same text.
+     * on all of what "agree" means: raising where and only where the other one does
+     * ({@link souther.runtime.ConstraintViolation} against a trap), the trap naming
+     * {@code expectedKind} and not some other {@link AbortKind} a Rust call site could have been
+     * misread onto (#23's own drift, and the one thing a bare {@code ChicoryException} check
+     * cannot tell apart from it), and, where neither raises, the exact same text.
      */
-    private static void padAgrees(Running module, String export, String text, String pad,
-            long width, java.util.function.Supplier<String> jvm) {
+    private static void padAgrees(Running module, String export, AbortKind expectedKind,
+            String text, String pad, long width, java.util.function.Supplier<String> jvm) {
         String description = export + "(" + width + ", " + text + ")";
         String arguments = array(Long.toString(width), quoted(pad), quoted(text));
         String expected;
@@ -285,11 +293,9 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
             expected = null;
         }
         if (expected == null) {
-            int mark = module.call(RuntimeAbi.ALLOC_MARK);
-            assertThatThrownBy(() -> answerOf(module, export, arguments))
+            assertThat(causeOf(module, export, arguments))
                     .describedAs(description)
-                    .isInstanceOf(com.dylibso.chicory.wasm.ChicoryException.class);
-            module.call(RuntimeAbi.ALLOC_RESET, mark);
+                    .isEqualTo(new FailureCause.Language(expectedKind));
         } else {
             assertThat(answerOf(module, export, arguments))
                     .describedAs(description)
@@ -342,7 +348,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
      */
     @Test
     void everyIntOperationAgreesWithSouthersRuntimeAtTheEdgesOfWhatAnIntHolds() {
-        Running module = compiled("""
+        CheckedProgram program = CheckedProgram.of(List.of("""
                 module edges
 
                 behavior negated : (a: Int) -> Int
@@ -372,7 +378,12 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
                 let halved (a, b) = match Int.truncatingDivide(a, b) with
                     | Int as q -> q
                     | DivisionByZero -> 0
-                """);
+                """));
+        Running module = Running.linked(WasmCompiler.compile(program));
+        AbortKind expectedSum = onlyAbortOf(program, Kernel.INT_ADD);
+        AbortKind expectedDifference = onlyAbortOf(program, Kernel.INT_SUBTRACT);
+        AbortKind expectedProduct = onlyAbortOf(program, Kernel.INT_MULTIPLY);
+        AbortKind expectedHalved = onlyAbortOf(program, Kernel.INT_TRUNCATING_DIVIDE);
 
         long[] boundaries = {
             Long.MIN_VALUE, Long.MIN_VALUE + 1, -2, -1, 0, 1, 2, Long.MAX_VALUE - 1, Long.MAX_VALUE,
@@ -384,9 +395,11 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
                     .isEqualTo(value(Long.toString(-a)));
 
             for (long b : boundaries) {
-                agrees(module, "edges.sum", a, b, () -> IntMath.addExact(a, b));
-                agrees(module, "edges.difference", a, b, () -> IntMath.subtractExact(a, b));
-                agrees(module, "edges.product", a, b, () -> IntMath.multiplyExact(a, b));
+                agrees(module, "edges.sum", expectedSum, a, b, () -> IntMath.addExact(a, b));
+                agrees(module, "edges.difference", expectedDifference, a, b,
+                        () -> IntMath.subtractExact(a, b));
+                agrees(module, "edges.product", expectedProduct, a, b,
+                        () -> IntMath.multiplyExact(a, b));
 
                 if (b == 0) {
                     continue;
@@ -394,7 +407,8 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
                 assertThat(answerOf(module, "edges.remainder", array(a, b)))
                         .describedAs(a + " truncatingRemainder " + b)
                         .isEqualTo(value(Long.toString(a % b)));
-                agrees(module, "edges.halved", a, b, () -> IntMath.divideExact(a, b));
+                agrees(module, "edges.halved", expectedHalved, a, b,
+                        () -> IntMath.divideExact(a, b));
             }
         }
     }
@@ -402,13 +416,17 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     /**
      * Runs {@code export(a, b)} on the compiled module and requires it to agree with {@code jvm} —
      * the overflow-checked {@code IntMath} operation {@code souther-runtime} answers the same
-     * behavior with — on both halves of what "agree" means: raising where and only where the other
-     * one does ({@link souther.runtime.ConstraintViolation} against a trap), and, where neither
-     * does, the exact same value. Checking only one half would have missed a wrong answer that
-     * happens not to trap as easily as it would have missed a trap that should not have happened.
+     * behavior with — on all of what "agree" means: raising where and only where the other one does
+     * ({@link souther.runtime.ConstraintViolation} against a trap), the trap naming
+     * {@code expectedKind} — read off {@code CheckedProgram.kernel(...).aborts()}, never a second
+     * hand-kept table of which {@link AbortKind} each operation answers to, so this witnesses that
+     * the {@link FailureRecord} agrees with the Program API and not merely with itself — and, where
+     * neither raises, the exact same value. Checking only whether something trapped would have
+     * missed a wrong answer that happens not to trap as easily as it would have missed a trap that
+     * should not have happened, or one that happened for a reason nobody declared.
      */
-    private static void agrees(Running module, String export, long a, long b,
-            java.util.function.LongSupplier jvm) {
+    private static void agrees(Running module, String export, AbortKind expectedKind, long a,
+            long b, java.util.function.LongSupplier jvm) {
         String description = export + "(" + a + ", " + b + ")";
         Long expected;
         try {
@@ -417,17 +435,42 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
             expected = null;
         }
         if (expected == null) {
-            // answerOf's own mark is lost with the exception it throws, so this takes one first
-            // and resets it itself — the same recipe an aborted call asks any caller to follow.
-            int mark = module.call(RuntimeAbi.ALLOC_MARK);
-            assertThatThrownBy(() -> answerOf(module, export, array(a, b)))
+            assertThat(causeOf(module, export, array(a, b)))
                     .describedAs(description)
-                    .isInstanceOf(com.dylibso.chicory.wasm.ChicoryException.class);
-            module.call(RuntimeAbi.ALLOC_RESET, mark);
+                    .isEqualTo(new FailureCause.Language(expectedKind));
         } else {
             assertThat(answerOf(module, export, array(a, b)))
                     .describedAs(description)
                     .isEqualTo(value(Long.toString(expected)));
+        }
+    }
+
+    /**
+     * The one {@link AbortKind} {@code CheckedProgram} declares {@code kernel} can end a call
+     * without a value for. Every kernel this file's sweeps use answers exactly one, which is what
+     * lets a differential test compare a single expected kind rather than a set.
+     */
+    private static AbortKind onlyAbortOf(CheckedProgram program, Kernel kernel) {
+        var kinds = program.kernel(kernel).aborts().kinds();
+        assertThat(kinds).describedAs(kernel.toString()).hasSize(1);
+        return kinds.iterator().next();
+    }
+
+    /**
+     * What the trap {@code export(arguments)} raises names, read off the {@link FailureRecord} the
+     * runtime actually wrote rather than assumed from the exception type alone.
+     */
+    private static FailureCause causeOf(Running module, String export, String arguments) {
+        int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
+        int mark = module.call(RuntimeAbi.ALLOC_MARK);
+        try {
+            answerOf(module, export, arguments);
+            throw new AssertionError(export + " answered " + arguments + " rather than ending");
+        } catch (com.dylibso.chicory.wasm.ChicoryException trapped) {
+            var record = module.failureRecord();
+            module.call(RuntimeAbi.ALLOC_RESET, mark);
+            assertThat(record.describesTrapAfter(snapshot)).isTrue();
+            return record.cause().orElseThrow();
         }
     }
 

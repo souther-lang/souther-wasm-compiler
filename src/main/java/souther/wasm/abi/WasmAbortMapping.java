@@ -61,10 +61,20 @@ import souther.compiler.abort.AbortKind;
  * ADayAndATimeAreWhatACalendarSaysTest#endsTheCallWhereTheIntermediateYearItselfOverflowsRatherThanJustTheEndpoints}
  * is that case, fixed to the literal values it was found at rather than swept, because nothing
  * general enough to search the space between two endpoints for a coincidental re-entry exists
- * here yet. Every other kernel family ({@code List}, most of {@code String}) still relies on the
- * hand-audited call graph and its own smaller differential spot-checks rather than an equivalent
- * boundary sweep — an honest gap, not a closed one, and the next family to extend this to if one
- * turns up broken.
+ * here yet.
+ *
+ * <p>Every one of those sweeps compares the {@link AbortKind} a trap names — read off {@link
+ * FailureRecord#cause}, not merely whether something trapped — against the one answer {@code
+ * CheckedProgram.kernel(...).aborts()} gives for the kernel under test, never a second hand-kept
+ * table of which kind each operation answers to (that table would itself be exactly the
+ * "same fact filed twice" issue #23 exists to end). This matters: a bare trap-or-not check would
+ * have stayed green through a Rust call site misclassified onto the wrong {@link AbortKind} —
+ * verified by deliberately misclassifying one ({@code Int.add}'s overflow read as {@code
+ * INVALID_BOUNDS}) and confirming {@code everyIntOperationAgreesWithSouthersRuntimeAtTheEdgesOfWhatAnIntHolds}
+ * fails where a trap-only assertion would not have. Every other kernel family ({@code List}, most
+ * of {@code String}) still relies on the hand-audited call graph and its own smaller differential
+ * spot-checks rather than an equivalent boundary sweep — an honest gap, not a closed one, and the
+ * next family to extend this to if one turns up broken.
  *
  * <p>What this class owns is only the smaller fact every carrier's mapping has to answer for once
  * the kind is known: the number a host reads it as on this one ABI.

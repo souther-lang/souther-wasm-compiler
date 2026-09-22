@@ -11,8 +11,12 @@ import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
+import souther.compiler.core.Kernel;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Running;
+import souther.wasm.abi.FailureCause;
+import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
 
 /**
@@ -180,28 +184,25 @@ class ADayAndATimeAreWhatACalendarSaysTest {
      */
     @Test
     void endsTheCallWhereTheShiftItselfLeavesWhatAnIntHolds() {
-        Running module = compiled();
+        CheckedProgram program = program();
+        Running module = Running.linked(WasmCompiler.compile(program));
 
-        for (String[] far : new String[][] {
-            {"diary.later", "2026-09-04"}, {"diary.monthsOn", "2026-09-04"},
-            {"diary.yearsOn", "2026-09-04"},
+        for (Object[] far : new Object[][] {
+            {"diary.later", "2026-09-04", Kernel.DATE_ADD_DAYS},
+            {"diary.monthsOn", "2026-09-04", Kernel.DATE_ADD_MONTHS},
+            {"diary.yearsOn", "2026-09-04", Kernel.DATE_ADD_YEARS},
+            {"diary.minutesOn", "2026-09-04T09:30", Kernel.DATETIME_ADD_MINUTES},
+            {"diary.hoursOn", "2026-09-04T09:30", Kernel.DATETIME_ADD_HOURS},
         }) {
-            assertThatThrownBy(() -> answerOf(
-                    module, far[0], quoted(far[1]) + "," + Long.MIN_VALUE))
-                    .describedAs(far[0] + " by MIN_VALUE").isInstanceOf(ChicoryException.class);
-            assertThatThrownBy(() -> answerOf(
-                    module, far[0], quoted(far[1]) + "," + Long.MAX_VALUE))
-                    .describedAs(far[0] + " by MAX_VALUE").isInstanceOf(ChicoryException.class);
-        }
-        for (String[] far : new String[][] {
-            {"diary.minutesOn", "2026-09-04T09:30"}, {"diary.hoursOn", "2026-09-04T09:30"},
-        }) {
-            assertThatThrownBy(() -> answerOf(
-                    module, far[0], quoted(far[1]) + "," + Long.MIN_VALUE))
-                    .describedAs(far[0] + " by MIN_VALUE").isInstanceOf(ChicoryException.class);
-            assertThatThrownBy(() -> answerOf(
-                    module, far[0], quoted(far[1]) + "," + Long.MAX_VALUE))
-                    .describedAs(far[0] + " by MAX_VALUE").isInstanceOf(ChicoryException.class);
+            String export = (String) far[0];
+            String subject = (String) far[1];
+            AbortKind expected = onlyAbortOf(program, (Kernel) far[2]);
+            assertThat(causeOf(module, export, quoted(subject) + "," + Long.MIN_VALUE))
+                    .describedAs(export + " by MIN_VALUE")
+                    .isEqualTo(new FailureCause.Language(expected));
+            assertThat(causeOf(module, export, quoted(subject) + "," + Long.MAX_VALUE))
+                    .describedAs(export + " by MAX_VALUE")
+                    .isEqualTo(new FailureCause.Language(expected));
         }
     }
 
@@ -217,15 +218,19 @@ class ADayAndATimeAreWhatACalendarSaysTest {
      */
     @Test
     void endsTheCallWhereTheIntermediateYearItselfOverflowsRatherThanJustTheEndpoints() {
-        Running module = compiled();
+        CheckedProgram program = program();
+        Running module = Running.linked(WasmCompiler.compile(program));
 
-        for (String[] far : new String[][] {
-            {"diary.monthsOn", "606065638325558100"},
-            {"diary.yearsOn", "50505469860463175"},
+        for (Object[] far : new Object[][] {
+            {"diary.monthsOn", "606065638325558100", Kernel.DATE_ADD_MONTHS},
+            {"diary.yearsOn", "50505469860463175", Kernel.DATE_ADD_YEARS},
         }) {
-            assertThatThrownBy(() -> answerOf(module, far[0], quoted("2026-09-04") + "," + far[1]))
-                    .describedAs(far[0] + " by " + far[1])
-                    .isInstanceOf(ChicoryException.class);
+            String export = (String) far[0];
+            String by = (String) far[1];
+            AbortKind expected = onlyAbortOf(program, (Kernel) far[2]);
+            assertThat(causeOf(module, export, quoted("2026-09-04") + "," + by))
+                    .describedAs(export + " by " + by)
+                    .isEqualTo(new FailureCause.Language(expected));
         }
     }
 
@@ -259,7 +264,11 @@ class ADayAndATimeAreWhatACalendarSaysTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        return Running.linked(WasmCompiler.compile(program()));
+    }
+
+    private static CheckedProgram program() {
+        return CheckedProgram.of(List.of("""
                 module diary
 
                 behavior same : (d: Date) -> Date
@@ -335,7 +344,7 @@ class ADayAndATimeAreWhatACalendarSaysTest {
                 let of (y, m, d, fallback) = match Date.fromParts(y, m, d) with
                     | Date as held -> held
                     | NotADate -> fallback
-                """))));
+                """));
     }
 
     private static String answerOf(Running module, String export, String arguments) {
@@ -348,5 +357,37 @@ class ADayAndATimeAreWhatACalendarSaysTest {
                 module.read((int) answer[0], (int) answer[1]), StandardCharsets.UTF_8);
         module.call(RuntimeAbi.ALLOC_RESET, mark);
         return held;
+    }
+
+    /**
+     * The one {@link AbortKind} {@code CheckedProgram} declares {@code kernel} can end a call
+     * without a value for. Read off {@code CheckedProgram.kernel(...).aborts()} rather than a
+     * second hand-kept table of which kind each temporal shift answers to, so a differential test
+     * that checks this witnesses agreement with the Program API and not merely with itself.
+     */
+    private static AbortKind onlyAbortOf(CheckedProgram program, Kernel kernel) {
+        var kinds = program.kernel(kernel).aborts().kinds();
+        assertThat(kinds).describedAs(kernel.toString()).hasSize(1);
+        return kinds.iterator().next();
+    }
+
+    /**
+     * What the trap {@code export(arguments)} raises names, read off the {@link FailureRecord} the
+     * runtime actually wrote rather than assumed from the exception type alone — the trap could
+     * equally be a different {@link AbortKind} a Rust call site was misclassified onto, which a
+     * bare {@link ChicoryException} check cannot tell apart from the one expected.
+     */
+    private static FailureCause causeOf(Running module, String export, String arguments) {
+        int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
+        int mark = module.call(RuntimeAbi.ALLOC_MARK);
+        try {
+            answerOf(module, export, arguments);
+            throw new AssertionError(export + " answered " + arguments + " rather than ending");
+        } catch (ChicoryException trapped) {
+            var record = module.failureRecord();
+            module.call(RuntimeAbi.ALLOC_RESET, mark);
+            assertThat(record.describesTrapAfter(snapshot)).isTrue();
+            return record.cause().orElseThrow();
+        }
     }
 }
