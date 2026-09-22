@@ -27,6 +27,11 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     private static final String[] TEXTS = {
         "", "a", "abc", "  padded  ", "ごきげんよう", "a😀b", "\tmixed \n", "aaa", "a,b,,c",
         "one\r\ntwo\n", "Ĳ ǅ ß",
+        // Non-ASCII members of String whitespace (spec §string-whitespace), and near-miss
+        // code points that are not: a run through this must agree byte-for-byte with the same
+        // run through souther-runtime, not merely through whichever the WASM backend implements.
+        " padded ", "　ごきげんよう　", "a 　b", "\u0085  ",
+        "a​b", "a﻿b", "a\u001cb",
     };
 
     @Test
@@ -113,7 +118,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
             }
             assertThat(answerOf(module, "wording.tidied", array(quoted(text))))
                     .describedAs(text)
-                    .isEqualTo(value(quoted(text.trim())));
+                    .isEqualTo(value(quoted(Strings.trim(text))));
         }
         assertThat(answerOf(module, "wording.joined",
                 array(quoted("-"), "[\"a\",\"b\",\"c\"]")))
@@ -353,10 +358,32 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
         return "[" + a + "," + b + "]";
     }
 
-    /** A string as JSON writes it. The texts here carry nothing but a tab and a newline to escape. */
+    /** A string as JSON writes it — matching the control-character escaping
+     *  {@code __souther_json_write_string} (runtime/src/json.rs) does, so a text carrying a control
+     *  character other than tab/newline/CR still compares equal rather than differing only in how
+     *  the two sides spelled the same code point. */
     private static String quoted(String text) {
-        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r") + "\"";
+        StringBuilder out = new StringBuilder("\"");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\b' -> out.append("\\b");
+                case '\f' -> out.append("\\f");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c <= 0x1f) {
+                        out.append("\\u").append("%04x".formatted((int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        return out.append('"').toString();
     }
 
     private static String written(List<String> texts) {
