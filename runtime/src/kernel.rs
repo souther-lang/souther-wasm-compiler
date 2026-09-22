@@ -18,7 +18,10 @@ use crate::value::{
     __souther_list_length, __souther_list_set, __souther_string, __souther_string_bytes,
     __souther_string_length,
 };
-use crate::{abort, alloc, next_free, REASON_OUT_OF_RANGE};
+use crate::{
+    abort, alloc, next_free, REASON_BACKEND_INVARIANT_BROKEN, REASON_INVALID_BOUNDS,
+    REASON_REQUIRED_FORM_HAS_NO_PLACE,
+};
 
 /// `String.length`: how many code points, which is what a character is here.
 #[no_mangle]
@@ -35,7 +38,7 @@ pub unsafe extern "C" fn __souther_string_slice(from: u32, to: u32, text: u32) -
     let start = offset_of(text, first, held);
     let end = offset_of(text, last, held);
     if end < start {
-        abort(REASON_OUT_OF_RANGE, 0, last as u64, first as u64);
+        abort(REASON_INVALID_BOUNDS, 0, last as u64, first as u64);
     }
     __souther_string(__souther_string_bytes(text) + start, end - start)
 }
@@ -77,7 +80,7 @@ pub unsafe extern "C" fn __souther_string_repeat(count: u32, text: u32) -> u32 {
         return __souther_string(0, 0);
     }
     if times > u32::MAX as i64 || (times as u64) * (length as u64) > u32::MAX as u64 {
-        abort(REASON_OUT_OF_RANGE, 0, times as u64, length as u64);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, times as u64, length as u64);
     }
     let bytes = __souther_string_bytes(text);
     let out = next_free();
@@ -116,10 +119,18 @@ pub unsafe extern "C" fn __souther_instant_written(at: u32, length: u32) -> u32 
 ///
 /// The text sits in static memory and the value is built where it is used, because a value lives
 /// on the arena and the arena is reset between calls. What the text says was settled where it was
-/// written, so nothing here can fail to read it.
+/// written, so nothing here can fail to read it — `decimal::parse` answering zero for it is this
+/// compiler emitting a literal it should have rejected, not a Souther program ending without a
+/// value; `String.toDecimal` and the JSON boundary decoder are `decimal::parse`'s other two
+/// callers, and neither may abort here (spec: `String.toDecimal` never aborts; a boundary failure
+/// is an issue), which is why that choice belongs to each caller and not to `parse` itself.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_decimal_written(at: u32, length: u32) -> u32 {
-    crate::decimal::parse(at, length)
+    let held = crate::decimal::parse(at, length);
+    if held == 0 {
+        abort(REASON_BACKEND_INVARIANT_BROKEN, 0, at as u64, length as u64);
+    }
+    held
 }
 
 /// A day a body wrote down, read from the text it was written as.
@@ -338,14 +349,23 @@ pub unsafe extern "C" fn __souther_string_pad_right(width: u32, pad: u32, text: 
 }
 
 /// What brings a string up to exactly a width in code points, cut so a long pad does not overshoot.
+///
+/// `wanted <= current` first and the subtraction after: the other order around, a hugely negative
+/// `wanted` (`String.padLeft(MIN_VALUE, ...)`, say) would answer `wanted - current` with a wrapped
+/// positive `missing` instead of the negative one that arithmetic actually has — the release
+/// profile has overflow checks off — and read that wrapped value as a width to abort over, where
+/// `Strings.pad`'s own `length(s) >= width` on the JVM (trivially true against any negative width)
+/// answers the text unchanged instead. Checking the sign before subtracting needs no wrap to avoid,
+/// where subtracting first and asking whether the answer looks negative can be lied to by one.
 unsafe fn padding(width: u32, pad: u32, text: u32) -> u32 {
     let wanted = __souther_int_value(width);
-    let missing = wanted - code_points(text) as i64;
-    if missing <= 0 || __souther_string_length(pad) == 0 {
+    let current = code_points(text) as i64;
+    if wanted <= current || __souther_string_length(pad) == 0 {
         return __souther_string(0, 0);
     }
+    let missing = wanted - current;
     if missing > u32::MAX as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, wanted as u64, 0);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, wanted as u64, 0);
     }
     let each = code_points(pad) as i64;
     let times = (missing + each - 1) / each;
@@ -578,22 +598,25 @@ pub unsafe extern "C" fn __souther_int_divide(dividend: u32, divisor: u32, absen
     }
     match a.checked_div(b) {
         Some(quotient) => __souther_int(quotient),
-        None => abort(crate::REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(crate::REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
 /// `Int.truncatingRemainder(dividend, divisor)`: the remainder of a truncating division, so its
-/// sign is the dividend's, or the case a zero divisor is.
+/// sign is the dividend's, or the case a zero divisor is. Total once past that case (spec
+/// §stdlib-int): unlike the quotient, a truncating remainder's magnitude never exceeds the
+/// divisor's, so it always has a place — `checked_rem` answers `None` for `MIN_VALUE % -1`
+/// because computing the *quotient* first would overflow, not because the remainder itself does,
+/// and the true remainder there is 0 (the JVM's own `lrem` answers exactly that, uncontested,
+/// because bytecode `lrem` never raises for it either). `Int.floorMod` below reads `checked_rem`
+/// the identical way for the identical reason.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_int_remainder(dividend: u32, divisor: u32, absent: u32) -> u32 {
     let (a, b) = (__souther_int_value(dividend), __souther_int_value(divisor));
     if b == 0 {
         return value::__souther_unit(absent);
     }
-    match a.checked_rem(b) {
-        Some(rest) => __souther_int(rest),
-        None => abort(crate::REASON_INT_OVERFLOW, 0, a as u64, b as u64),
-    }
+    __souther_int(a.checked_rem(b).unwrap_or(0))
 }
 
 /// `String.toInt(s)`: the whole number the text is, or the case it is not one.
@@ -861,7 +884,7 @@ pub unsafe extern "C" fn __souther_list_range(first: u32, last: u32, descriptor:
     }
     let span = (to as i128) - (from as i128) + 1;
     if span > u32::MAX as i128 {
-        abort(REASON_OUT_OF_RANGE, 0, from as u64, to as u64);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, from as u64, to as u64);
     }
     let out = __souther_list(descriptor, span as u32);
     for i in 0..span as u32 {
@@ -898,7 +921,7 @@ unsafe fn code_points(text: u32) -> u32 {
 /// The byte a code point index stands at. Out of range ends the call, wherever it was written.
 unsafe fn offset_of(text: u32, index: i64, held: u32) -> u32 {
     if index < 0 || index > held as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, index as u64, held as u64);
+        abort(REASON_INVALID_BOUNDS, 0, index as u64, held as u64);
     }
     let bytes = __souther_string_bytes(text);
     let mut at = 0;
@@ -1314,11 +1337,18 @@ pub unsafe extern "C" fn __souther_date_add_months(by: u32, cell: u32) -> u32 {
     temporal::made(temporal::tag_of(cell), held, temporal::second(cell))
 }
 
-/// `Date.addYears(years, d)`.
+/// `Date.addYears(years, d)`: as many months, twelve to the year. `checked_mul`, not a raw `*` —
+/// the release profile has overflow checks off, so a raw `*` would wrap a huge `years` down to a
+/// small month count instead of trapping, and `moved_by_months` below would then run a shift
+/// nothing asked for rather than refuse one that has no place.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_date_add_years(by: u32, cell: u32) -> u32 {
     let years = __souther_int_value(by);
-    let held = temporal::moved_by_months(temporal::day(cell), years * 12);
+    let months = match years.checked_mul(12) {
+        Some(months) => months,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, years as u64, 0),
+    };
+    let held = temporal::moved_by_months(temporal::day(cell), months);
     temporal::made(temporal::tag_of(cell), held, temporal::second(cell))
 }
 
@@ -1442,12 +1472,22 @@ pub unsafe extern "C" fn __souther_time_second(cell: u32) -> u32 {
 }
 
 /// Moves a moment by `by` steps of `each` seconds.
+/// `checked_mul` and `checked_add`, not raw `*`/`+`: the release profile has overflow checks off,
+/// so either would wrap a huge `by` down to a small offset instead of trapping, and this would
+/// then answer a moment nothing asked for rather than refuse a shift that has no place.
 unsafe fn datetime_add(by: u32, cell: u32, each: i64) -> u32 {
-    let seconds = __souther_int_value(by) * each;
-    let held = temporal::moment(cell) + seconds;
+    let steps = __souther_int_value(by);
+    let seconds = match steps.checked_mul(each) {
+        Some(seconds) => seconds,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, steps as u64, each as u64),
+    };
+    let held = match temporal::moment(cell).checked_add(seconds) {
+        Some(held) => held,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, seconds as u64, 0),
+    };
     let day = held.div_euclid(86_400);
     if day > i32::MAX as i64 || day < i32::MIN as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, day as u64, 0);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, day as u64, 0);
     }
     temporal::made(value::TAG_DATE_TIME, day as i32, held.rem_euclid(86_400) as i32)
 }

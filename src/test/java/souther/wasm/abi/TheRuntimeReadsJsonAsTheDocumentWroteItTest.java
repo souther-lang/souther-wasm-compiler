@@ -101,7 +101,7 @@ class TheRuntimeReadsJsonAsTheDocumentWroteItTest {
 
             FailureRecord record = runtime.failureRecord();
             assertThat(record.describesTrapAfter(snapshot)).describedAs(written).isTrue();
-            assertThat(record.namedReason()).describedAs(written).contains(AbortReason.MALFORMED_JSON);
+            assertThat(record.cause()).describedAs(written).contains(new FailureCause.Wasm(WasmFault.MALFORMED_JSON));
         }
     }
 
@@ -122,7 +122,7 @@ class TheRuntimeReadsJsonAsTheDocumentWroteItTest {
 
         FailureRecord record = runtime.failureRecord();
         assertThat(record.describesTrapAfter(snapshot)).isTrue();
-        assertThat(record.namedReason()).contains(AbortReason.MALFORMED_JSON);
+        assertThat(record.cause()).contains(new FailureCause.Wasm(WasmFault.MALFORMED_JSON));
     }
 
     @Test

@@ -41,7 +41,7 @@ use crate::issues::{
 };
 use crate::json;
 use crate::text;
-use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_INT_OVERFLOW, REASON_NOT_A_VALUE};
+use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 /// The one value a type with a single value has. `+4` is which type.
 pub const TAG_UNIT: u32 = 0;
@@ -247,19 +247,19 @@ pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
     let (a, b) = (__souther_int_value(left), __souther_int_value(right));
     match a.checked_add(b) {
         Some(sum) => __souther_int(sum),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
-/// The unary `-` on `Int`. Only the sign moves, and the one number that has no opposite an `Int`
-/// holds ends the call rather than coming back as itself.
+/// The unary `-` on `Int`. Total, unlike `+`/`-`/`*` (spec: `Core.Neg` is `AbortSet.NONE`, not
+/// `REQUIRED_FORM_HAS_NO_PLACE` — traced against `souther.compiler.abort.AbortSites` and
+/// `souther.compiler.codegen.BodyGen`, which emits this as bytecode's own `lneg`): `MIN_VALUE` is
+/// the one `Int` whose negation is not representable as a positive `Int`, but two's-complement
+/// negation of it wraps back to `MIN_VALUE` rather than raising, on the JVM and here alike, so
+/// `wrapping_neg` and not `checked_neg` is this operator's actual, total arithmetic.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_negate(cell: u32) -> u32 {
-    let held = __souther_int_value(cell);
-    match held.checked_neg() {
-        Some(opposite) => __souther_int(opposite),
-        None => abort(REASON_INT_OVERFLOW, 0, held as u64, 0),
-    }
+    __souther_int(__souther_int_value(cell).wrapping_neg())
 }
 
 /// The `-` operator on `Int`.
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn __souther_subtract(left: u32, right: u32) -> u32 {
     let (a, b) = (__souther_int_value(left), __souther_int_value(right));
     match a.checked_sub(b) {
         Some(difference) => __souther_int(difference),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
@@ -278,7 +278,7 @@ pub unsafe extern "C" fn __souther_multiply(left: u32, right: u32) -> u32 {
     let (a, b) = (__souther_int_value(left), __souther_int_value(right));
     match a.checked_mul(b) {
         Some(product) => __souther_int(product),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
@@ -294,7 +294,7 @@ pub unsafe extern "C" fn __souther_divide(left: u32, right: u32) -> u32 {
     }
     match a.checked_div(b) {
         Some(quotient) => __souther_int(quotient),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 

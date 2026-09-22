@@ -14,7 +14,7 @@
 //! A `Date` leaves the second at nothing and a `Time` leaves the day at nothing, so the three are
 //! one shape and only what is read off it differs.
 
-use crate::{abort, alloc, REASON_OUT_OF_RANGE};
+use crate::{abort, alloc, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 const OFF_DAY: usize = 4;
 const OFF_SECOND: usize = 8;
@@ -67,26 +67,37 @@ pub fn civil(days: i32) -> (i64, u32, u32) {
 /// caller wrote that names a day this cannot hold is bad input and is refused with the rest; a
 /// computation that walks off the end is the model asking for a day there is not, and ends the
 /// call. Working the number out is the same either way.
-pub fn day_count(year: i64, month: u32, day: u32) -> i64 {
+///
+/// `i128`, not `i64`: `year` can be a `checked_mul`'d month count divided back down
+/// (`moved_by_months`, reached from `Date.addMonths`/`addYears`), so it is not bounded to
+/// anything this function chose — and the whole reason to call this is to find out whether the
+/// answer reaches a day this holds, which `era * 146_097` cannot answer honestly in `i64` for a
+/// `year` large enough to make that product itself leave what an `i64` holds: the release profile
+/// has overflow checks off, so it would wrap, silently, and land back inside `i32`'s day range by
+/// coincidence often enough to matter — a decade-scale year read back as a real, wrong day rather
+/// than refused. `i128` holds every value the intermediate terms here can reach for any `i64`
+/// `year`, so nothing past this point needs to wonder whether it already wrapped.
+pub fn day_count(year: i64, month: u32, day: u32) -> i128 {
+    let year = year as i128;
     let y = if month <= 2 { year - 1 } else { year };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let year_of_era = y - era * 400;
-    let months = if month > 2 { month - 3 } else { month + 9 } as i64;
-    let day_of_year = (153 * months + 2) / 5 + day as i64 - 1;
+    let months = if month > 2 { month - 3 } else { month + 9 } as i128;
+    let day_of_year = (153 * months + 2) / 5 + day as i128 - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
 }
 
 /// Whether a day is one this holds, which is whether the number of days fits what holds it.
-pub fn holds_a_day(held: i64) -> bool {
-    held >= i32::MIN as i64 && held <= i32::MAX as i64
+pub fn holds_a_day(held: i128) -> bool {
+    held >= i32::MIN as i128 && held <= i32::MAX as i128
 }
 
 /// Which day a year, month and day is, ending the call where it is not one this holds.
 pub unsafe fn days(year: i64, month: u32, day: u32) -> i32 {
     let held = day_count(year, month, day);
     if !holds_a_day(held) {
-        abort(REASON_OUT_OF_RANGE, 0, year as u64, held as u64);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, year as u64, held as u64);
     }
     held as i32
 }
@@ -129,7 +140,7 @@ pub unsafe fn moved_by_months(days_from_epoch: i32, by: i64) -> i32 {
         .and_then(|held| held.checked_add(by))
     {
         Some(held) => held,
-        None => abort(REASON_OUT_OF_RANGE, 0, by as u64, year as u64),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, by as u64, year as u64),
     };
     let held_year = months.div_euclid(12);
     let held_month = (months.rem_euclid(12) + 1) as u32;
@@ -478,11 +489,21 @@ unsafe fn zone(at: u32, length: u32, from: u32) -> Option<(i64, u32)> {
 }
 
 /// A day so many days later, or an end to the call where that is not a day a calendar reaches.
+///
+/// `checked_add` and not a raw `+`: the release profile turns overflow checks off, so a raw `+`
+/// would not trap on the way past what an `i64` holds — it would wrap, silently, to whichever
+/// value the wraparound happens to land on. Answering off a wrapped `held` is not this function
+/// refusing what has no place; it is this function answering a different shift than it was asked
+/// to run (issue #23's follow-up: `Date.addYears` and `DateTime.addMinutes`/`addHours` read a
+/// `checked_mul`'s own overflow that same unchecked way, before this ever saw the count).
 pub unsafe fn moved(days_from_epoch: i32, by: i64) -> i32 {
-    let held = days_from_epoch as i64 + by;
-    if held > i32::MAX as i64 || held < i32::MIN as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, held as u64, 0);
-    }
+    let held = match (days_from_epoch as i64).checked_add(by) {
+        Some(held) if held <= i32::MAX as i64 && held >= i32::MIN as i64 => held,
+        Some(held) => {
+            abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0);
+        }
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, by as u64, days_from_epoch as u64),
+    };
     held as i32
 }
 

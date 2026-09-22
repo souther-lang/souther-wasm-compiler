@@ -6,9 +6,10 @@ import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Running;
-import souther.wasm.abi.AbortReason;
+import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -71,7 +72,7 @@ class AnAttemptedConstructionBranchesOnWhatMustHoldTest {
         assertThat(answerOf(module, "counting.only", "[3]")).isEqualTo("{\"value\":3}");
 
         FailureRecord record = endOf(module, "counting.only", "[0]");
-        assertThat(record.namedReason()).contains(AbortReason.NOTHING_TO_ANSWER_WITH);
+        assertThat(record.cause()).contains(new FailureCause.Language(AbortKind.UNREACHABLE_REACHED));
         assertThat(reasonIn(module, record)).isEqualTo("a count is never under one");
     }
 

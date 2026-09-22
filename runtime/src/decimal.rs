@@ -17,7 +17,7 @@
 //! a power of two to write a number down.
 
 use crate::value::TAG_DECIMAL;
-use crate::{abort, alloc, REASON_OUT_OF_RANGE};
+use crate::{abort, alloc, REASON_BACKEND_INVARIANT_BROKEN, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 /// How many digits a limb holds. A limb is that many digits of the number and nothing else, so
 /// putting digits in and taking them out is a division by ten and never by a power of two.
@@ -288,8 +288,15 @@ unsafe fn copy(from: u32, length: u32) -> u32 {
 
 /// Reads a number as it was written into the amount it names.
 ///
-/// Answers zero where the text is not a number, which is what a reader of a document has to be
-/// told rather than ended for.
+/// Answers zero where the text is not a number — including where it names an exponent or a scale
+/// `Decimal` has no room for, exactly as it does for a syntax `Decimal` has no room for — which is
+/// what a reader of a document has to be told rather than ended for. This one function is called
+/// from three places whose provenance is not the same (`String.toDecimal`, which the language
+/// declares never aborts; the JSON boundary decoder, which reports a bad document as an issue and
+/// not an abort; and a `Decimal` literal a body wrote down, which the checker settles is always
+/// one of these bytes read back, so a zero there is this compiler's own bug and not the language's)
+/// — so the choice of what "could not be read" becomes belongs to whichever of those three is
+/// calling, and this stays total instead of making that choice on their behalf.
 pub unsafe fn parse(at: u32, length: u32) -> u32 {
     let mut i = 0;
     let negative = length > 0 && core::ptr::read(at as *const u8) == b'-';
@@ -349,7 +356,8 @@ pub unsafe fn parse(at: u32, length: u32) -> u32 {
             }
             power = power * 10 + (byte - b'0') as i64;
             if power > i32::MAX as i64 {
-                abort(REASON_OUT_OF_RANGE, 0, power as u64, 0);
+                // Not this function's call to make — see the doc comment above.
+                return 0;
             }
             i += 1;
         }
@@ -362,7 +370,8 @@ pub unsafe fn parse(at: u32, length: u32) -> u32 {
         return 0;
     }
     if held > i32::MAX as i64 || held < i32::MIN as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, held as u64, 0);
+        // Not this function's call to make — see the doc comment above.
+        return 0;
     }
     of_digits(out, written, held as i32, negative)
 }
@@ -666,7 +675,7 @@ pub unsafe extern "C" fn __souther_decimal_multiply(left: u32, right: u32) -> u3
 unsafe fn added_scale(left: u32, right: u32) -> i32 {
     let held = scale(left) as i64 + scale(right) as i64;
     if held > i32::MAX as i64 || held < i32::MIN as i64 {
-        abort(REASON_OUT_OF_RANGE, 0, held as u64, 0);
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0);
     }
     held as i32
 }
@@ -764,8 +773,11 @@ unsafe fn rounded(
                     (core::ptr::read((digits_at + digits_length - 1) as *const u8) - b'0') % 2 == 1
                 }
             }
-            // Nothing else is a mode the language declares.
-            _ => abort(REASON_OUT_OF_RANGE, 0, mode as u64, 0),
+            // Nothing else is a mode the language declares: every `RoundingMode` case this
+            // module was compiled against is above, so an ordinal outside them is the
+            // compiler and this crate disagreeing about what the language declares, not a
+            // Souther program failing to hold anything.
+            _ => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, mode as u64, 0),
         }
     };
     if !up {
@@ -869,7 +881,7 @@ pub unsafe extern "C" fn __souther_decimal_divide_by(left: u32, right: u32) -> u
 fn bounded(held: i64) -> i32 {
     if held > i32::MAX as i64 || held < i32::MIN as i64 {
         // A scale outside what one can be is a model bug rather than an amount.
-        unsafe { abort(REASON_OUT_OF_RANGE, 0, held as u64, 0) }
+        unsafe { abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0) }
     }
     held as i32
 }
@@ -925,12 +937,12 @@ pub unsafe extern "C" fn __souther_decimal_to_int(mode: u32, cell: u32) -> u32 {
     for i in 0..length {
         magnitude = magnitude * 10 + (core::ptr::read((at + i) as *const u8) - b'0') as u128;
         if magnitude > 1u128 << 63 {
-            abort(crate::REASON_INT_OVERFLOW, 0, length as u64, 0);
+            abort(crate::REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, length as u64, 0);
         }
     }
     let limit = if sign(whole) < 0 { 1u128 << 63 } else { i64::MAX as u128 };
     if magnitude > limit {
-        abort(crate::REASON_INT_OVERFLOW, 0, length as u64, 0);
+        abort(crate::REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, length as u64, 0);
     }
     crate::value::__souther_int(if sign(whole) < 0 {
         (magnitude as i128).wrapping_neg() as i64

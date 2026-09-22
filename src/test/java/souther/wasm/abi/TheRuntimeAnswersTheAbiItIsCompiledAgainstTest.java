@@ -99,7 +99,7 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
         runtime.call(RuntimeAbi.ALLOC_RESET, mark);
         FailureRecord record = runtime.failureRecord();
         assertThat(record.describesTrapAfter(snapshot)).isTrue();
-        assertThat(record.namedReason()).contains(AbortReason.BAD_MARK);
+        assertThat(record.cause()).contains(new FailureCause.Wasm(WasmFault.BAD_MARK));
         assertThat(record.aux1()).isEqualTo(mark);
     }
 

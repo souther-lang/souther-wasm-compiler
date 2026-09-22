@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
 
 /**
  * What a caller outside the JVM has to agree with this about, and where that agreement is written.
@@ -34,14 +35,19 @@ class TheGlueAndTheAbiAgreeOnWhatACallEndedWithTest {
         Map<String, Integer> said = numbersIn("(\\d+): \"");
 
         assertThat(said).describedAs("the glue names the reasons a call can end with").isNotEmpty();
-        for (AbortReason reason : AbortReason.values()) {
-            assertThat(said).describedAs(reason + " is one the glue reads")
-                    .containsKey(Integer.toString(reason.code()));
+        for (AbortKind kind : AbortKind.values()) {
+            int code = WasmAbortMapping.representationOf(kind);
+            assertThat(said).describedAs(kind + " is one the glue reads")
+                    .containsKey(Integer.toString(code));
+        }
+        for (WasmFault fault : WasmFault.values()) {
+            assertThat(said).describedAs(fault + " is one the glue reads")
+                    .containsKey(Integer.toString(fault.code()));
         }
         // And nothing else: a number the glue reads and this does not name is one it would say
         // words about that never happened.
         for (String held : said.keySet()) {
-            assertThat(AbortReason.of(Integer.parseInt(held)))
+            assertThat(FailureCause.of(Integer.parseInt(held)))
                     .describedAs("the glue reads " + held).isPresent();
         }
     }

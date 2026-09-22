@@ -9,9 +9,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
+import souther.compiler.abort.AbortKind;
 
 /**
  * The numbers a reason goes by, on both sides of the boundary.
@@ -19,6 +21,12 @@ import org.junit.jupiter.api.Test;
  * <p>A reason is written down twice: once where it is raised and once where it is read. Nothing
  * makes the two agree except that they were written together, and a number that drifted would name
  * one failure as another — quietly, because both sides would still have a name for it.
+ *
+ * <p>Two families share this one number space ({@link FailureCause}): a Souther program's own
+ * abort, represented here by {@link WasmAbortMapping}, and this backend's own fault, named by
+ * {@link WasmFault}. Both sides are held to the runtime's {@code REASON_*} constants by name and
+ * by number, so a rename on one side that forgets the other fails here rather than at a host
+ * reading a trap.
  */
 class TheTwoSidesOfAReasonAgreeOnItsNumberTest {
 
@@ -26,29 +34,47 @@ class TheTwoSidesOfAReasonAgreeOnItsNumberTest {
             Pattern.compile("pub const REASON_([A-Z_]+): u32 = (\\d+);");
 
     @Test
-    void everyReasonTheRuntimeRaisesIsOneThisSideCanName() {
+    void everyReasonTheRuntimeDeclaresIsOneThisSideNamesTheSameWay() {
         Map<String, Integer> runtime = declaredByTheRuntime();
 
         assertThat(runtime).isNotEmpty();
         for (Map.Entry<String, Integer> each : runtime.entrySet()) {
-            assertThat(AbortReason.of(each.getValue()))
+            assertThat(nameOf(each.getValue()))
                     .describedAs(each.getKey() + " is " + each.getValue())
-                    .isPresent()
-                    .get()
-                    .extracting(Enum::name)
-                    .isEqualTo(each.getKey());
+                    .contains(each.getKey());
         }
     }
 
     @Test
-    void everyReasonThisSideNamesIsOneTheRuntimeWroteDown() {
+    void everyAbortKindThisSideRepresentsIsOneTheRuntimeWroteDownTheSameWay() {
         Map<String, Integer> runtime = declaredByTheRuntime();
 
-        for (AbortReason each : AbortReason.values()) {
+        for (AbortKind kind : AbortKind.values()) {
             assertThat(runtime)
-                    .describedAs(each.name())
-                    .containsEntry(each.name(), each.code());
+                    .describedAs(kind.name())
+                    .containsEntry(kind.name(), WasmAbortMapping.representationOf(kind));
         }
+    }
+
+    @Test
+    void everyWasmFaultThisSideNamesIsOneTheRuntimeWroteDownTheSameWay() {
+        Map<String, Integer> runtime = declaredByTheRuntime();
+
+        for (WasmFault fault : WasmFault.values()) {
+            assertThat(runtime)
+                    .describedAs(fault.name())
+                    .containsEntry(fault.name(), fault.code());
+        }
+    }
+
+    /** What {@code code} ought to be named, on this side, whichever family it belongs to. */
+    private static Optional<String> nameOf(int code) {
+        for (AbortKind kind : AbortKind.values()) {
+            if (WasmAbortMapping.representationOf(kind) == code) {
+                return Optional.of(kind.name());
+            }
+        }
+        return WasmFault.of(code).map(Enum::name);
     }
 
     /** What the runtime's own source says each reason is, read out of it. */
