@@ -1378,7 +1378,7 @@ public final class WasmCompiler {
                         RuntimeAbi.Kernels.DECIMAL_MULTIPLY);
                 case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE,
                         RuntimeAbi.Kernels.DECIMAL_DIVIDE_BY);
-                case CONCAT -> arithmetic(out, binary, RuntimeAbi.CONCAT, null);
+                case CONCAT -> concatenation(out, binary);
                 case EQ -> comparison(out, binary, BodyWriter.Comparison.EQUAL);
                 case NE -> comparison(out, binary, BodyWriter.Comparison.UNEQUAL);
                 case LT -> comparison(out, binary, BodyWriter.Comparison.LESS);
@@ -1399,6 +1399,27 @@ public final class WasmCompiler {
                     value(out, binary.right());
                     out.localSet(answer).end().localGet(answer);
                 }
+            }
+        }
+
+        /**
+         * {@code ++}, joined by what its left operand is: a {@code String} is joined as text and a
+         * list as elements, and they are two runtime operations because the cells they join do not
+         * share a layout. The type is the checker's, so an operand that is neither is not one this
+         * backend chooses a join for.
+         */
+        private void concatenation(BodyWriter out, Core.Binary binary) {
+            souther.compiler.types.Type operand = binary.left().type();
+            if (operand == souther.compiler.types.Type.Prim.STRING) {
+                value(out, binary.left());
+                value(out, binary.right());
+                out.call(calls.of(RuntimeAbi.STRING_JOIN));
+            } else if (operand instanceof souther.compiler.types.Type.ListOf) {
+                value(out, binary.left());
+                value(out, binary.right());
+                out.constant(shapes.of(binary.type())).call(calls.of(RuntimeAbi.LIST_JOIN));
+            } else {
+                throw new NotLowered(writing + " joins a " + operand + " with ++");
             }
         }
 

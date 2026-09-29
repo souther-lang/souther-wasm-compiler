@@ -46,7 +46,7 @@ pub unsafe extern "C" fn __souther_string_slice(from: u32, to: u32, text: u32) -
 /// `String.append(a, b)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_append(left: u32, right: u32) -> u32 {
-    value::__souther_concat(left, right)
+    value::__souther_string_concat(left, right)
 }
 
 /// `String.reverse`: the characters the other way round, a character at a time.
@@ -335,7 +335,7 @@ pub unsafe extern "C" fn __souther_string_pad_left(width: u32, pad: u32, text: u
     if __souther_string_length(fill) == 0 {
         return text;
     }
-    value::__souther_concat(fill, text)
+    value::__souther_string_concat(fill, text)
 }
 
 /// `String.padRight(width, pad, s)`.
@@ -345,7 +345,7 @@ pub unsafe extern "C" fn __souther_string_pad_right(width: u32, pad: u32, text: 
     if __souther_string_length(fill) == 0 {
         return text;
     }
-    value::__souther_concat(text, fill)
+    value::__souther_string_concat(text, fill)
 }
 
 /// What brings a string up to exactly a width in code points, cut so a long pad does not overshoot.

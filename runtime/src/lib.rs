@@ -51,7 +51,11 @@ const PAGE: usize = 65536;
 /// reason numbers kept their value but changed what they mean (5 generalised from `Int` overflow
 /// alone to every `REQUIRED_FORM_HAS_NO_PLACE` case, 7 from a match falling through alone to any
 /// internal invariant breaking, 8 and 9 were renamed to the language's own names), and 11 is new.
-const ABI_VERSION: u32 = 4;
+///
+/// Raised to 5 when `++` stopped being one entry point that served only `String`: the string join
+/// is `__souther_string_concat` (it was `__souther_concat`) and the list join is
+/// `__souther_list_concat`.
+const ABI_VERSION: u32 = 5;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.

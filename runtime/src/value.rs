@@ -310,7 +310,7 @@ pub unsafe extern "C" fn __souther_compare(left: u32, right: u32, descriptor: u3
 
 /// The `++` operator on `String`.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_concat(left: u32, right: u32) -> u32 {
+pub unsafe extern "C" fn __souther_string_concat(left: u32, right: u32) -> u32 {
     let (a, a_length) = (__souther_string_bytes(left), __souther_string_length(left));
     let (b, b_length) = (__souther_string_bytes(right), __souther_string_length(right));
     let cell = header(TAG_STRING, a_length + b_length);
@@ -322,6 +322,24 @@ pub unsafe extern "C" fn __souther_concat(left: u32, right: u32) -> u32 {
         b_length as usize,
     );
     cell
+}
+
+/// The `++` operator on `List`: every element of the left, then every element of the right.
+///
+/// The descriptor is the one the answer is typed as, handed in for the reason `List.reverse` is
+/// handed one: it is the checker's type of the whole expression, where either operand's own cell
+/// may be an empty list written without an element to take it from.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_concat(left: u32, right: u32, descriptor: u32) -> u32 {
+    let (a, b) = (__souther_list_length(left), __souther_list_length(right));
+    let out = __souther_list(descriptor, a + b);
+    for i in 0..a {
+        __souther_list_set(out, i, __souther_list_get(left, i));
+    }
+    for i in 0..b {
+        __souther_list_set(out, a + i, __souther_list_get(right, i));
+    }
+    out
 }
 
 /// A map of that many entries, with nothing in them yet.

@@ -43,8 +43,11 @@ public final class RuntimeAbi {
      * <p>Raised to 4 when the reason vocabulary stopped naming Souther's own abort semantics a
      * second time and started only representing {@code souther.compiler.abort.AbortKind} (issue
      * #23): see {@code runtime/src/lib.rs}'s own note on its {@code ABI_VERSION} for what changed.
+     *
+     * <p>Raised to 5 when {@code ++} was split by its operands' type: the {@code String} join became
+     * {@link #STRING_JOIN} (it was {@code __souther_concat}) and {@link #LIST_JOIN} joins lists.
      */
-    public static final int VERSION = 4;
+    public static final int VERSION = 5;
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";
@@ -504,7 +507,10 @@ public final class RuntimeAbi {
     }
 
     /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
-    public static final String CONCAT = "__souther_concat";
+    public static final String STRING_JOIN = "__souther_string_concat";
+
+    /** {@code (i32 left, i32 right, i32 descriptor) -> i32}: the {@code ++} operator on lists. */
+    public static final String LIST_JOIN = "__souther_list_concat";
 
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
