@@ -247,17 +247,18 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     @Test
     void saysWhichKindOfStopItWasWhenThisBackendIsTheOneRefusing(@TempDir Path room)
             throws IOException {
-        Path source = Files.writeString(room.resolve("looking.sou"), """
-                module looking
+        Path source = Files.writeString(room.resolve("halving.sou"), """
+                module halving
 
-                behavior priced : (written: String) -> Bool
+                behavior halved : (a: Int, b: Int) -> Int
 
-                let priced (written) = String.matches("^(?=.*x)ab$", written)
+                let ignoring (exact: Rational): Int = 1
+
+                let halved (a, b) = ignoring(a / b)
                 """);
         Path into = room.resolve("out.wasm");
 
-        // A lookahead is a question about a way already taken, and what a pattern is read into
-        // holds every step the walk could be at rather than trying one way and coming back. The
+        // A quotient of two Ints is a Rational, which this backend does not write yet. The
         // language takes the program; this is the backend saying it cannot write it.
         Ran ran = run(source.toString(), "-o", into.toString());
 

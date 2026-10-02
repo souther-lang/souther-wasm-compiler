@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[dependencies]
+# The rules for reading text Souther shares with Raoh: case conversion, normalization, White_Space,
+# order and length in scalar values, temporal text, and the image a pattern's machine is written as.
+# Pinned to a commit until the crate is published, so that what the runtime builds is the same
+# everywhere and the carried copy can be compared with it. The Java side takes the same library's
+# Java implementation.
+notation199x = { git = "https://github.com/raoh-project/199x-notation", rev = "46b73e9bc219acbb7f6f89f710d53dc122cb4f1a" }
+
 [lib]
 crate-type = ["cdylib"]
 

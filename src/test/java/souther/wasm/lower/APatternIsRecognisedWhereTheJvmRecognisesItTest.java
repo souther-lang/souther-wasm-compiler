@@ -5,7 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.regex.Pattern;
+import net.unit8.notation199x.Normalization;
+import net.unit8.notation199x.pattern.PatternMachine;
+import net.unit8.notation199x.pattern.PatternParser;
+import net.unit8.notation199x.pattern.PatternRead;
+import net.unit8.notation199x.pattern.StringPattern;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Running;
@@ -14,9 +18,14 @@ import souther.wasm.abi.RuntimeAbi;
 /**
  * Whether a string is what a pattern describes, against what the JVM says.
  *
- * <p>The checker settles the pattern text and this compiles it ahead of the run, so what runs is the
- * machine it was compiled into. What that machine must agree with is {@link Pattern#matches}, because that is what
- * the other backend calls, so every pattern here is run both ways.
+ * <p>The checker settles what a pattern means, and the machine that meaning is run as is
+ * 199x-notation's: the JVM backend runs it from an image in a class, and this backend runs it from
+ * an image in static memory, read by the library's Rust implementation. So every pattern here is
+ * run both ways, and what the JVM side answers is the library's Java implementation running the
+ * machine of the same meaning.
+ *
+ * <p>A pattern the language refuses never reaches a backend, so where the language does not read
+ * one of these, the program is required not to compile, and that is all that is asked of it.
  */
 class APatternIsRecognisedWhereTheJvmRecognisesItTest {
 
@@ -101,7 +110,7 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
         "ひらがな", "ひa", "abc123", "a-1", "ABC", "e\u0301",
         "abc", "AbC", "aBc", "A.B", "a.b", "X", "x", "Y", "y", "aC", "Ab",
         "word", "a word", "words", "a b", "a-b", "ab", "a_b", "abc1",
-        "🙂", "🙂🙂", "🙃", "a🙂b", "🙂a", "Ω", "ω", "😀", "\uD83D", "\uDE42",
+        "🙂", "🙂🙂", "🙃", "a🙂b", "🙂a", "Ω", "ω", "😀",
         "ac", "bc", "abc\n", "\n", "é", "日本",
         "acd", "bcd", "acbcd", "d", "abcd", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaab", "..", ".", "a-c", "-", "192.168.0.1", "1.2.3",
@@ -111,27 +120,21 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
     @Test
     void recognisesEverythingTheJvmRecognisesAndNothingElse() {
         for (String pattern : PATTERNS) {
+            if (!(PatternParser.read(pattern) instanceof PatternRead.Read read)) {
+                assertThatThrownBy(() -> compiled(pattern))
+                        .describedAs("/" + pattern + "/ is no pattern of the language")
+                        .isNotInstanceOf(NotLowered.class);
+                continue;
+            }
+            StringPattern jvm = PatternMachine.of(read.meaning()).pattern();
             Running module = compiled(pattern);
             for (String subject : SUBJECTS) {
-                boolean expected = Pattern.matches(pattern, subject);
+                // Text is let in as its canonical form on both sides before anything is asked of it.
+                boolean expected = jvm.matches(Normalization.normalize(Normalization.Form.NFC, subject));
                 assertThat(answerOf(module, quoted(subject)))
                         .describedAs("/" + pattern + "/ against " + quoted(subject))
                         .isEqualTo("{\"value\":" + expected + "}");
             }
-        }
-    }
-
-    @Test
-    void refusesAPatternItWouldHaveHadToGuessAt() {
-        // Every one of these is a pattern the language takes and this does not read. A pattern the
-        // language itself refuses — a property nobody has heard of — never arrives, so it is not
-        // among them: what would be tested is the language's answer and not this one.
-        for (String pattern : new String[] {
-            "(a)\\1", "(?=a)b", "a*?", "a*+", "(?<name>a)", "a^b", "a$b", "\\x{1F600}", "[\\x{41}-\\x{5A}]", "a(?i)b", "(a)(?i)b",
-        }) {
-            assertThatThrownBy(() -> compiled(pattern))
-                    .describedAs(pattern)
-                    .isInstanceOf(NotLowered.class);
         }
     }
 

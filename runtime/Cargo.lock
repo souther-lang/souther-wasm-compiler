@@ -3,5 +3,13 @@
 version = 4
 
 [[package]]
+name = "notation199x"
+version = "0.2.0-dev"
+source = "git+https://github.com/raoh-project/199x-notation?rev=46b73e9bc219acbb7f6f89f710d53dc122cb4f1a#46b73e9bc219acbb7f6f89f710d53dc122cb4f1a"
+
+[[package]]
 name = "souther-wasm-runtime"
 version = "0.1.0"
+dependencies = [
+ "notation199x",
+]

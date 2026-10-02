@@ -868,6 +868,9 @@ public final class WasmCompiler {
                 case Core.Block block -> closure(out, block);
                 case Core.Apply applied -> apply(out, applied);
                 case Core.Call call -> call(out, call);
+                // Every value here is a cell that says what it is, so a value standing as a wider
+                // type is the same cell, and nothing is written for the widening.
+                case Core.Widen widened -> value(out, widened.value());
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {
@@ -977,11 +980,9 @@ public final class WasmCompiler {
                 throw new NotLowered(writing + " reaches " + call.fn()
                         + ", and this backend reaches a helper and a behavior");
             }
-            ValueName name = switch (declaration.reaches()) {
-                case Core.Reaches.AHelper helper -> helper.declaration();
-                case Core.Reaches.APublishedValue published -> published.declaration();
-                case Core.Reaches.ABehavior reaches -> reaches.behavior();
-            };
+            // A helper, a value and a behavior are each a body this program reaches by the name it
+            // was declared under, so which of them it is decides nothing here.
+            ValueName name = declaration.reaches().declaration();
             Integer index = reached.get(name);
             if (index == null) {
                 throw new NotLowered(writing + " reaches " + name
@@ -1122,23 +1123,28 @@ public final class WasmCompiler {
         private void recognised(BodyWriter out, Core.Call call) {
             // The call cannot be built without this settlement, so a different one is the
             // checker's contract broken and not something this backend lacks.
-            Core.CallSettlement.StringMatches settled =
-                    (Core.CallSettlement.StringMatches) call.settlement();
+            Core.KernelFact.StringMatches settled = (Core.KernelFact.StringMatches) factOf(call);
             value(out, call.args().get(1));
-            out.constant(Patterns.place(fragment, settled.pattern()))
+            out.constant(Patterns.place(fragment, settled))
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
         }
 
+        /** What the checker settled about a kernel's application, beside what it takes. A call
+         *  reaching a kernel is one the checker built as such, so any other settlement is its
+         *  contract broken. */
+        private Core.KernelFact factOf(Core.Call call) {
+            return ((Core.CallSettlement.AtKernel) call.settlement()).fact();
+        }
+
         /** The Type a {@code sortBy} call's ordering requirement was checked against — the key
-         *  block's result, not the list's element. Read off {@link Core.CallSettlement.OrderingSubject}
+         *  block's result, not the list's element. Read off {@link Core.KernelFact.OrderingSubject}
          *  rather than re-derived from the block's declared type, so this backend never disagrees with
          *  what the checker settled. */
         private souther.compiler.types.Type orderingSubject(Core.Call call) {
             // CallElaborator cannot produce a sortBy application without this settlement, so a
             // different one here is the checker's contract broken and not a capability this backend
             // lacks — the same distinction `recognised` draws for String.matches's settled pattern.
-            Core.CallSettlement.OrderingSubject settled =
-                    (Core.CallSettlement.OrderingSubject) call.settlement();
+            Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
             return settled.type();
         }
 

@@ -36,10 +36,11 @@ use crate::descriptor::{
 use crate::temporal;
 use crate::order;
 use crate::issues::{
-    self, CODE_INVALID_SIZE, CODE_INVARIANT_VIOLATION, CODE_MISSING_FIELD, CODE_NOT_ALLOWED,
+    self, CODE_INVALID_FORMAT, CODE_INVALID_SIZE, CODE_INVARIANT_VIOLATION, CODE_MISSING_FIELD, CODE_NOT_ALLOWED,
     CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH,
 };
 use crate::json;
+use crate::notation;
 use crate::text;
 use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
@@ -308,20 +309,14 @@ pub unsafe extern "C" fn __souther_compare(left: u32, right: u32, descriptor: u3
     order::ranked(left, right, descriptor)
 }
 
-/// The `++` operator on `String`.
+/// The `++` operator on `String`, canonicalized. Each side is NFC, but NFC is not closed under
+/// joining: a letter followed by a combining mark composes into one code point at the seam.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_concat(left: u32, right: u32) -> u32 {
-    let (a, a_length) = (__souther_string_bytes(left), __souther_string_length(left));
-    let (b, b_length) = (__souther_string_bytes(right), __souther_string_length(right));
-    let cell = header(TAG_STRING, a_length + b_length);
-    let _ = alloc(a_length + b_length);
-    core::ptr::copy_nonoverlapping(a as *const u8, (cell as usize + HEADER) as *mut u8, a_length as usize);
-    core::ptr::copy_nonoverlapping(
-        b as *const u8,
-        (cell as usize + HEADER + a_length as usize) as *mut u8,
-        b_length as usize,
-    );
-    cell
+    notation::holds(notation::length_of(left) as u64 + notation::length_of(right) as u64);
+    let mut joined = heap::string::String::from(notation::str_of(left));
+    joined.push_str(notation::str_of(right));
+    notation::canonical(&joined)
 }
 
 /// A map of that many entries, with nothing in them yet.
@@ -687,16 +682,22 @@ unsafe fn boolean(value: u32, path: u32, path_length: u32) -> u32 {
     }
 }
 
+/// A string is let in as the canonical `String` it is. Text that is not one — bytes that are not
+/// UTF-8, or a canonical form longer than a `String` holds — is a string that denotes no `String`,
+/// which is the format being wrong rather than the type.
 unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_STRING {
         issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"String");
         return 0;
     }
-    __souther_string(
-        json::__souther_json_bytes(value),
-        json::__souther_json_length(value),
-    )
+    match notation::admitted(json::__souther_json_bytes(value), json::__souther_json_length(value)) {
+        Some(held) => held,
+        None => {
+            issues::issue(CODE_INVALID_FORMAT, path, path_length, b"string", b"String");
+            0
+        }
+    }
 }
 
 /// A number is read as the amount it names, keeping the digits it was written with.

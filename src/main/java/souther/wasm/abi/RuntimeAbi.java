@@ -43,8 +43,10 @@ public final class RuntimeAbi {
      * <p>Raised to 4 when the reason vocabulary stopped naming Souther's own abort semantics a
      * second time and started only representing {@code souther.compiler.abort.AbortKind} (issue
      * #23): see {@code runtime/src/lib.rs}'s own note on its {@code ABI_VERSION} for what changed.
+     * Raised to 5 when what {@link Kernels#STRING_MATCHES} is told became the image of the
+     * pattern's machine that 199x-notation writes, in place of this compiler's own list of steps.
      */
-    public static final int VERSION = 4;
+    public static final int VERSION = 5;
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";
@@ -320,7 +322,8 @@ public final class RuntimeAbi {
         /** {@code (i32 sub, i32 s) -> i32}. */
         public static final String STRING_CONTAINS = "__souther_string_contains";
 
-        /** {@code String.matches(pattern, s)}, told the machine the pattern was compiled into. */
+        /** {@code String.matches(pattern, s)}, told where the image of the pattern's machine is: a
+         *  {@code u32} length and the image's ASCII bytes after it. */
         public static final String STRING_MATCHES = "__souther_string_matches";
 
         /** {@code String.fromDecimal(d)}. */

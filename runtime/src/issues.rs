@@ -20,6 +20,8 @@ use crate::alloc;
 
 /// A place held something other than what it was declared to hold.
 pub const CODE_TYPE_MISMATCH: &[u8] = b"type_mismatch";
+/// A string that denotes no value of the declared type: text that is no `String`, or no temporal.
+pub const CODE_INVALID_FORMAT: &[u8] = b"invalid_format";
 /// A number was outside what the declared type holds.
 pub const CODE_OUT_OF_RANGE: &[u8] = b"out_of_range";
 /// A collection had the wrong number of elements.

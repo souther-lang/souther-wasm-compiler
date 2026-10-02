@@ -6,16 +6,9 @@
 //! values this runtime holds rather than over the forms a JVM encoder makes of them.
 //!
 //! Null first, then false, true, numbers, strings, arrays and objects. Numbers by the amount and
-//! then by the way it is written; strings by UTF-16 code unit; arrays element by element with the
-//! shorter first; objects as their members read in key order.
-//!
-//! # Why code units
-//!
-//! A JVM string compares by `char`, which is a UTF-16 code unit, and what is held here is UTF-8.
-//! The two disagree: a character past the basic plane is one code point above every code unit and
-//! two surrogates below `U+E000`, so `"\u{10000}"` sorts after `"\u{FFFF}"` by code point and
-//! before it by code unit. Comparing the bytes would put a set in an order the JVM backend does
-//! not write, which is the whole thing this order exists to stop.
+//! then by the way it is written; strings by scalar value, which is the language's order on text and
+//! 199x-notation's; arrays element by element with the shorter first; objects as their members read
+//! in key order.
 
 use crate::decimal;
 use crate::descriptor::{
@@ -24,6 +17,7 @@ use crate::descriptor::{
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
     KIND_TUPLE, KIND_UNIT,
 };
+use crate::notation;
 use crate::temporal;
 use crate::value;
 
@@ -244,42 +238,13 @@ unsafe fn held(cell: u32) -> u32 {
     }
 }
 
-/// Two runs of text by UTF-16 code unit, which is what a JVM string compares by.
+/// Two runs of text by scalar value, which is the language's order on text.
 pub unsafe fn compare_runs(at: u32, length: u32, other: u32, other_length: u32) -> i32 {
-    let mut a = Units::over(at, length);
-    let mut b = Units::over(other, other_length);
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return 0,
-            (None, Some(_)) => return -1,
-            (Some(_), None) => return 1,
-            (Some(x), Some(y)) => {
-                if x != y {
-                    return if x < y { -1 } else { 1 };
-                }
-            }
-        }
-    }
+    notation199x::compare(notation::str_at(at, length), notation::str_at(other, other_length)) as i32
 }
 
 unsafe fn text(left: u32, right: u32) -> i32 {
-    let mut a = Units::over(
-        value::__souther_string_bytes(left),
-        value::__souther_string_length(left),
-    );
-    let mut b = Units::over(
-        value::__souther_string_bytes(right),
-        value::__souther_string_length(right),
-    );
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return 0,
-            (None, Some(_)) => return -1,
-            (Some(_), None) => return 1,
-            (Some(x), Some(y)) if x != y => return if x < y { -1 } else { 1 },
-            _ => {}
-        }
-    }
+    notation199x::compare(notation::str_of(left), notation::str_of(right)) as i32
 }
 
 unsafe fn elements(left: u32, right: u32, descriptor: u32) -> i32 {
@@ -324,7 +289,7 @@ unsafe fn members(left: u32, right: u32, descriptor: u32) -> i32 {
         if a != b {
             let (first, first_length) = descriptor::name(descriptor, a);
             let (second, second_length) = descriptor::name(descriptor, b);
-            return bytes_as_units(first, first_length, second, second_length);
+            return compare_runs(first, first_length, second, second_length);
         }
         return members(left, right, descriptor::member(descriptor, a));
     }
@@ -381,7 +346,7 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
 unsafe fn tags(left: u32, right: u32, descriptor: u32) -> i32 {
     let (a, a_length) = descriptor::name(descriptor, case_of(left, descriptor));
     let (b, b_length) = descriptor::name(descriptor, case_of(right, descriptor));
-    bytes_as_units(a, a_length, b, b_length)
+    compare_runs(a, a_length, b, b_length)
 }
 
 unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {
@@ -392,70 +357,4 @@ unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {
         }
     }
     0
-}
-
-unsafe fn bytes_as_units(left: u32, left_length: u32, right: u32, right_length: u32) -> i32 {
-    let mut a = Units::over(left, left_length);
-    let mut b = Units::over(right, right_length);
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return 0,
-            (None, Some(_)) => return -1,
-            (Some(_), None) => return 1,
-            (Some(x), Some(y)) if x != y => return if x < y { -1 } else { 1 },
-            _ => {}
-        }
-    }
-}
-
-/// UTF-8 bytes, read out as the UTF-16 code units they stand for.
-struct Units {
-    at: usize,
-    end: usize,
-    pending: u32,
-}
-
-impl Units {
-    fn over(pointer: u32, length: u32) -> Units {
-        Units { at: pointer as usize, end: (pointer + length) as usize, pending: 0 }
-    }
-
-    unsafe fn next(&mut self) -> Option<u32> {
-        if self.pending != 0 {
-            let low = self.pending;
-            self.pending = 0;
-            return Some(low);
-        }
-        if self.at >= self.end {
-            return None;
-        }
-        let first = core::ptr::read(self.at as *const u8) as u32;
-        let (point, width) = if first < 0x80 {
-            (first, 1)
-        } else if first < 0xe0 {
-            (((first & 0x1f) << 6) | self.trailing(1), 2)
-        } else if first < 0xf0 {
-            (((first & 0x0f) << 12) | (self.trailing(1) << 6) | self.trailing(2), 3)
-        } else {
-            (
-                ((first & 0x07) << 18)
-                    | (self.trailing(1) << 12)
-                    | (self.trailing(2) << 6)
-                    | self.trailing(3),
-                4,
-            )
-        };
-        self.at += width;
-        if point > 0xffff {
-            let rest = point - 0x10000;
-            self.pending = 0xdc00 + (rest & 0x3ff);
-            Some(0xd800 + (rest >> 10))
-        } else {
-            Some(point)
-        }
-    }
-
-    unsafe fn trailing(&self, offset: usize) -> u32 {
-        (core::ptr::read((self.at + offset) as *const u8) as u32) & 0x3f
-    }
 }
