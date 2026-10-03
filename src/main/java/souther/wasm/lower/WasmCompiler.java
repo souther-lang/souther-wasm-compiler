@@ -1871,65 +1871,75 @@ public final class WasmCompiler {
          * the sum listing it as that sum, an Int beside a Rational at its exact value. Taken from
          * one side, the descriptor reads the other side's cell as what it is not, and the answer
          * turns on which side was written first.
+         *
+         * <p>A newtype is a name for the value it is made of and stands where that value stands,
+         * so every name either operand wears is opened and the pair compared as what the type it
+         * is read in is made of. Nothing is built for a literal, and neither side is picked: both
+         * are opened the same way, to the one type the reading names.
          */
         private void compared(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
             Core left = binary.left();
             Core right = binary.right();
-            // Two whole numbers read as they stand stand as their numbers do, which is one
-            // instruction.
-            if (binary.reading() instanceof Core.BinaryReading.AsTheyStand && isWhole(left)) {
-                wide(out, left);
-                wide(out, right);
+            if (binary.reading() instanceof Core.BinaryReading.ExactNumbers) {
+                exactly(out, left);
+                exactly(out, right);
+                ordered(out, souther.compiler.types.Type.Prim.RATIONAL, how);
+                return;
+            }
+            souther.compiler.types.Type in = madeOf(switch (binary.reading()) {
+                case Core.BinaryReading.In read -> read.type();
+                default -> left.type();
+            });
+            // Two whole numbers stand as their numbers do, which is one instruction.
+            if (in == souther.compiler.types.Type.Prim.INT) {
+                wholeOpened(out, left);
+                wholeOpened(out, right);
                 out.comparesWide(how);
                 return;
             }
-            souther.compiler.types.Type in = switch (binary.reading()) {
-                // Two Rationals, whatever either operand is.
-                case Core.BinaryReading.ExactNumbers exact -> {
-                    exactly(out, left);
-                    exactly(out, right);
-                    yield souther.compiler.types.Type.Prim.RATIONAL;
-                }
-                case Core.BinaryReading.AsTheyStand standing -> {
-                    value(out, left);
-                    value(out, right);
-                    yield left.type();
-                }
-                case Core.BinaryReading.In read -> {
-                    // A newtype is a name for the value it is made of and stands where that value
-                    // stands, so the pair is compared as what the literal beside it is: the
-                    // newtype's side opened to it, and nothing built for the literal.
-                    if (shapes.wrappedBy(read.type()).isPresent()) {
-                        souther.compiler.types.Type literal =
-                                left.type().equals(read.type()) ? right.type() : left.type();
-                        opened(out, left, literal);
-                        opened(out, right, literal);
-                        yield literal;
-                    }
-                    // A case of a sum, and what nothing said the type of, are held as the values
-                    // of the type the pair is read in already.
-                    value(out, left);
-                    value(out, right);
-                    yield read.type();
-                }
-            };
+            opened(out, left);
+            opened(out, right);
+            ordered(out, in, how);
+        }
+
+        /** Compares the two values on the stack as values of {@code in}. */
+        private void ordered(BodyWriter out, souther.compiler.types.Type in,
+                BodyWriter.Comparison how) {
             out.constant(shapes.of(in))
                     .call(calls.of(RuntimeAbi.COMPARE))
                     .constant(0)
                     .compares(how);
         }
 
-        /** Leaves an operand as the type it is made of, opening each newtype it wears down to it. */
-        private void opened(BodyWriter out, Core operand, souther.compiler.types.Type to) {
+        /** What a type is made of under every newtype it is, which is the type itself for none. */
+        private souther.compiler.types.Type madeOf(souther.compiler.types.Type type) {
+            souther.compiler.types.Type held = type;
+            for (var within = shapes.wrappedBy(held); within.isPresent();
+                    within = shapes.wrappedBy(held)) {
+                held = within.get();
+            }
+            return held;
+        }
+
+        /** Leaves an operand as what it is made of, opening each newtype it wears. */
+        private void opened(BodyWriter out, Core operand) {
             value(out, operand);
             souther.compiler.types.Type held = operand.type();
-            while (!held.equals(to)) {
-                souther.compiler.types.Type within = shapes.wrappedBy(held).orElseThrow(
-                        () -> new IllegalStateException(writing + " compares a " + operand.type()
-                                + " as a " + to + ", which it is no name for"));
+            for (var within = shapes.wrappedBy(held); within.isPresent();
+                    within = shapes.wrappedBy(held)) {
                 out.constant(0).call(calls.of(RuntimeAbi.RECORD_GET));
-                held = within;
+                held = within.get();
             }
+        }
+
+        /** Leaves an operand made of a whole number as that number. */
+        private void wholeOpened(BodyWriter out, Core operand) {
+            if (operand.type() == souther.compiler.types.Type.Prim.INT) {
+                wide(out, operand);
+                return;
+            }
+            opened(out, operand);
+            out.loadWide(Cell.PAYLOAD);
         }
 
         /**
