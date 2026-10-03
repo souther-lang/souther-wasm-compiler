@@ -99,8 +99,9 @@ public final class Linker {
         }
 
         // What no export, no start and no table reaches is left out: the runtime carries every
-        // kernel, and a program calls a few of them.
-        return WasmTreeShaker.shake(assemble(sections, crossings(fragment)));
+        // kernel, and a program calls a few of them. Equal bodies are not folded: a linked module
+        // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
+        return WasmTreeShaker.withoutWhatNothingReaches(assemble(sections, crossings(fragment)));
     }
 
     /**

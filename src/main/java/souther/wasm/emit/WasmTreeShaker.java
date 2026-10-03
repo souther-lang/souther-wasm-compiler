@@ -3,7 +3,7 @@
  * licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 and NOTICE.
  *
  * Changed from the original: the package name am.ik.wasm was rewritten to souther.wasm.emit,
- * wherever it appears; a table and active element segments of function indices are read rather
+ * wherever it appears; a shake that folds nothing can be asked for; a table and active element segments of function indices are read rather
  * than refused, every function a segment puts in a table counting as a root and each index being
  * renumbered with the rest; and the data segment index space is renumbered wherever it is named,
  * in a memory.init or data.drop and in the data count section, with a segment an instruction
@@ -192,6 +192,20 @@ public final class WasmTreeShaker {
 	public static byte[] shake(byte[] module, List<OwnedDataSegment> ownedDataSegments,
 			List<DroppableDataRange> droppableDataRanges) {
 		return shakeWithRemap(module, ownedDataSegments, droppableDataRanges).module();
+	}
+
+	/**
+	 * The functions, types and segments nothing reaches, left out, and nothing folded.
+	 *
+	 * <p>For a module whose bodies are rarely alike: folding parses and rebuilds the module
+	 * once per pass and walks it again afterwards, which is most of what a shake costs, and a
+	 * module that has no two equal bodies pays it for nothing.
+	 *
+	 * @param module a core WASM module
+	 * @return the module without what nothing reaches
+	 */
+	public static byte[] withoutWhatNothingReaches(byte[] module) {
+		return dropUnreachable(module, List.of(), List.of()).module();
 	}
 
 	/**
