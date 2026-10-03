@@ -27,11 +27,18 @@ same("what the module says it offers",
   [["cart.price"]]);
 
 same("what a product code is written as",
-  program.surface.declarations.find((it) => it.name === "Sku"),
+  (({ decode, ...rest }) => rest)(program.surface.declarations.find((it) => it.name === "Sku")),
   {
     module: "cart", name: "Sku", by: "module", published: true, is: "newtype",
     wraps: { is: "scalar", scalar: "string" }, rules: [{ name: "written" }],
   });
+
+same("a product code read on its own", program.decode("cart.Sku", "ABC-1234"),
+  { value: "ABC-1234" });
+
+same("a product code that is not one, read on its own",
+  program.decode("cart.Sku", "nope").issues.map((it) => [it.path, it.code]),
+  [["", "invariant_violation"]]);
 
 same("a basket with something in it",
   program.call("cart.price", [{

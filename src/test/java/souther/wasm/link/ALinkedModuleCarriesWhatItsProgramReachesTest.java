@@ -47,6 +47,9 @@ class ALinkedModuleCarriesWhatItsProgramReachesTest {
         List<String> expected = new ArrayList<>(RuntimeAbi.HOST_EXPORTS);
         expected.add("small.sum");
         expected.add("small.over");
+        // Offered whether or not the program publishes a type: a caller holding a module calls the
+        // same export of every one, and the surface says what it reads.
+        expected.add(WasmCompiler.DECODE);
         assertThat(shown).containsExactlyInAnyOrderElementsOf(expected);
     }
 

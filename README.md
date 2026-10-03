@@ -77,6 +77,17 @@ be the rule written twice. An `option` is where absence is written, and where it
 field leaves its key out, and an element or a map's value writes `null`. The object carries a
 `version`, which moves when what it says is read differently.
 
+A value of a type can also be read on its own, outside any behavior — what a form checks one field
+against before there is a whole call to make. `__souther_decode(number, pointer, length)` reads the
+JSON at the pointer as the type the number names, its rules included, and answers what a behavior's
+export answers: `{"value": ...}` or `{"issues": [...]}`, the paths starting at the root. Which types
+it reads, and under which number, is a declaration's `decode` on the surface, and only a type a
+module of the program declares and publishes has one; one a module keeps is on the surface and is not
+offered. The numbers are the module's own. A caller looks a type up by its module and name when it
+loads the module and does not carry the number to another, so a module built later that numbers its
+types differently is never read under an old one. A number the module gives no type ends the call,
+as `NO_SUCH_TYPE`, because it is the caller misusing the module and not a document written wrong.
+
 What Souther adds is a way to say why a call ended without a value. An abort writes a fixed-width
 record outside the arena and traps; the record carries a generation, so a caller that snapshots it
 before the call can tell a Souther abort from an ordinary wasm fault.

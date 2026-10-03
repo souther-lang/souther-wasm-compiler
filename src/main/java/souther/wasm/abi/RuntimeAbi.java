@@ -46,9 +46,11 @@ public final class RuntimeAbi {
      * Raised to 5 when what {@link Kernels#STRING_MATCHES} is told became the image of the
      * pattern's machine that 199x-notation writes, in place of this compiler's own list of steps.
      * Raised to 6 when the layout of a cell became something a generated body relies on
-     * ({@link Cell}), and a walk began to grow a map in place.
+     * ({@link Cell}), and a walk began to grow a map in place. Raised to 7 when a call could end
+     * for a reason it could not before, {@code NO_SUCH_TYPE}: a host naming reasons by the numbers
+     * of 6 would not know it.
      */
-    public static final int VERSION = 6;
+    public static final int VERSION = 7;
 
     /**
      * What of the runtime a linked module still shows its host: the memory, and what the steps

@@ -1,0 +1,191 @@
+$ object
+$.declarations array
+$.declarations[]{is=newtype} object
+$.declarations[]{is=newtype}.by = module
+$.declarations[]{is=newtype}.decode number
+$.declarations[]{is=newtype}.is = newtype
+$.declarations[]{is=newtype}.module string
+$.declarations[]{is=newtype}.name string
+$.declarations[]{is=newtype}.published boolean
+$.declarations[]{is=newtype}.rules array
+$.declarations[]{is=newtype}.rules[] object
+$.declarations[]{is=newtype}.rules[].name null
+$.declarations[]{is=newtype}.rules[].name string
+$.declarations[]{is=newtype}.wraps{is=scalar} object
+$.declarations[]{is=newtype}.wraps{is=scalar}.is = scalar
+$.declarations[]{is=newtype}.wraps{is=scalar}.scalar = string
+$.declarations[]{is=product} object
+$.declarations[]{is=product}.by = module
+$.declarations[]{is=product}.by = path
+$.declarations[]{is=product}.decode number
+$.declarations[]{is=product}.fields array
+$.declarations[]{is=product}.fields[] object
+$.declarations[]{is=product}.fields[].name string
+$.declarations[]{is=product}.fields[].type{is=declared} object
+$.declarations[]{is=product}.fields[].type{is=declared}.is = declared
+$.declarations[]{is=product}.fields[].type{is=declared}.module string
+$.declarations[]{is=product}.fields[].type{is=declared}.name string
+$.declarations[]{is=product}.fields[].type{is=list} object
+$.declarations[]{is=product}.fields[].type{is=list}.is = list
+$.declarations[]{is=product}.fields[].type{is=list}.of{is=option} object
+$.declarations[]{is=product}.fields[].type{is=list}.of{is=option}.is = option
+$.declarations[]{is=product}.fields[].type{is=list}.of{is=option}.of{is=scalar} object
+$.declarations[]{is=product}.fields[].type{is=list}.of{is=option}.of{is=scalar}.is = scalar
+$.declarations[]{is=product}.fields[].type{is=list}.of{is=option}.of{is=scalar}.scalar = string
+$.declarations[]{is=product}.fields[].type{is=map} object
+$.declarations[]{is=product}.fields[].type{is=map}.is = map
+$.declarations[]{is=product}.fields[].type{is=map}.key{is=declared} object
+$.declarations[]{is=product}.fields[].type{is=map}.key{is=declared}.is = declared
+$.declarations[]{is=product}.fields[].type{is=map}.key{is=declared}.module string
+$.declarations[]{is=product}.fields[].type{is=map}.key{is=declared}.name string
+$.declarations[]{is=product}.fields[].type{is=map}.key{is=scalar} object
+$.declarations[]{is=product}.fields[].type{is=map}.key{is=scalar}.is = scalar
+$.declarations[]{is=product}.fields[].type{is=map}.key{is=scalar}.scalar = date
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=option} object
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=option}.is = option
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=option}.of{is=scalar} object
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=option}.of{is=scalar}.is = scalar
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=option}.of{is=scalar}.scalar = decimal
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=scalar} object
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=scalar}.is = scalar
+$.declarations[]{is=product}.fields[].type{is=map}.value{is=scalar}.scalar = int
+$.declarations[]{is=product}.fields[].type{is=option} object
+$.declarations[]{is=product}.fields[].type{is=option}.is = option
+$.declarations[]{is=product}.fields[].type{is=option}.of{is=scalar} object
+$.declarations[]{is=product}.fields[].type{is=option}.of{is=scalar}.is = scalar
+$.declarations[]{is=product}.fields[].type{is=option}.of{is=scalar}.scalar = string
+$.declarations[]{is=product}.fields[].type{is=scalar} object
+$.declarations[]{is=product}.fields[].type{is=scalar}.is = scalar
+$.declarations[]{is=product}.fields[].type{is=scalar}.scalar = bool
+$.declarations[]{is=product}.fields[].type{is=scalar}.scalar = date
+$.declarations[]{is=product}.fields[].type{is=scalar}.scalar = datetime
+$.declarations[]{is=product}.fields[].type{is=scalar}.scalar = decimal
+$.declarations[]{is=product}.fields[].type{is=scalar}.scalar = instant
+$.declarations[]{is=product}.fields[].type{is=scalar}.scalar = int
+$.declarations[]{is=product}.fields[].type{is=scalar}.scalar = time
+$.declarations[]{is=product}.fields[].type{is=set} object
+$.declarations[]{is=product}.fields[].type{is=set}.is = set
+$.declarations[]{is=product}.fields[].type{is=set}.of{is=scalar} object
+$.declarations[]{is=product}.fields[].type{is=set}.of{is=scalar}.is = scalar
+$.declarations[]{is=product}.fields[].type{is=set}.of{is=scalar}.scalar = string
+$.declarations[]{is=product}.is = product
+$.declarations[]{is=product}.module string
+$.declarations[]{is=product}.name string
+$.declarations[]{is=product}.published boolean
+$.declarations[]{is=product}.published null
+$.declarations[]{is=product}.rules array
+$.declarations[]{is=product}.rules[] object
+$.declarations[]{is=product}.rules[].name null
+$.declarations[]{is=sum} object
+$.declarations[]{is=sum}.by = module
+$.declarations[]{is=sum}.cases array
+$.declarations[]{is=sum}.cases[]{is=declared} object
+$.declarations[]{is=sum}.cases[]{is=declared}.is = declared
+$.declarations[]{is=sum}.cases[]{is=declared}.module string
+$.declarations[]{is=sum}.cases[]{is=declared}.name string
+$.declarations[]{is=sum}.decode number
+$.declarations[]{is=sum}.form{is=discriminated} object
+$.declarations[]{is=sum}.form{is=discriminated}.contents string
+$.declarations[]{is=sum}.form{is=discriminated}.is = discriminated
+$.declarations[]{is=sum}.form{is=discriminated}.tag string
+$.declarations[]{is=sum}.form{is=enumeration} object
+$.declarations[]{is=sum}.form{is=enumeration}.is = enumeration
+$.declarations[]{is=sum}.is = sum
+$.declarations[]{is=sum}.module string
+$.declarations[]{is=sum}.name string
+$.declarations[]{is=sum}.published boolean
+$.declarations[]{is=unit} object
+$.declarations[]{is=unit}.by = module
+$.declarations[]{is=unit}.decode number
+$.declarations[]{is=unit}.is = unit
+$.declarations[]{is=unit}.module string
+$.declarations[]{is=unit}.name string
+$.declarations[]{is=unit}.published boolean
+$.modules array
+$.modules[] object
+$.modules[].behaviors array
+$.modules[].behaviors[] object
+$.modules[].behaviors[].answers{is=declared} object
+$.modules[].behaviors[].answers{is=declared}.is = declared
+$.modules[].behaviors[].answers{is=declared}.module string
+$.modules[].behaviors[].answers{is=declared}.name string
+$.modules[].behaviors[].answers{is=list} object
+$.modules[].behaviors[].answers{is=list}.is = list
+$.modules[].behaviors[].answers{is=list}.of{is=declared} object
+$.modules[].behaviors[].answers{is=list}.of{is=declared}.is = declared
+$.modules[].behaviors[].answers{is=list}.of{is=declared}.module string
+$.modules[].behaviors[].answers{is=list}.of{is=declared}.name string
+$.modules[].behaviors[].answers{is=map} object
+$.modules[].behaviors[].answers{is=map}.is = map
+$.modules[].behaviors[].answers{is=map}.key{is=scalar} object
+$.modules[].behaviors[].answers{is=map}.key{is=scalar}.is = scalar
+$.modules[].behaviors[].answers{is=map}.key{is=scalar}.scalar = string
+$.modules[].behaviors[].answers{is=map}.value{is=set} object
+$.modules[].behaviors[].answers{is=map}.value{is=set}.is = set
+$.modules[].behaviors[].answers{is=map}.value{is=set}.of{is=scalar} object
+$.modules[].behaviors[].answers{is=map}.value{is=set}.of{is=scalar}.is = scalar
+$.modules[].behaviors[].answers{is=map}.value{is=set}.of{is=scalar}.scalar = int
+$.modules[].behaviors[].answers{is=scalar} object
+$.modules[].behaviors[].answers{is=scalar}.is = scalar
+$.modules[].behaviors[].answers{is=scalar}.scalar = decimal
+$.modules[].behaviors[].answers{is=scalar}.scalar = int
+$.modules[].behaviors[].answers{is=union} object
+$.modules[].behaviors[].answers{is=union}.crossing object
+$.modules[].behaviors[].answers{is=union}.crossing.cases array
+$.modules[].behaviors[].answers{is=union}.crossing.cases[]{is=declared} object
+$.modules[].behaviors[].answers{is=union}.crossing.cases[]{is=declared}.is = declared
+$.modules[].behaviors[].answers{is=union}.crossing.cases[]{is=declared}.module string
+$.modules[].behaviors[].answers{is=union}.crossing.cases[]{is=declared}.name string
+$.modules[].behaviors[].answers{is=union}.crossing.cases[]{is=scalar} object
+$.modules[].behaviors[].answers{is=union}.crossing.cases[]{is=scalar}.is = scalar
+$.modules[].behaviors[].answers{is=union}.crossing.cases[]{is=scalar}.scalar = int
+$.modules[].behaviors[].answers{is=union}.crossing.form{is=discriminated} object
+$.modules[].behaviors[].answers{is=union}.crossing.form{is=discriminated}.contents string
+$.modules[].behaviors[].answers{is=union}.crossing.form{is=discriminated}.is = discriminated
+$.modules[].behaviors[].answers{is=union}.crossing.form{is=discriminated}.tag string
+$.modules[].behaviors[].answers{is=union}.is = union
+$.modules[].behaviors[].answers{is=union}.members array
+$.modules[].behaviors[].answers{is=union}.members[]{is=declared} object
+$.modules[].behaviors[].answers{is=union}.members[]{is=declared}.is = declared
+$.modules[].behaviors[].answers{is=union}.members[]{is=declared}.module string
+$.modules[].behaviors[].answers{is=union}.members[]{is=declared}.name string
+$.modules[].behaviors[].answers{is=union}.members[]{is=scalar} object
+$.modules[].behaviors[].answers{is=union}.members[]{is=scalar}.is = scalar
+$.modules[].behaviors[].answers{is=union}.members[]{is=scalar}.scalar = int
+$.modules[].behaviors[].export string
+$.modules[].behaviors[].implementation = here
+$.modules[].behaviors[].implementation = injected
+$.modules[].behaviors[].name string
+$.modules[].behaviors[].parameters array
+$.modules[].behaviors[].parameters[] object
+$.modules[].behaviors[].parameters[].name null
+$.modules[].behaviors[].parameters[].name string
+$.modules[].behaviors[].parameters[].type{is=declared} object
+$.modules[].behaviors[].parameters[].type{is=declared}.is = declared
+$.modules[].behaviors[].parameters[].type{is=declared}.module string
+$.modules[].behaviors[].parameters[].type{is=declared}.name string
+$.modules[].behaviors[].parameters[].type{is=list} object
+$.modules[].behaviors[].parameters[].type{is=list}.is = list
+$.modules[].behaviors[].parameters[].type{is=list}.of{is=declared} object
+$.modules[].behaviors[].parameters[].type{is=list}.of{is=declared}.is = declared
+$.modules[].behaviors[].parameters[].type{is=list}.of{is=declared}.module string
+$.modules[].behaviors[].parameters[].type{is=list}.of{is=declared}.name string
+$.modules[].behaviors[].parameters[].type{is=map} object
+$.modules[].behaviors[].parameters[].type{is=map}.is = map
+$.modules[].behaviors[].parameters[].type{is=map}.key{is=scalar} object
+$.modules[].behaviors[].parameters[].type{is=map}.key{is=scalar}.is = scalar
+$.modules[].behaviors[].parameters[].type{is=map}.key{is=scalar}.scalar = string
+$.modules[].behaviors[].parameters[].type{is=map}.value{is=scalar} object
+$.modules[].behaviors[].parameters[].type{is=map}.value{is=scalar}.is = scalar
+$.modules[].behaviors[].parameters[].type{is=map}.value{is=scalar}.scalar = int
+$.modules[].behaviors[].parameters[].type{is=scalar} object
+$.modules[].behaviors[].parameters[].type{is=scalar}.is = scalar
+$.modules[].behaviors[].parameters[].type{is=scalar}.scalar = int
+$.modules[].behaviors[].parameters[].type{is=set} object
+$.modules[].behaviors[].parameters[].type{is=set}.is = set
+$.modules[].behaviors[].parameters[].type{is=set}.of{is=scalar} object
+$.modules[].behaviors[].parameters[].type{is=set}.of{is=scalar}.is = scalar
+$.modules[].behaviors[].parameters[].type{is=set}.of{is=scalar}.scalar = int
+$.modules[].behaviors[].published boolean
+$.modules[].name string
+$.version number

@@ -46,7 +46,15 @@ public enum WasmFault {
      * agree on (a {@code RoundingMode} ordinal outside what the runtime declares, say). A compiler
      * bug or an ABI mismatch, never a Souther program's own abort.
      */
-    BACKEND_INVARIANT_BROKEN(7);
+    BACKEND_INVARIANT_BROKEN(7),
+
+    /**
+     * A caller asked to read a value as a type under a number the module gives no type. An ABI
+     * failure by whoever calls the module, as {@link #BAD_MARK} is: the numbers are the module's
+     * own, said in {@code souther:surface}, and a caller that read them there hands over one of
+     * them. {@code aux0} is the number, {@code aux1} how many the module gives.
+     */
+    NO_SUCH_TYPE(12);
 
     private final int code;
 

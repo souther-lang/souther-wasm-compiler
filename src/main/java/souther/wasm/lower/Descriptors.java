@@ -212,15 +212,24 @@ final class Descriptors {
      * <p>An operation that rounds is told which way as a place among these, because what it does
      * with it is pick one of that many ways — and a value of one of the cases is typed as that
      * case, so the set it belongs to is asked of the language rather than of the value.
+     *
+     * <p>Found once. The program answers what the language declares by going through everything
+     * it holds, which is what listing them costs, and every operation that rounds asks this.
      */
     int roundingModes() {
-        for (CheckedData each : program.languageDeclarations()) {
-            if (each instanceof CheckedData.Sum held && isRoundingMode(held.name())) {
-                return ofDeclared(held.name());
-            }
+        if (roundingModes == null) {
+            roundingModes = program.languageDeclarations().stream()
+                    .filter(each -> each instanceof CheckedData.Sum && isRoundingMode(each.name()))
+                    .findFirst()
+                    .map(held -> ofDeclared(held.name()))
+                    .orElseThrow(() -> new NotLowered(
+                            "the language declares no set of ways to round"));
         }
-        throw new NotLowered("the language declares no set of ways to round");
+        return roundingModes;
     }
+
+    /** Where the set of ways to round is described, once something has asked. */
+    private Integer roundingModes;
 
     /**
      * What a declared shape says must hold of its values.
@@ -432,14 +441,6 @@ final class Descriptors {
      * other — so it is found where it is declared rather than only where a module would put it.
      */
     private CheckedData declared(TypeSymbol.AtModule name) {
-        for (CheckedData each : program.languageDeclarations()) {
-            // By the name every declaration answers, not by asking each form in turn: a form this
-            // does not name would be looked for where a module's declarations are and not found
-            // there, and the day the language declares one that is what would happen.
-            if (each.name().equals(name)) {
-                return each;
-            }
-        }
         return program.declaration(name).data();
     }
 

@@ -5,10 +5,8 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import souther.wasm.emit.Type;
 import souther.wasm.emit.WasmWriter;
 
@@ -34,7 +32,8 @@ public final class WasmFragment {
     private final List<byte[]> bodies = new ArrayList<>();
     private final Map<String, Integer> exports = new LinkedHashMap<>();
     private final List<Segment> data = new ArrayList<>();
-    private final Set<Integer> reserved = new LinkedHashSet<>();
+    /** Each reservation not filled yet, by its address, and where among the segments it is. */
+    private final Map<Integer, Integer> reserved = new LinkedHashMap<>();
     private final Map<Integer, Integer> slots = new LinkedHashMap<>();
     private int staticTop;
 
@@ -249,9 +248,15 @@ public final class WasmFragment {
      * it there, and a link refuses to finish while anything reserved is still empty.
      */
     public int reserve(int length) {
+        // Something occupying no bytes moves nothing after it, so it would begin where the next
+        // thing reserved does, and an address would no longer say which of the two was meant.
+        if (length <= 0) {
+            throw new IllegalArgumentException("a reservation holds something, and " + length
+                    + " bytes hold nothing");
+        }
         int address = staticTop;
+        reserved.put(address, data.size());
         data.add(new Segment(address, new byte[length]));
-        reserved.add(address);
         staticTop = align(address + length);
         return address;
     }
@@ -263,25 +268,18 @@ public final class WasmFragment {
      * @param bytes exactly as many as were reserved
      */
     public void fill(int address, byte[] bytes) {
-        if (!reserved.contains(address)) {
+        // The segment that was reserved, by where it was put, and not one found by its address: a
+        // name with nothing in it begins where the thing reserved after it does.
+        Integer at = reserved.get(address);
+        if (at == null) {
             throw new IllegalArgumentException("nothing was reserved at " + address);
         }
-        for (int i = 0; i < data.size(); i++) {
-            Segment segment = data.get(i);
-            // The one that was reserved, and not merely one that begins there. Nothing occupying no
-            // bytes moves what comes after it, so a name with nothing in it and the thing reserved
-            // next both begin at the same address — and only one of them is what this was promised.
-            if (segment.address() == address && segment.bytes().length == bytes.length) {
-                if (segment.bytes().length != bytes.length) {
-                    throw new IllegalArgumentException(
-                            "what was reserved at " + address + " is not as long as what was written for it");
-                }
-                data.set(i, new Segment(address, bytes.clone()));
-                reserved.remove(address);
-                return;
-            }
+        if (data.get(at).bytes().length != bytes.length) {
+            throw new IllegalArgumentException(
+                    "what was reserved at " + address + " is not as long as what was written for it");
         }
-        throw new IllegalArgumentException("nothing was reserved at " + address);
+        data.set(at, new Segment(address, bytes.clone()));
+        reserved.remove(address);
     }
 
     /** The first byte no generated data occupies, which is where the arena will start. */
@@ -324,7 +322,8 @@ public final class WasmFragment {
     List<Segment> dataSegments() {
         if (!reserved.isEmpty()) {
             throw new IllegalStateException(
-                    "a link would place empty bytes where something was reserved: " + reserved);
+                    "a link would place empty bytes where something was reserved: "
+                            + reserved.keySet());
         }
         return List.copyOf(data);
     }
