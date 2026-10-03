@@ -716,7 +716,7 @@ public final class WasmCompiler {
                         .constant(i)
                         .call(calls.of(RuntimeAbi.ARGUMENT))
                         .constant(shapes.of(takes.get(i)))
-                        .constant(fragment.place(path))
+                        .constant(fragment.intern(path))
                         .constant(path.length)
                         .call(calls.of(RuntimeAbi.READ))
                         .localSet(read[i]);
@@ -760,7 +760,7 @@ public final class WasmCompiler {
                 case Core.Bool bool -> out.constant(bool.value() ? 1 : 0).call(calls.of(RuntimeAbi.BOOL));
                 case Core.Str text -> {
                     byte[] utf8 = text.value().getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(utf8))
+                    out.constant(fragment.intern(utf8))
                             .constant(utf8.length)
                             .call(calls.of(RuntimeAbi.STRING));
                 }
@@ -770,13 +770,13 @@ public final class WasmCompiler {
                     // scale is: a thousand written to two places carries two.
                     byte[] written = amount.value().toPlainString()
                             .getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(written))
+                    out.constant(fragment.intern(written))
                             .constant(written.length)
                             .call(calls.of(RuntimeAbi.DECIMAL_WRITTEN));
                 }
                 case Core.Temporal written -> {
                     byte[] utf8 = written.text().getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(utf8))
+                    out.constant(fragment.intern(utf8))
                             .constant(utf8.length)
                             .call(calls.of(switch (written.kind()) {
                                 case DATE -> RuntimeAbi.DATE_WRITTEN;
@@ -839,7 +839,7 @@ public final class WasmCompiler {
                     byte[] why = nothing.reason().getBytes(StandardCharsets.UTF_8);
                     out.constant(WasmAbortMapping.representationOf(onlyKindOf(nothing)))
                             .constant(0)
-                            .constant((long) fragment.place(why))
+                            .constant((long) fragment.intern(why))
                             .constant((long) why.length)
                             .call(calls.of(RuntimeAbi.ABORT))
                             .unreachable();
@@ -854,7 +854,7 @@ public final class WasmCompiler {
                     } else {
                         // Read off a set of alternatives, so the value says where the field is.
                         byte[] named = read.field().getBytes(StandardCharsets.UTF_8);
-                        out.constant(fragment.place(named))
+                        out.constant(fragment.intern(named))
                                 .constant(named.length)
                                 .call(calls.of(RuntimeAbi.RECORD_NAMED));
                     }

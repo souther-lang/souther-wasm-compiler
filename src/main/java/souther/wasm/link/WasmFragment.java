@@ -1,7 +1,9 @@
 package souther.wasm.link;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -205,6 +207,21 @@ public final class WasmFragment {
         staticTop = align(address + bytes.length);
         return address;
     }
+
+    /**
+     * Places bytes that are read only by what they hold, answering where an earlier placement of the
+     * same bytes went where there was one.
+     *
+     * <p>For text — a literal, a name, a path, a reason — which is read by its contents, so one copy
+     * serves every place that wrote it. Not for what is told apart by where it is: a descriptor is
+     * one type because it is at one address, and two types described alike are still two.
+     */
+    public int intern(byte[] bytes) {
+        return interned.computeIfAbsent(ByteBuffer.wrap(bytes.clone()), held -> place(bytes));
+    }
+
+    /** Where each run of bytes placed through {@link #intern} went. */
+    private final Map<ByteBuffer, Integer> interned = new HashMap<>();
 
     /**
      * Takes an address for bytes that are not settled yet, and answers where they will go.

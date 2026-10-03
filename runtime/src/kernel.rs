@@ -890,105 +890,149 @@ pub unsafe extern "C" fn __souther_set_singleton(value: u32, descriptor: u32) ->
     out
 }
 
-/// `Set.insert(value, s)`.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_set_insert(value: u32, set: u32, descriptor: u32) -> u32 {
+/// Where a value stands in a set, or where it would go: a set's members are in ascending order,
+/// so this halves rather than walks.
+unsafe fn place_in(set: u32, value: u32, element: u32) -> Result<u32, u32> {
+    let mut low = 0;
+    let mut high = __souther_list_length(set);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let held = order::compare(__souther_list_get(set, middle), value, element);
+        if held == 0 {
+            return Ok(middle);
+        }
+        if held < 0 {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    Err(low)
+}
+
+/// A set's members with one put in at a place, or taken out of one.
+unsafe fn spliced(set: u32, at: u32, put: Option<u32>, descriptor: u32) -> u32 {
     let held = __souther_list_length(set);
-    let element = descriptor::member(descriptor, 0);
+    let out = __souther_list(descriptor, if put.is_some() { held + 1 } else { held - 1 });
+    let mut into = 0;
     for i in 0..held {
-        if order::compare(__souther_list_get(set, i), value, element) == 0 {
-            return set;
+        if i == at {
+            if let Some(value) = put {
+                __souther_list_set(out, into, value);
+                into += 1;
+            } else {
+                continue;
+            }
         }
+        __souther_list_set(out, into, __souther_list_get(set, i));
+        into += 1;
     }
-    let out = __souther_list(descriptor, held + 1);
-    let mut at = 0;
-    let mut placed = false;
-    for i in 0..held {
-        let each = __souther_list_get(set, i);
-        if !placed && order::compare(value, each, element) < 0 {
-            __souther_list_set(out, at, value);
-            at += 1;
-            placed = true;
+    if at == held {
+        if let Some(value) = put {
+            __souther_list_set(out, into, value);
         }
-        __souther_list_set(out, at, each);
-        at += 1;
-    }
-    if !placed {
-        __souther_list_set(out, at, value);
     }
     out
+}
+
+/// `Set.insert(value, s)`. A value the set already holds leaves it as it is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_set_insert(value: u32, set: u32, descriptor: u32) -> u32 {
+    match place_in(set, value, descriptor::member(descriptor, 0)) {
+        Ok(_) => set,
+        Err(at) => spliced(set, at, Some(value), descriptor),
+    }
 }
 
 /// `Set.remove(value, s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_remove(value: u32, set: u32, descriptor: u32) -> u32 {
-    let held = __souther_list_length(set);
-    let element = descriptor::member(descriptor, 0);
-    let mut keeping = 0;
-    for i in 0..held {
-        if order::compare(__souther_list_get(set, i), value, element) != 0 {
-            keeping += 1;
-        }
+    match place_in(set, value, descriptor::member(descriptor, 0)) {
+        Ok(at) => spliced(set, at, None, descriptor),
+        Err(_) => set,
     }
-    let out = __souther_list(descriptor, keeping);
-    let mut at = 0;
-    for i in 0..held {
-        let each = __souther_list_get(set, i);
-        if order::compare(each, value, element) != 0 {
-            __souther_list_set(out, at, each);
-            at += 1;
-        }
-    }
-    out
 }
 
 /// `Set.contains(value, s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_contains(value: u32, set: u32) -> u32 {
     let descriptor = core::ptr::read_unaligned((set as usize + 4) as *const u32);
+    let held = place_in(set, value, descriptor::member(descriptor, 0)).is_ok();
+    value::__souther_bool(u32::from(held))
+}
+
+/// What two sets come to together, in one walk down both: each is in ascending order, so the
+/// smaller of the two members in front is the next one either could answer. Where they hold one
+/// member, the left set's is the one kept, as putting the right's into the left keeps it.
+unsafe fn merged(left: u32, right: u32, descriptor: u32, keep: Keep) -> u32 {
     let element = descriptor::member(descriptor, 0);
-    for i in 0..__souther_list_length(set) {
-        if order::compare(__souther_list_get(set, i), value, element) == 0 {
-            return value::__souther_bool(1);
+    let (a, b) = (__souther_list_length(left), __souther_list_length(right));
+    let room = alloc(4 * (a + b));
+    let (mut i, mut j, mut kept) = (0, 0, 0);
+    let mut take = |member: u32| {
+        core::ptr::write_unaligned((room + 4 * kept) as *mut u32, member);
+        kept += 1;
+    };
+    while i < a || j < b {
+        let held = if i == a {
+            1
+        } else if j == b {
+            -1
+        } else {
+            order::compare(__souther_list_get(left, i), __souther_list_get(right, j), element)
+        };
+        if held < 0 {
+            if keep != Keep::Both {
+                take(__souther_list_get(left, i));
+            }
+            i += 1;
+        } else if held > 0 {
+            if keep == Keep::Either {
+                take(__souther_list_get(right, j));
+            }
+            j += 1;
+        } else {
+            if keep != Keep::LeftOnly {
+                take(__souther_list_get(left, i));
+            }
+            i += 1;
+            j += 1;
         }
     }
-    value::__souther_bool(0)
+    let out = __souther_list(descriptor, kept);
+    for at in 0..kept {
+        __souther_list_set(out, at, core::ptr::read_unaligned((room + 4 * at) as *const u32));
+    }
+    out
+}
+
+/// Which members of two sets a walk down both keeps.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Keep {
+    /// Every member of either.
+    Either,
+    /// The members of both.
+    Both,
+    /// The members of the left that the right does not hold.
+    LeftOnly,
 }
 
 /// `Set.union(a, b)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_union(left: u32, right: u32, descriptor: u32) -> u32 {
-    let mut out = left;
-    for i in 0..__souther_list_length(right) {
-        out = __souther_set_insert(__souther_list_get(right, i), out, descriptor);
-    }
-    out
+    merged(left, right, descriptor, Keep::Either)
 }
 
 /// `Set.intersection(a, b)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_intersection(left: u32, right: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_set_empty(descriptor);
-    for i in 0..__souther_list_length(left) {
-        let each = __souther_list_get(left, i);
-        if value::__souther_bool_value(__souther_set_contains(each, right)) != 0 {
-            out = __souther_set_insert(each, out, descriptor);
-        }
-    }
-    out
+    merged(left, right, descriptor, Keep::Both)
 }
 
 /// `Set.difference(a, b)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_difference(left: u32, right: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_set_empty(descriptor);
-    for i in 0..__souther_list_length(left) {
-        let each = __souther_list_get(left, i);
-        if value::__souther_bool_value(__souther_set_contains(each, right)) == 0 {
-            out = __souther_set_insert(each, out, descriptor);
-        }
-    }
-    out
+    merged(left, right, descriptor, Keep::LeftOnly)
 }
 
 /// `Set.isEmpty(s)` and `Map.isEmpty(m)`.
@@ -1014,14 +1058,16 @@ pub unsafe extern "C" fn __souther_set_to_list(set: u32, descriptor: u32) -> u32
     out
 }
 
-/// `Set.fromList(xs)`.
+/// `Set.fromList(xs)`: sorted once, the first of members that are one kept, as putting them in
+/// one at a time keeps it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_from_list(list: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_set_empty(descriptor);
-    for i in 0..__souther_list_length(list) {
-        out = __souther_set_insert(__souther_list_get(list, i), out, descriptor);
+    let held = __souther_list_length(list);
+    let copy = __souther_list(descriptor, held);
+    for i in 0..held {
+        __souther_list_set(copy, i, __souther_list_get(list, i));
     }
-    out
+    value::sorted_and_deduplicated(copy, descriptor)
 }
 
 /// `Map.empty`.
@@ -1084,32 +1130,37 @@ pub unsafe extern "C" fn __souther_map_insert(
     descriptor: u32,
 ) -> u32 {
     let entries = value::__souther_map_length(map);
-    if let Some(at) = entry_of(key, map) {
-        let out = value::__souther_map(descriptor, entries);
-        for i in 0..entries {
-            let value_of = if i == at { held } else { value::__souther_map_value(map, i) };
-            value::__souther_map_set(out, i, value::__souther_map_key(map, i), value_of);
+    match place_of(key, map) {
+        Ok(at) => {
+            let out = value::__souther_map(descriptor, entries);
+            for i in 0..entries {
+                let value_of = if i == at { held } else { value::__souther_map_value(map, i) };
+                value::__souther_map_set(out, i, value::__souther_map_key(map, i), value_of);
+            }
+            out
         }
-        return out;
-    }
-    let out = value::__souther_map(descriptor, entries + 1);
-    let keys = value::map_keys(map);
-    let mut at = 0;
-    let mut placed = false;
-    for i in 0..entries {
-        let each = value::__souther_map_key(map, i);
-        if !placed && written_before(key, each, keys) {
-            value::__souther_map_set(out, at, key, held);
-            at += 1;
-            placed = true;
+        Err(at) => {
+            let out = value::__souther_map(descriptor, entries + 1);
+            let mut into = 0;
+            for i in 0..entries {
+                if i == at {
+                    value::__souther_map_set(out, into, key, held);
+                    into += 1;
+                }
+                value::__souther_map_set(
+                    out,
+                    into,
+                    value::__souther_map_key(map, i),
+                    value::__souther_map_value(map, i),
+                );
+                into += 1;
+            }
+            if at == entries {
+                value::__souther_map_set(out, into, key, held);
+            }
+            out
         }
-        value::__souther_map_set(out, at, each, value::__souther_map_value(map, i));
-        at += 1;
     }
-    if !placed {
-        value::__souther_map_set(out, at, key, held);
-    }
-    out
 }
 
 /// `Map.toList(m)`: a pair per entry, in the order the map holds them.
@@ -1127,18 +1178,42 @@ pub unsafe extern "C" fn __souther_map_to_list(map: u32, descriptor: u32) -> u32
 }
 
 /// `Map.fromList(entries)`: what the pairs say, the last of two at one key standing.
+///
+/// Sorted once by key, keeping pairs of one key in the order they were written, rather than put in
+/// one at a time. A key written twice keeps the first key and the last value, as putting the pairs
+/// in one at a time would.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_from_list(list: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_map_empty(descriptor);
-    for i in 0..__souther_list_length(list) {
+    let held = __souther_list_length(list);
+    let out = value::__souther_map(descriptor, held);
+    for i in 0..held {
         let pair = __souther_list_get(list, i);
-        out = __souther_map_insert(
+        value::__souther_map_set(
+            out,
+            i,
             value::__souther_tuple_get(pair, 0),
             value::__souther_tuple_get(pair, 1),
-            out,
-            descriptor,
         );
     }
+    let keys = value::map_keys(out);
+    value::sorted_by_key(out, keys);
+    let mut kept = 0;
+    for i in 0..held {
+        let key = value::__souther_map_key(out, i);
+        let same_as_last = kept > 0 && {
+            let (a, a_length) = value::key_text(value::__souther_map_key(out, kept - 1), keys);
+            let (b, b_length) = value::key_text(key, keys);
+            order::compare_runs(a, a_length, b, b_length) == 0
+        };
+        if same_as_last {
+            let first = value::__souther_map_key(out, kept - 1);
+            value::__souther_map_set(out, kept - 1, first, value::__souther_map_value(out, i));
+        } else {
+            value::__souther_map_set(out, kept, key, value::__souther_map_value(out, i));
+            kept += 1;
+        }
+    }
+    value::map_of_length(out, kept);
     out
 }
 
@@ -1168,13 +1243,18 @@ pub unsafe extern "C" fn __souther_map_remove(key: u32, map: u32, descriptor: u3
 }
 
 /// Where a key stands in a map, or nowhere.
+unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
+    place_of(key, map).ok()
+}
+
+/// Where a key stands in a map, or where it would go.
 ///
 /// By what the key is written as, because that is what one entry of a map is: a member of an
 /// object, and two spellings of one moment name one member.
 ///
 /// Halved rather than walked: a map's entries stand in the order their keys are written, so
 /// whether a key is there is answered by asking the middle one and dropping the half it is not in.
-unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
+unsafe fn place_of(key: u32, map: u32) -> Result<u32, u32> {
     let keys = value::map_keys(map);
     let (wanted, wanted_length) = value::key_text(key, keys);
     let mut low = 0;
@@ -1184,7 +1264,7 @@ unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
         let (each, each_length) = value::key_text(value::__souther_map_key(map, middle), keys);
         let held = order::compare_runs(each, each_length, wanted, wanted_length);
         if held == 0 {
-            return Some(middle);
+            return Ok(middle);
         }
         if held < 0 {
             low = middle + 1;
@@ -1192,14 +1272,7 @@ unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
             high = middle;
         }
     }
-    None
-}
-
-/// Whether one key is written before another, which is the order a map's entries stand in.
-unsafe fn written_before(key: u32, other: u32, keys: u32) -> bool {
-    let (a, a_length) = value::key_text(key, keys);
-    let (b, b_length) = value::key_text(other, keys);
-    order::compare_runs(a, a_length, b, b_length) < 0
+    Err(low)
 }
 
 /// How many a set or a map holds.

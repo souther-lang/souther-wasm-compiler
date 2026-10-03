@@ -386,7 +386,7 @@ pub unsafe extern "C" fn __souther_map_set(cell: u32, index: u32, key: u32, valu
 }
 
 /// Shortens a map to the entries it kept.
-unsafe fn map_of_length(cell: u32, entries: u32) {
+pub(crate) unsafe fn map_of_length(cell: u32, entries: u32) {
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
 }
 
@@ -994,7 +994,7 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
 /// Sorted here rather than on the way out because what a set is does not depend on how it was
 /// written: two documents listing the same members are one set, and a set that only settled its
 /// order at the boundary would compare as two.
-unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
+pub(crate) unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
     let element = descriptor::member(descriptor, 0);
     let held = __souther_list_length(cell);
     // Merged in runs that double: a set is written out by hand and is usually small, but usually is
@@ -1125,7 +1125,7 @@ unsafe fn collapsed(cell: u32, keys: u32) -> u32 {
 /// Merged in runs that double, which keeps two entries of one key in the order they were written —
 /// what the collapse after this leans on — and reads each entry a number of times that grows with
 /// the logarithm of how many there are rather than with how many there are.
-unsafe fn sorted_by_key(cell: u32, keys: u32) {
+pub(crate) unsafe fn sorted_by_key(cell: u32, keys: u32) {
     let held = __souther_map_length(cell);
     if held < 2 {
         return;

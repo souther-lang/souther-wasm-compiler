@@ -16,7 +16,7 @@ notation199x = { git = "https://github.com/raoh-project/199x-notation", rev = "4
 crate-type = ["cdylib"]
 
 [profile.release]
-opt-level = "z"
+opt-level = "s"
 lto = true
 panic = "abort"
 codegen-units = 1
