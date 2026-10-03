@@ -29,6 +29,7 @@ final class LayoutReader {
     private static final int SEC_START = 8;
     private static final int SEC_DATA_COUNT = 12;
     private static final int SEC_DATA = 11;
+    private static final int SEC_CODE = 10;
 
     private static final int KIND_FUNCTION = 0x00;
     private static final int KIND_TABLE = 0x01;
@@ -210,6 +211,40 @@ final class LayoutReader {
             }
         }
         throw new IllegalArgumentException("this module defines no global " + globalIndex);
+    }
+
+    /**
+     * The number a defined function answers, where all it does is answer one: no locals, an
+     * {@code i32.const}, and its end.
+     *
+     * <p>Only that shape is read, and anything else is refused rather than run: what this is asked
+     * about is a function written to say a number, and one that does more is not saying it in a way
+     * a reader of the bytes can be sure of.
+     *
+     * @param definedIndex which of the functions the module defines, counting from its first
+     */
+    int constantAnswer(int definedIndex) {
+        for (Section section : sections()) {
+            if (section.id() != SEC_CODE) {
+                continue;
+            }
+            Cursor at = new Cursor(section.start());
+            int count = at.readUnsigned();
+            if (definedIndex >= count) {
+                break;
+            }
+            for (int i = 0; i < definedIndex; i++) {
+                int size = at.readUnsigned();
+                at.position += size;
+            }
+            at.readUnsigned(); // the body's size
+            if (at.readUnsigned() != 0) {
+                throw new IllegalArgumentException("function " + definedIndex
+                        + " keeps locals, so it does more than answer a number");
+            }
+            return at.readConstantI32();
+        }
+        throw new IllegalArgumentException("this module defines no function " + definedIndex);
     }
 
     /**

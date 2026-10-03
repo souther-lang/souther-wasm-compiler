@@ -33,6 +33,17 @@ const REASONS = {
 const SURFACE = "souther:surface";
 
 /**
+ * Which version of the surface this reads, and which ABI of the runtime it calls.
+ *
+ * A module of another is refused when it is loaded rather than read as this one: a surface of
+ * another version says some things differently or not at all, and read as this one it would be
+ * misread without a word — a version 2 surface carries no numbers for what it reaches out for, and
+ * a program loaded from one would fail at its first call out. Held to what the compiler writes by
+ * `TheGlueReadsWhatThisBuildWritesTest`.
+ */
+const READS = { surface: 3, abi: 7 };
+
+/**
  * An amount, as it was written.
  *
  * An amount is held to whatever precision it was written with and a JavaScript number is not, so
@@ -57,9 +68,14 @@ export function amount(written) {
 export async function load(source, supplied = {}) {
   const module = await WebAssembly.compile(await asBytes(source));
   const program = new Program(supplied, surfaceOf(module));
-  program.ready(await WebAssembly.instantiate(module, {
+  const instance = await WebAssembly.instantiate(module, {
     souther: { host_call: program.reachOut },
-  }));
+  });
+  const abi = instance.exports.__souther_abi_version?.();
+  if (abi !== READS.abi) {
+    throw new Error(`this module's runtime is ABI ${abi}, and this glue calls ABI ${READS.abi}`);
+  }
+  program.ready(instance);
   return program;
 }
 
@@ -79,7 +95,15 @@ async function asBytes(source) {
  */
 function surfaceOf(module) {
   const held = WebAssembly.Module.customSections(module, SURFACE);
-  return held.length === 0 ? null : JSON.parse(decoder.decode(held[0]));
+  if (held.length !== 1) {
+    throw new Error(`this module carries ${held.length} ${SURFACE} sections, and the glue reads one`);
+  }
+  const surface = JSON.parse(decoder.decode(held[0]));
+  if (surface.version !== READS.surface) {
+    throw new Error(`this module's surface is version ${surface.version}, and this glue reads `
+      + `version ${READS.surface}`);
+  }
+  return surface;
 }
 
 class Program {
@@ -92,21 +116,20 @@ class Program {
   constructor(supplied, surface) {
     this.#supplied = supplied;
     // A call out carries a number and not a name, and the surface says which behavior each is.
-    this.#crossings = (surface?.modules ?? [])
+    this.#crossings = surface.modules
       .flatMap((module) => module.behaviors)
       .filter((behavior) => behavior.reachOut !== undefined)
       .map((behavior) => ({ ordinal: behavior.reachOut, behavior: behavior.export }));
     this.#surface = surface;
     // Resolved once, by name: the numbers are this module's, and only its own surface says which
     // type each one is.
-    this.#decodable = new Map((surface?.declarations ?? [])
+    this.#decodable = new Map(surface.declarations
       .filter((declared) => declared.decode !== undefined)
       .map((declared) => [`${declared.module}.${declared.name}`, declared.decode]));
     this.reachOut = this.reachOut.bind(this);
   }
 
-  /** What this program offers a caller, as the module says it, or null for a module that does
-   *  not say. */
+  /** What this program offers a caller, as the module says it. */
   get surface() {
     return this.#surface;
   }

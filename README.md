@@ -77,7 +77,10 @@ the rules a value is held to, by name and in the order a failure is decided in. 
 not there: a caller is told a value broke one, and checking it again in the caller's language would
 be the rule written twice. An `option` is where absence is written, and where it stands says how — a
 field leaves its key out, and an element or a map's value writes `null`. The object carries a
-`version`, which moves when what it says is read differently.
+`version`, which moves when what it says is read differently, and a reader refuses a version it
+does not read rather than reading it as one it does: the JavaScript glue refuses a module whose
+surface or runtime ABI is not the one it was written for, and a link refuses a runtime of another
+ABI.
 
 A value of a type can also be read on its own, outside any behavior — what a form checks one field
 against before there is a whole call to make. `__souther_decode(number, pointer, length)` reads the
