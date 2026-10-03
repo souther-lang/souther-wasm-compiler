@@ -316,11 +316,13 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
     let b = value::__souther_map_length(right);
     let shorter = if a < b { a } else { b };
     for i in 0..shorter {
-        // What a key is written as, which is the same question a map's own order asks of it and
-        // is answered in the same place. A key is a string only where its type is one.
-        let (a_key, a_length) = value::key_text(value::__souther_map_key(left, i), keys);
-        let (b_key, b_length) = value::key_text(value::__souther_map_key(right, i), keys);
-        let by_key = compare_runs(a_key, a_length, b_key, b_length);
+        // Where a key stands among a map's keys, which is the same question a map's own order asks
+        // of it and is answered in the same place.
+        let by_key = value::key_order(
+            value::__souther_map_key(left, i),
+            value::__souther_map_key(right, i),
+            keys,
+        );
         if by_key != 0 {
             return by_key;
         }

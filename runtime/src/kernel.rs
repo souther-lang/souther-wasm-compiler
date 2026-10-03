@@ -42,6 +42,9 @@ pub unsafe extern "C" fn __souther_string_slice(from: u32, to: u32, text: u32) -
     if end < start {
         abort(REASON_INVALID_BOUNDS, 0, last as u64, first as u64);
     }
+    if start == 0 && end == __souther_string_length(text) {
+        return text;
+    }
     __souther_string(__souther_string_bytes(text) + start, end - start)
 }
 
@@ -853,9 +856,15 @@ unsafe fn code_points(text: u32) -> u32 {
 }
 
 /// The byte a code point index stands at. Out of range ends the call, wherever it was written.
+///
+/// A text with as many code points as bytes has one byte per code point, so the index is the byte
+/// and nothing is walked.
 unsafe fn offset_of(text: u32, index: i64, held: u32) -> u32 {
     if index < 0 || index > held as i64 {
         abort(REASON_INVALID_BOUNDS, 0, index as u64, held as u64);
+    }
+    if held == __souther_string_length(text) {
+        return index as u32;
     }
     let held = str_of(text);
     held.char_indices().nth(index as usize).map_or(held.len(), |(at, _)| at) as u32
@@ -1180,6 +1189,77 @@ pub unsafe extern "C" fn __souther_map_insert(
     }
 }
 
+/// A map for a walk to grow, holding nothing yet.
+///
+/// The same cell a map is, so a step that reads what it has written so far reads a map, with room
+/// past its entries and how much room there is written in the word before the cell:
+///
+/// ```text
+/// -4  u32 how many entries there is room for
+/// +0  the map
+/// ```
+///
+/// A walk is the only one holding the map it grows — that is what the compiler asked of the walk
+/// before it wrote one — so an entry is put in where it goes, rather than in a copy of the map, and
+/// a walk over n pairs takes room for n entries and not for n copies of them.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_builder(descriptor: u32) -> u32 {
+    room_for(descriptor, MAP_ROOM)
+}
+
+/// How many entries a map being grown starts with room for.
+const MAP_ROOM: u32 = 4;
+
+unsafe fn room_for(descriptor: u32, room: u32) -> u32 {
+    let at = alloc(4);
+    core::ptr::write_unaligned(at as usize as *mut u32, room);
+    let cell = value::__souther_map(descriptor, room);
+    value::map_of_length(cell, 0);
+    cell
+}
+
+/// Puts an entry in a map a walk is growing, answering the map that holds it — the same one where
+/// it had room, and a longer one it moved to where it had not.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_put(key: u32, held: u32, builder: u32) -> u32 {
+    let entries = value::__souther_map_length(builder);
+    let at = match place_of(key, builder) {
+        Ok(at) => {
+            value::__souther_map_set(builder, at, value::__souther_map_key(builder, at), held);
+            return builder;
+        }
+        Err(at) => at,
+    };
+    let room = core::ptr::read_unaligned((builder as usize - 4) as *const u32);
+    let out = if entries < room {
+        builder
+    } else {
+        let wider = room_for(value::map_descriptor(builder), room * 2);
+        for i in 0..entries {
+            value::__souther_map_set(
+                wider,
+                i,
+                value::__souther_map_key(builder, i),
+                value::__souther_map_value(builder, i),
+            );
+        }
+        wider
+    };
+    let mut i = entries;
+    while i > at {
+        value::__souther_map_set(
+            out,
+            i,
+            value::__souther_map_key(out, i - 1),
+            value::__souther_map_value(out, i - 1),
+        );
+        i -= 1;
+    }
+    value::__souther_map_set(out, at, key, held);
+    value::map_of_length(out, entries + 1);
+    out
+}
+
 /// `Map.toList(m)`: a pair per entry, in the order the map holds them.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_to_list(map: u32, descriptor: u32) -> u32 {
@@ -1217,11 +1297,8 @@ pub unsafe extern "C" fn __souther_map_from_list(list: u32, descriptor: u32) -> 
     let mut kept = 0;
     for i in 0..held {
         let key = value::__souther_map_key(out, i);
-        let same_as_last = kept > 0 && {
-            let (a, a_length) = value::key_text(value::__souther_map_key(out, kept - 1), keys);
-            let (b, b_length) = value::key_text(key, keys);
-            order::compare_runs(a, a_length, b, b_length) == 0
-        };
+        let same_as_last =
+            kept > 0 && value::key_order(value::__souther_map_key(out, kept - 1), key, keys) == 0;
         if same_as_last {
             let first = value::__souther_map_key(out, kept - 1);
             value::__souther_map_set(out, kept - 1, first, value::__souther_map_value(out, i));
@@ -1273,13 +1350,11 @@ unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
 /// whether a key is there is answered by asking the middle one and dropping the half it is not in.
 unsafe fn place_of(key: u32, map: u32) -> Result<u32, u32> {
     let keys = value::map_keys(map);
-    let (wanted, wanted_length) = value::key_text(key, keys);
     let mut low = 0;
     let mut high = value::__souther_map_length(map);
     while low < high {
         let middle = low + (high - low) / 2;
-        let (each, each_length) = value::key_text(value::__souther_map_key(map, middle), keys);
-        let held = order::compare_runs(each, each_length, wanted, wanted_length);
+        let held = value::key_order(value::__souther_map_key(map, middle), key, keys);
         if held == 0 {
             return Ok(middle);
         }

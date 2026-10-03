@@ -10,11 +10,13 @@
 //! +8  payload
 //! ```
 //!
-//! Boxed even where it need not be. An `Int` in a local would be an `i64` and nothing else, but the
+//! Boxed wherever a value is kept. An `Int` in a local would be an `i64` and nothing else, but the
 //! same `Int` inside a list, a map or an option has to be reachable by a pointer like everything
 //! else there, and a representation that changed at the edge of a container would put a conversion
-//! at every one of those edges. So the box comes first and unboxing a local is something to add
-//! against a measurement, not before one.
+//! at every one of those edges. What a body works out on the way to a value is not kept, so the
+//! compiler works arithmetic and conditions out on numbers and makes a cell only for what comes of
+//! them; and a literal is a cell the compiler writes into static memory once. Both write and read
+//! the layout here, which `RuntimeAbi.Cell` names on the other side.
 //!
 //! # Reading and writing
 //!
@@ -269,9 +271,35 @@ pub unsafe extern "C" fn __souther_held(cell: u32) -> u32 {
 /// quietly standing where the right one was.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
+    __souther_int(__souther_int_sum(__souther_int_value(left), __souther_int_value(right)))
+}
+
+/// The `+` operator on two `Int`s a body holds as numbers rather than as cells.
+///
+/// What a body works out in the middle of an expression is not kept anywhere, so it is not made a
+/// cell: `a + b * c` makes one cell for its answer and none for `b * c`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_sum(a: i64, b: i64) -> i64 {
     match a.checked_add(b) {
-        Some(sum) => __souther_int(sum),
+        Some(sum) => sum,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
+    }
+}
+
+/// The `-` operator on two `Int`s held as numbers.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_difference(a: i64, b: i64) -> i64 {
+    match a.checked_sub(b) {
+        Some(difference) => difference,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
+    }
+}
+
+/// The `*` operator on two `Int`s held as numbers.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_product(a: i64, b: i64) -> i64 {
+    match a.checked_mul(b) {
+        Some(product) => product,
         None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
@@ -290,21 +318,13 @@ pub unsafe extern "C" fn __souther_negate(cell: u32) -> u32 {
 /// The `-` operator on `Int`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_subtract(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    match a.checked_sub(b) {
-        Some(difference) => __souther_int(difference),
-        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
-    }
+    __souther_int(__souther_int_difference(__souther_int_value(left), __souther_int_value(right)))
 }
 
 /// The `*` operator on `Int`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_multiply(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    match a.checked_mul(b) {
-        Some(product) => __souther_int(product),
-        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
-    }
+    __souther_int(__souther_int_product(__souther_int_value(left), __souther_int_value(right)))
 }
 
 /// The `/` operator on `Int`: truncating, and ending the call on a zero divisor.
@@ -353,6 +373,11 @@ pub unsafe extern "C" fn __souther_map(descriptor: u32, entries: u32) -> u32 {
     let _ = alloc(4 + 8 * entries);
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
     cell
+}
+
+/// What a map was declared as.
+pub(crate) unsafe fn map_descriptor(cell: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + 4) as *const u32)
 }
 
 /// What a map's keys are, for a caller that has the map and not the type it was declared as.
@@ -529,6 +554,15 @@ pub unsafe extern "C" fn __souther_grow(builder: u32, added: u32) -> u32 {
         held = grown(held, __souther_list_get(added, i));
     }
     held
+}
+
+/// Adds one value to the end of a builder, answering the builder that holds it.
+///
+/// What a step writing `acc ++ [x]` comes to: the one value, without the list of one it was
+/// written in.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_grow_one(builder: u32, value: u32) -> u32 {
+    grown(builder, value)
 }
 
 /// Adds one value to the end of a builder.
@@ -1047,6 +1081,54 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
     }
 }
 
+/// Where one key of a map stands relative to another, which is the order their texts are written
+/// in.
+///
+/// Worked out from what the keys hold where that order is the same one, so that finding an entry
+/// does not write a key out per comparison. A time of day is written as two digits per part, the
+/// seconds left off where there are none, so its text and its number stand in one order. A day is
+/// written that way while its year has four digits; a year before the first or past the ten
+/// thousandth is written with a sign and more digits, which is not the order of the days, so such
+/// a key is compared as text as before.
+pub(crate) unsafe fn key_order(left: u32, right: u32, descriptor: u32) -> i32 {
+    match descriptor::kind(descriptor) {
+        KIND_NEWTYPE => key_order(
+            __souther_record_get(left, 0),
+            __souther_record_get(right, 0),
+            descriptor::member(descriptor, 0),
+        ),
+        KIND_STRING => order::compare_runs(
+            __souther_string_bytes(left),
+            __souther_string_length(left),
+            __souther_string_bytes(right),
+            __souther_string_length(right),
+        ),
+        KIND_TIME => sign_of(temporal::second(left) as i64 - temporal::second(right) as i64),
+        KIND_DATE | KIND_DATE_TIME
+            if temporal::in_four_digit_years(left) && temporal::in_four_digit_years(right) =>
+        {
+            let by_day = sign_of(temporal::day(left) as i64 - temporal::day(right) as i64);
+            if by_day != 0 {
+                return by_day;
+            }
+            sign_of(temporal::second(left) as i64 - temporal::second(right) as i64)
+        }
+        _ => {
+            let (a, a_length) = key_text(left, descriptor);
+            let (b, b_length) = key_text(right, descriptor);
+            order::compare_runs(a, a_length, b, b_length)
+        }
+    }
+}
+
+fn sign_of(difference: i64) -> i32 {
+    match difference {
+        d if d < 0 => -1,
+        0 => 0,
+        _ => 1,
+    }
+}
+
 /// A map is written as an object, its keys the keys and its entries in ascending order of them.
 ///
 /// A key written twice names one entry, and the one that stands is the last written: what reaches
@@ -1104,11 +1186,8 @@ unsafe fn collapsed(cell: u32, keys: u32) -> u32 {
     let held = __souther_map_length(cell);
     let mut kept = 0;
     for i in 0..held {
-        let (a, a_length) = key_text(__souther_map_key(cell, i), keys);
-        let last = i + 1 == held || {
-            let (b, b_length) = key_text(__souther_map_key(cell, i + 1), keys);
-            order::compare_runs(a, a_length, b, b_length) != 0
-        };
+        let last = i + 1 == held
+            || key_order(__souther_map_key(cell, i), __souther_map_key(cell, i + 1), keys) != 0;
         if last {
             __souther_map_set(cell, kept, __souther_map_key(cell, i), __souther_map_value(cell, i));
             kept += 1;
@@ -1163,9 +1242,7 @@ unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u
         } else if right == end {
             true
         } else {
-            let (a, a_length) = key_text(__souther_map_key(cell, left), keys);
-            let (b, b_length) = key_text(__souther_map_key(cell, right), keys);
-            order::compare_runs(a, a_length, b, b_length) <= 0
+            key_order(__souther_map_key(cell, left), __souther_map_key(cell, right), keys) <= 0
         };
         let taken = if take_left {
             left += 1;
