@@ -36,6 +36,15 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
      */
     private static final double NOT_EVERY_PAIR = 3.0;
 
+    /**
+     * How much more room four times as much may take, for a call whose cost is the room it takes.
+     *
+     * <p>Room is counted and not timed, so nothing but the program moves it: a call keeping one copy
+     * of what it holds takes four times as much, one keeping a tree of it about four and a half, and
+     * one copying all of it at every change sixteen. The bound sits between.
+     */
+    private static final double ROOM_NOT_EVERY_PAIR = 8.0;
+
     /** Enough that the difference between the two shapes is larger than the noise. */
     private static final int SMALLER = 400;
     private static final int LARGER = 1600;
@@ -126,19 +135,20 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
      * thousand elements ran out of memory where the JVM answers.
      */
     @Test
-    void changesACollectionOneMemberAtATimeByAboutAsMuchAgainForTwiceAsMany() {
+    void changesACollectionOneMemberAtATimeInAboutAsMuchRoomAgainForTwiceAsMany() {
         Running module = compiled();
 
         // One for each way a member goes in or out: a list joined on inside a pair, a set's member
         // put in and taken out, a map's entry put in outside a walk that grows only the map, and
-        // taken out. Copying every member came to ten to thirteen times as much for four times as
-        // many, and these come to under five, so the quickest of three runs is enough to tell.
+        // taken out. What copying every member costs is room, so room is what is measured: the
+        // same on every run and every machine, where a clock is not. Copying came to fourteen to
+        // fifteen times the room for four times as many, and these come to four to under five.
         for (String export : List.of("growing.dropped", "growing.inserted", "growing.removed",
                 "growing.paired", "growing.unkeyed")) {
-            assertThat(howMuchMoreForFourTimesAsMuch(module, export,
-                    descending(SMALLER), descending(LARGER), 3))
+            assertThat(howMuchMoreRoomForFourTimesAsMuch(module, export,
+                    descending(SMALLER), descending(LARGER)))
                     .describedAs(export)
-                    .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
+                    .isLessThan(ROOM_NOT_EVERY_PAIR);
         }
     }
 
@@ -150,20 +160,35 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
      */
     private static double howMuchMoreForFourTimesAsMuch(
             Running module, String export, String smaller, String larger) {
-        return howMuchMoreForFourTimesAsMuch(module, export, smaller, larger, 5);
-    }
-
-    private static double howMuchMoreForFourTimesAsMuch(
-            Running module, String export, String smaller, String larger, int runs) {
-        double first = quickest(module, export, smaller, runs);
-        double then = quickest(module, export, larger, runs);
+        double first = quickest(module, export, smaller);
+        double then = quickest(module, export, larger);
         return then / first;
     }
 
-    private static double quickest(Running module, String export, String arguments, int runs) {
+    /**
+     * How many times as much room the larger of two takes: what the arena handed out over the call,
+     * which is the same every run and on every machine.
+     */
+    private static double howMuchMoreRoomForFourTimesAsMuch(
+            Running module, String export, String smaller, String larger) {
+        return (double) room(module, export, larger) / room(module, export, smaller);
+    }
+
+    private static long room(Running module, String export, String arguments) {
+        byte[] utf8 = arguments.getBytes(StandardCharsets.UTF_8);
+        int mark = module.call(RuntimeAbi.ALLOC_MARK);
+        int staged = module.staged(arguments);
+        int before = module.call(RuntimeAbi.ALLOC_MARK);
+        module.callWithString(export, staged, utf8.length);
+        int after = module.call(RuntimeAbi.ALLOC_MARK);
+        module.call(RuntimeAbi.ALLOC_RESET, mark);
+        return Integer.toUnsignedLong(after) - Integer.toUnsignedLong(before);
+    }
+
+    private static double quickest(Running module, String export, String arguments) {
         byte[] utf8 = arguments.getBytes(StandardCharsets.UTF_8);
         double best = Double.MAX_VALUE;
-        for (int i = 0; i < runs; i++) {
+        for (int i = 0; i < 5; i++) {
             int mark = module.call(RuntimeAbi.ALLOC_MARK);
             long began = System.nanoTime();
             long[] answer = module.callWithString(export, module.staged(arguments), utf8.length);
