@@ -70,9 +70,9 @@ class APairIsComparedAsWhatTheCheckerReadItAsTest {
 
             let sorted (n) = List.sort([Junior, Senior, Junior])
 
-            behavior sortedBy : (n: Int) -> List<Rank>
+            behavior sortedBy : (n: Int) -> List<Int>
 
-            let sortedBy (n) = List.sortBy(r -> r, [Junior, Senior, Junior])
+            let sortedBy (n) = List.sortBy(m -> if m > 0 then Junior else Senior, [1, 0, 2])
 
             behavior highest : (n: Int) -> Rank
 
@@ -142,7 +142,8 @@ class APairIsComparedAsWhatTheCheckerReadItAsTest {
         assertThat(answerOf(module, "reading.unioned", "[false]")).isEqualTo(truths(false, false));
         String ranked = "{\"value\":[\"Senior\",\"Junior\",\"Junior\"]}";
         assertThat(answerOf(module, "reading.sorted", "[0]")).isEqualTo(ranked);
-        assertThat(answerOf(module, "reading.sortedBy", "[0]")).isEqualTo(ranked);
+        // A block answering one case or the other answers a union of the two.
+        assertThat(answerOf(module, "reading.sortedBy", "[0]")).isEqualTo("{\"value\":[0,1,2]}");
         assertThat(answerOf(module, "reading.highest", "[0]")).isEqualTo("{\"value\":\"Junior\"}");
         assertThat(answerOf(module, "reading.lowest", "[0]")).isEqualTo("{\"value\":\"Senior\"}");
     }
