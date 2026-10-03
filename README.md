@@ -199,6 +199,14 @@ a list and settling a set have not gone back to asking every part about every ot
 three of them were doing while every other test passed. A test that hands over three of something
 cannot tell the two shapes apart.
 
+Changing a collection one member at a time is held to the same bound, however the body holds it.
+A list, a set and a map changed are new ones and the one each was made from stays what it was, as on
+the JVM, whose collections are persistent. Here a list joined on writes into its own array where
+nothing was made from it yet, and a set or a map put into or taken out of is a tree that shares all
+but a path with the one before (`runtime/src/tree.rs`). Copying instead, `List.drop`,
+`List.distinct`, `List.partition` and a set grown in a fold took the square of their length, and
+`List.drop` over sixty-four thousand elements ran out of memory.
+
 ## Calling one from JavaScript
 
 A core module is what a browser reads, so a program compiled here is loaded with

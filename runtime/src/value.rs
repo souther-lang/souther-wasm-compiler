@@ -44,6 +44,7 @@ use crate::issues::{
 use crate::json;
 use crate::notation;
 use crate::text;
+use crate::tree;
 use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 /// The one value a type with a single value has. `+4` is which type.
@@ -188,34 +189,130 @@ pub unsafe extern "C" fn __souther_record_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 * index as usize) as *const u32)
 }
 
-/// A list of that many elements, with nothing in them yet.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_list(descriptor: u32, length: u32) -> u32 {
-    let cell = header(TAG_LIST, descriptor);
-    let _ = alloc(4 + 4 * length);
-    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, length);
+// A list, and a set, which is a list of its members in order:
+//
+// ```text
+// +0  u32 tag
+// +4  u32 descriptor
+// +8  u32 how many it holds
+// +12 u32 where they are, or nothing for a set held as a tree that no reader has asked for yet
+// +16 u32 the tree a set changed one member at a time is held as, or nothing
+// ```
+//
+// Where they are is an array with two words before it: how many of its places some list holds,
+// and how many places it has. A list is its length's worth of the array, and the array may hold
+// more for another list made from it. So `xs ++ ys` writes `ys` after `xs` in `xs`'s own array
+// where `xs` ends where the array's held places do and there is room, and is a new cell over the
+// same array: `xs` still holds its own length's worth, which nothing writes to again. Where it does
+// not end there, some other list was made from `xs` already, and the two are copied into an array
+// of twice the room — so growing a list one element at a time takes as long as its length and not
+// its square, whatever holds the list on the way. A tree is `tree`'s.
+const LIST_LENGTH: u32 = 8;
+const LIST_ELEMENTS: u32 = 12;
+const LIST_TREE: u32 = 16;
+const LIST_CELL: u32 = 20;
+
+unsafe fn word(at: u32) -> u32 {
+    core::ptr::read_unaligned(at as usize as *const u32)
+}
+
+unsafe fn put_word(at: u32, held: u32) {
+    core::ptr::write_unaligned(at as usize as *mut u32, held);
+}
+
+/// An array of `room` places, of which `held` are some list's, answered as where the first is.
+pub(crate) unsafe fn elements_of_room(room: u32, held: u32) -> u32 {
+    let Some(bytes) = room.checked_mul(4).and_then(|places| places.checked_add(8)) else {
+        abort(crate::REASON_OUT_OF_MEMORY, 0, room as u64, 0)
+    };
+    let at = alloc(bytes) + 8;
+    put_word(at - 8, held);
+    put_word(at - 4, room);
+    at
+}
+
+/// How many of an array's places some list holds.
+pub(crate) unsafe fn elements_held(elements: u32) -> u32 {
+    word(elements - 8)
+}
+
+/// How many places an array has.
+pub(crate) unsafe fn elements_room(elements: u32) -> u32 {
+    word(elements - 4)
+}
+
+/// Says that some list holds that many of an array's places.
+pub(crate) unsafe fn elements_now_hold(elements: u32, held: u32) {
+    put_word(elements - 8, held);
+}
+
+/// A list cell over that many of an array's elements, or over a set's tree.
+pub(crate) unsafe fn list_over(descriptor: u32, length: u32, elements: u32, tree: u32) -> u32 {
+    let cell = alloc(LIST_CELL);
+    put_word(cell, TAG_LIST);
+    put_word(cell + 4, descriptor);
+    put_word(cell + LIST_LENGTH, length);
+    put_word(cell + LIST_ELEMENTS, elements);
+    put_word(cell + LIST_TREE, tree);
     cell
 }
 
-/// Puts a value at a position of a list.
+/// A list of that many elements, with nothing in them yet.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list(descriptor: u32, length: u32) -> u32 {
+    let cell = list_over(descriptor, length, 0, 0);
+    put_word(cell + LIST_ELEMENTS, elements_of_room(length, length));
+    cell
+}
+
+/// Puts a value at a position of a list, which only the one making the list does.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_set(cell: u32, index: u32, value: u32) {
-    core::ptr::write_unaligned(
-        (cell as usize + HEADER + 4 + 4 * index as usize) as *mut u32,
-        value,
-    );
+    put_word(word(cell + LIST_ELEMENTS) + 4 * index, value);
 }
 
 /// How many elements a list holds.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_length(cell: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
+    word(cell + LIST_LENGTH)
 }
 
 /// The value at a position of a list.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_get(cell: u32, index: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER + 4 + 4 * index as usize) as *const u32)
+    word(__souther_list_elements(cell) + 4 * index)
+}
+
+/// Where a list's elements are, one word each and in order: a set held as a tree is laid out the
+/// first time anything asks, and kept laid out. A walk asks once and reads the elements itself.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_elements(cell: u32) -> u32 {
+    let elements = word(cell + LIST_ELEMENTS);
+    if elements != 0 {
+        return elements;
+    }
+    let length = word(cell + LIST_LENGTH);
+    let laid = elements_of_room(length, length);
+    tree::laid_out(word(cell + LIST_TREE), laid, 4, false);
+    put_word(cell + LIST_ELEMENTS, laid);
+    laid
+}
+
+/// The tree a set's members stand in, made from its array the first time a member is put in or
+/// taken out, and kept: a set changed many times from one is laid out as a tree once.
+pub(crate) unsafe fn set_tree(cell: u32) -> u32 {
+    let tree = word(cell + LIST_TREE);
+    if tree != 0 || word(cell + LIST_LENGTH) == 0 {
+        return tree;
+    }
+    let made = tree::of_ordered(word(cell + LIST_ELEMENTS), 0, word(cell + LIST_LENGTH), 4, false);
+    put_word(cell + LIST_TREE, made);
+    made
+}
+
+/// Whether a set is held as a tree already, so that a member is found by walking it.
+pub(crate) unsafe fn held_as_tree(cell: u32) -> bool {
+    word(cell + LIST_TREE) != 0
 }
 
 /// Whether a value is one of the type a descriptor describes.
@@ -368,13 +465,69 @@ pub unsafe fn joined(left: u32, right: u32) -> u32 {
     notation::joined(&[notation::str_of(left), notation::str_of(right)])
 }
 
+// A map:
+//
+// ```text
+// +0  u32 tag
+// +4  u32 descriptor
+// +8  u32 how many entries it holds
+// +12 u32 where they are, a key and its value per entry in the order of the keys, or nothing for a
+//         map held as a tree that no reader has asked for yet
+// +16 u32 the tree a map changed one entry at a time is held as, or nothing
+// ```
+//
+// As a set is: changed by putting an entry in or taking one out, a map is a tree that shares all
+// but a path with the one it was made from; read entry by entry, it is laid out once.
+const MAP_ENTRIES: u32 = 12;
+const MAP_TREE: u32 = 16;
+
+/// A map cell over that many entries laid out at `entries`, or over a tree.
+pub(crate) unsafe fn map_over(descriptor: u32, length: u32, entries: u32, tree: u32) -> u32 {
+    let cell = alloc(LIST_CELL);
+    put_word(cell, TAG_MAP);
+    put_word(cell + 4, descriptor);
+    put_word(cell + LIST_LENGTH, length);
+    put_word(cell + MAP_ENTRIES, entries);
+    put_word(cell + MAP_TREE, tree);
+    cell
+}
+
 /// A map of that many entries, with nothing in them yet.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map(descriptor: u32, entries: u32) -> u32 {
-    let cell = header(TAG_MAP, descriptor);
-    let _ = alloc(4 + 8 * entries);
-    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
-    cell
+    let Some(bytes) = entries.checked_mul(8) else {
+        abort(crate::REASON_OUT_OF_MEMORY, 0, entries as u64, 0)
+    };
+    map_over(descriptor, entries, alloc(bytes), 0)
+}
+
+/// Where a map's entries are, laid out from its tree the first time anything asks.
+unsafe fn map_entries(cell: u32) -> u32 {
+    let entries = word(cell + MAP_ENTRIES);
+    if entries != 0 || word(cell + LIST_LENGTH) == 0 {
+        return entries;
+    }
+    let laid = alloc(8 * word(cell + LIST_LENGTH));
+    tree::laid_out(word(cell + MAP_TREE), laid, 8, true);
+    put_word(cell + MAP_ENTRIES, laid);
+    laid
+}
+
+/// The tree a map's entries stand in, made from its entries the first time one is put in or taken
+/// out, and kept.
+pub(crate) unsafe fn map_tree(cell: u32) -> u32 {
+    let tree = word(cell + MAP_TREE);
+    if tree != 0 || word(cell + LIST_LENGTH) == 0 {
+        return tree;
+    }
+    let made = tree::of_ordered(word(cell + MAP_ENTRIES), 0, word(cell + LIST_LENGTH), 8, true);
+    put_word(cell + MAP_TREE, made);
+    made
+}
+
+/// Whether a map is held as a tree already, so that a key is found by walking it.
+pub(crate) unsafe fn map_held_as_tree(cell: u32) -> bool {
+    word(cell + MAP_TREE) != 0
 }
 
 /// What a map's keys are, for a caller that has the map and not the type it was declared as.
@@ -399,20 +552,21 @@ pub unsafe extern "C" fn __souther_map_length(cell: u32) -> u32 {
 /// The key of one of a map's entries.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_key(cell: u32, index: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER + 4 + 8 * index as usize) as *const u32)
+    word(map_entries(cell) + 8 * index)
 }
 
 /// The value of one of a map's entries.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_value(cell: u32, index: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER + 8 + 8 * index as usize) as *const u32)
+    word(map_entries(cell) + 8 * index + 4)
 }
 
-/// Puts an entry at a position of a map.
+/// Puts an entry at a position of a map, which only the one making the map does.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_set(cell: u32, index: u32, key: u32, value: u32) {
-    core::ptr::write_unaligned((cell as usize + HEADER + 4 + 8 * index as usize) as *mut u32, key);
-    core::ptr::write_unaligned((cell as usize + HEADER + 8 + 8 * index as usize) as *mut u32, value);
+    let entries = word(cell + MAP_ENTRIES);
+    put_word(entries + 8 * index, key);
+    put_word(entries + 8 * index + 4, value);
 }
 
 /// Shortens a map to the entries it kept.

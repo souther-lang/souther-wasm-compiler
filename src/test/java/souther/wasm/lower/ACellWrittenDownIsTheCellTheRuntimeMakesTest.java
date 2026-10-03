@@ -66,10 +66,12 @@ class ACellWrittenDownIsTheCellTheRuntimeMakesTest {
         assertThat(word(block + Cell.SECOND)).isEqualTo(7);
         assertThat(word(block + Cell.PAYLOAD)).isEqualTo(1234);
 
+        // A walk reads how many a list holds off its cell, and its elements where the runtime says
+        // they are.
         int list = runtime.call(RuntimeAbi.LIST, 0, 3);
         runtime.run(RuntimeAbi.LIST_SET, list, 1, 99);
         assertThat(word(list + Cell.PAYLOAD)).isEqualTo(3);
-        assertThat(word(list + Cell.PAYLOAD + 4 + 4)).isEqualTo(99);
+        assertThat(word(runtime.call(RuntimeAbi.LIST_ELEMENTS, list) + 4)).isEqualTo(99);
     }
 
     private int word(int address) {

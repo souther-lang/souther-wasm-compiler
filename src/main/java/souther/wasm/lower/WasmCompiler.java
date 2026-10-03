@@ -1319,6 +1319,7 @@ public final class WasmCompiler {
             int at = scratch();
             int held = scratch();
             int builder = scratch();
+            int elements = scratch();
 
             // A step written where the walk is, which is what `List.map(f, xs)` leaves once `f` is
             // written in, is a function this compiler knows: it is called as itself, with what it
@@ -1337,6 +1338,9 @@ public final class WasmCompiler {
             wide(out, call.args().get(2));
             out.wrap().localSet(at);
             out.localGet(over).call(calls.of(RuntimeAbi.LIST_LENGTH_OF)).localSet(held);
+            // Where the elements are is asked once, of the runtime: a list's cell points at them,
+            // and a set held as a tree is laid out for the asking.
+            out.localGet(over).call(calls.of(RuntimeAbi.LIST_ELEMENTS)).localSet(elements);
             out.constant(shapes.of(call.type())).call(calls.of(start)).localSet(builder);
 
             out.block().loop()
@@ -1346,8 +1350,7 @@ public final class WasmCompiler {
                 out.load(Cell.PAYLOAD);
             }
             out.localGet(builder);
-            // The element is read where the list holds it, past how many there are.
-            out.localGet(over).localGet(at).shiftLeft(2).add().load(Cell.PAYLOAD + 4);
+            out.localGet(elements).localGet(at).shiftLeft(2).add().load(0);
             if (direct < 0) {
                 out.localGet(step).load(Cell.SECOND).callSlot(overCells(fragment, 3));
             } else {

@@ -52,9 +52,11 @@ public final class RuntimeAbi {
      * metadata its constraint carries, and a descriptor of a type with rules came to point at what
      * each rule is reported as: a host reading the issues of 7 would find neither. Raised to 9 when
      * {@code ++} stopped having entries of its own (issue #26): on strings it is
-     * {@link Kernels#STRING_APPEND} and on lists {@link #LIST_APPEND}.
+     * {@link Kernels#STRING_APPEND} and on lists {@link #LIST_APPEND}. Raised to 10 when a list
+     * came to point at its elements rather than hold them, read through {@link #LIST_ELEMENTS},
+     * and a set and a map changed one member at a time came to be held as a tree.
      */
-    public static final int VERSION = 9;
+    public static final int VERSION = 10;
 
     /**
      * What of the runtime a linked module still shows its host: the memory, and what the steps
@@ -304,6 +306,9 @@ public final class RuntimeAbi {
 
     /** {@code (i32 cell) -> i32}: how many elements a list holds, as a plain number. */
     public static final String LIST_LENGTH_OF = "__souther_list_length";
+
+    /** {@code (i32 list) -> i32}: where a list's elements are, a word each and in order. */
+    public static final String LIST_ELEMENTS = "__souther_list_elements";
 
     /** {@code (i32 cell) -> i32}: the unary {@code -} on {@code Int}. */
     public static final String NEGATE = "__souther_negate";
@@ -635,7 +640,8 @@ public final class RuntimeAbi {
         /** A {@code String}: the second word is how many bytes, and the payload is the bytes. */
         public static final int TAG_STRING = 3;
 
-        /** A list: the payload is how many elements, and a pointer per element follows. */
+        /** A list: the payload is how many elements, and then where they are, which is read through
+         *  {@link RuntimeAbi#LIST_ELEMENTS} and not off the cell. */
         public static final int TAG_LIST = 5;
 
         /** An option holding nothing. */

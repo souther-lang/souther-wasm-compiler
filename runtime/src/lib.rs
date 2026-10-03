@@ -37,6 +37,7 @@ mod notation;
 mod order;
 mod temporal;
 mod text;
+mod tree;
 mod value;
 
 use core::panic::PanicInfo;
@@ -71,7 +72,11 @@ const PAGE: usize = 65536;
 /// Raised to 9 when `++` stopped having entries of its own (issue #26): on strings it is
 /// `__souther_string_append` and on lists `__souther_list_append`, the operations `String.append`
 /// and `List.append` already were, and `__souther_concat` and `__souther_list_concat` are gone.
-const ABI_VERSION: u32 = 9;
+///
+/// Raised to 10 when a list came to point at its elements rather than hold them, read through
+/// `__souther_list_elements`, and a set and a map changed one member at a time came to be held as a
+/// tree, so that changing one from a walk costs as much as the JVM's persistent collections do.
+const ABI_VERSION: u32 = 10;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
