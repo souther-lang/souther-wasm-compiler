@@ -15,7 +15,7 @@ notation199x = { git = "https://github.com/raoh-project/199x-notation", rev = "4
 # runtime's answers from the same source, with neither backend depending on the other. Where one
 # is kept and what a failure ends the call as are this runtime's (`rational`). A commit, for the
 # reason 199x-notation is one.
-souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "448ba361fc2787bbf386f7f75e087c0d5bc0ace8" }
+souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "db380bf027073f486fb6e2152b22f1ad06521e12" }
 
 [lib]
 crate-type = ["cdylib"]

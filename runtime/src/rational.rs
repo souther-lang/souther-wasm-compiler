@@ -28,11 +28,11 @@ use crate::value::{
     TAG_RATIONAL,
 };
 use crate::{
-    abort, alloc, REASON_BACKEND_INVARIANT_BROKEN, REASON_DIVISION_BY_ZERO, REASON_OUT_OF_MEMORY,
+    abort, alloc, REASON_DIVISION_BY_ZERO, REASON_OUT_OF_MEMORY,
     REASON_REQUIRED_FORM_HAS_NO_PLACE,
 };
 use core::cmp::Ordering;
-use souther_exact::{Exact, Failure, Magnitude, Ratio, Rounding, Scaled};
+use souther_exact::{Exact, Failure, Magnitude, Ratio, Scaled};
 
 const OFF_TWOS: u32 = 4;
 const OFF_FIVES: u32 = 12;
@@ -103,7 +103,8 @@ pub(crate) unsafe fn ratio(cell: u32) -> Ratio {
     let bytes = |from: u32, length: u32| {
         core::slice::from_raw_parts((cell + HEADER + from) as usize as *const u8, length as usize)
     };
-    Ratio::from_stored(
+    // Trusted because every cell of one was written by `cell_of` from the parts of a value.
+    Ratio::from_trusted_parts(
         signed < 0,
         Magnitude::of_le_bytes(bytes(0, above)),
         Magnitude::of_le_bytes(bytes(above, below)),
@@ -151,22 +152,6 @@ unsafe fn scaled(cell: u32) -> Scaled {
 unsafe fn decimal_of(parts: Scaled) -> u32 {
     let digits = parts.magnitude.digits();
     decimal::of_digits(digits.as_ptr() as u32, digits.len() as u32, parts.scale, parts.negative)
-}
-
-/// Which way a `RoundingMode` rounds, from its place among the ones the language declares.
-unsafe fn rounding(mode: u32) -> Rounding {
-    match mode {
-        decimal::MODE_HALF_UP => Rounding::HalfUp,
-        decimal::MODE_HALF_EVEN => Rounding::HalfEven,
-        decimal::MODE_HALF_DOWN => Rounding::HalfDown,
-        decimal::MODE_UP => Rounding::Up,
-        decimal::MODE_DOWN => Rounding::Down,
-        decimal::MODE_CEILING => Rounding::Ceiling,
-        decimal::MODE_FLOOR => Rounding::Floor,
-        // The compiler and this crate disagreeing about what the language declares, as for an
-        // amount's rounding.
-        _ => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, mode as u64, 0),
-    }
 }
 
 /// `Rational.fromInt`, and an `Int` read at its exact value by an operator with a `Rational` on the
@@ -271,12 +256,12 @@ pub unsafe extern "C" fn __souther_rational_to_finite_decimal(cell: u32, repeati
 /// `Rational.toInt(mode, r)`: the whole number it rounds to by the mode.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_rational_to_int(mode: u32, cell: u32) -> u32 {
-    __souther_int(settled(ratio(cell).to_int(rounding(mode))))
+    __souther_int(settled(ratio(cell).to_int(decimal::rounding(mode))))
 }
 
 /// `Rational.toDecimal(scale, mode, r)`: the value at that many places, rounded by the mode.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_rational_to_decimal(scale: u32, mode: u32, cell: u32) -> u32 {
     let places = __souther_int_value(scale);
-    decimal_of(settled(ratio(cell).to_decimal(places, rounding(mode))))
+    decimal_of(settled(ratio(cell).to_decimal(places, decimal::rounding(mode))))
 }

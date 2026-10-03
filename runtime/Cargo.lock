@@ -44,7 +44,7 @@ dependencies = [
 [[package]]
 name = "souther-exact"
 version = "0.1.0"
-source = "git+https://github.com/souther-lang/souther-runtime-rs?rev=448ba361fc2787bbf386f7f75e087c0d5bc0ace8#448ba361fc2787bbf386f7f75e087c0d5bc0ace8"
+source = "git+https://github.com/souther-lang/souther-runtime-rs?rev=db380bf027073f486fb6e2152b22f1ad06521e12#db380bf027073f486fb6e2152b22f1ad06521e12"
 dependencies = [
  "num-bigint",
  "num-integer",

@@ -18,6 +18,7 @@
 
 use crate::value::TAG_DECIMAL;
 use crate::{abort, alloc, REASON_BACKEND_INVARIANT_BROKEN, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use souther_exact::{Dropped, Rounding};
 
 /// How many digits a limb holds. A limb is that many digits of the number and nothing else, so
 /// putting digits in and taking them out is a division by ten and never by a power of two.
@@ -742,45 +743,28 @@ unsafe fn rounded(
     } else {
         (kept, kept_length)
     };
-    let twice = {
-        let two = alloc(1);
-        core::ptr::write(two as *mut u8, b'2');
-        product(rest, rest_length, two, 1)
-    };
-    let against = larger(twice.0, twice.1, over, over_length);
     let mut any = false;
     for i in 0..rest_length {
         if core::ptr::read((rest + i) as *const u8) != b'0' {
             any = true;
         }
     }
-    let up = if !any {
-        false
+    // What was dropped and whether what is kept is odd are read off the digits here; what a mode
+    // makes of them is the language's, and said once in `souther_exact` for every runtime.
+    let dropped = if !any {
+        Dropped::Nothing
     } else {
-        match mode {
-            MODE_UP => true,
-            MODE_DOWN => false,
-            MODE_CEILING => !negative,
-            MODE_FLOOR => negative,
-            MODE_HALF_UP => against >= 0,
-            MODE_HALF_DOWN => against > 0,
-            MODE_HALF_EVEN => {
-                if against > 0 {
-                    true
-                } else if against < 0 {
-                    false
-                } else {
-                    (core::ptr::read((digits_at + digits_length - 1) as *const u8) - b'0') % 2 == 1
-                }
-            }
-            // Nothing else is a mode the language declares: every `RoundingMode` case this
-            // module was compiled against is above, so an ordinal outside them is the
-            // compiler and this crate disagreeing about what the language declares, not a
-            // Souther program failing to hold anything.
-            _ => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, mode as u64, 0),
+        let two = alloc(1);
+        core::ptr::write(two as *mut u8, b'2');
+        let twice = product(rest, rest_length, two, 1);
+        match larger(twice.0, twice.1, over, over_length) {
+            ..0 => Dropped::BelowHalf,
+            0 => Dropped::Half,
+            _ => Dropped::AboveHalf,
         }
     };
-    if !up {
+    let odd = (core::ptr::read((digits_at + digits_length - 1) as *const u8) - b'0') % 2 == 1;
+    if !rounding(mode).rounds_away(negative, odd, dropped) {
         return of_digits(digits_at, digits_length, wanted, negative);
     }
     let one = alloc(1);
@@ -803,6 +787,26 @@ pub const MODE_DOWN: u32 = 4;
 pub const MODE_CEILING: u32 = 5;
 /// Towards the smaller.
 pub const MODE_FLOOR: u32 = 6;
+
+/// Which mode a `RoundingMode` is, from its place among the cases the language declares, which is
+/// what the compiler passes (`CASE_OF`). The one place an ordinal is read, for an amount's
+/// rounding and a `Rational`'s alike.
+pub unsafe fn rounding(mode: u32) -> Rounding {
+    match mode {
+        MODE_HALF_UP => Rounding::HalfUp,
+        MODE_HALF_EVEN => Rounding::HalfEven,
+        MODE_HALF_DOWN => Rounding::HalfDown,
+        MODE_UP => Rounding::Up,
+        MODE_DOWN => Rounding::Down,
+        MODE_CEILING => Rounding::Ceiling,
+        MODE_FLOOR => Rounding::Floor,
+        // Nothing else is a mode the language declares: every `RoundingMode` case this module was
+        // compiled against is above, so an ordinal outside them is the compiler and this crate
+        // disagreeing about what the language declares, not a Souther program failing to hold
+        // anything.
+        _ => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, mode as u64, 0),
+    }
+}
 
 /// One amount divided by another at a scale, rounded the way a mode says.
 pub unsafe fn divided(left: u32, right: u32, wanted: i32, mode: u32) -> u32 {
