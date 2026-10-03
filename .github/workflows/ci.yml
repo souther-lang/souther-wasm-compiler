@@ -91,9 +91,23 @@ jobs:
       # The example is a program compiled by this and then called from a browser. Nothing else
       # here calls a compiled program from outside the JVM, so it is the only place that would
       # notice the boundary changing shape — and only while it is still built.
+      #
+      # The oldest Node the glue says it runs on is the one it is built and tested on here. The
+      # engines field and this are one statement, so this reads it there: a version written here
+      # as well would let a test pass on a Node the glue no longer promises, and the promise go
+      # unkept on the one it does.
+      - name: Read the oldest Node the glue runs on
+        id: floor
+        run: |
+          floor=$(jq -r '.engines.node' packages/wasm/package.json)
+          if [[ ! "$floor" =~ ^\>=([0-9]+)$ ]]; then
+            echo "packages/wasm says it runs on Node $floor; write the oldest it runs on as >=N" >&2
+            exit 1
+          fi
+          echo "node=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: ${{ steps.floor.outputs.node }}
           cache: npm
           cache-dependency-path: |
             examples/react-cart/package-lock.json
