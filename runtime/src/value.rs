@@ -1641,7 +1641,7 @@ pub(crate) unsafe fn written(cell: u32, descriptor: u32) {
         KIND_SUM => tagged(cell, descriptor),
         KIND_ENUMERATION => named(cell, descriptor),
         KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, cell as u64),
-        KIND_LIST | KIND_SET => {
+        KIND_LIST => {
             write(b"[");
             let element = descriptor::member(descriptor, 0);
             for i in 0..__souther_list_length(cell) {
@@ -1650,6 +1650,11 @@ pub(crate) unsafe fn written(cell: u32, descriptor: u32) {
                 }
                 written(__souther_list_get(cell, i), element);
             }
+            write(b"]");
+        }
+        KIND_SET => {
+            write(b"[");
+            members_written(cell, descriptor::member(descriptor, 0));
             write(b"]");
         }
         KIND_MAP => {
@@ -1728,6 +1733,74 @@ unsafe fn case_among(cell: u32, descriptor: u32) -> u32 {
     match member_of(cell, descriptor) {
         Some(i) => i,
         None => abort(REASON_NOT_A_VALUE, descriptor, cell as u64, 0),
+    }
+}
+
+/// A set's members, in ascending order of what each is written as (spec §collections), as
+/// `souther.runtime.Representations` orders them for the JVM backend.
+///
+/// That order is a question about what is written — a shape by its keys in their order, a member
+/// left out where an option holds nothing, a newtype as what it wraps — and not about the values,
+/// which a set holds in an order of its own that asks which case a value is of the value
+/// (`order::compare`). One order cannot answer both: placed by what it is written as, a value
+/// would be placed by the set's own descriptor, which may be a union narrower than the sum it was
+/// made as. So each member is written as it would be anyway, read back, and the written members
+/// are put in order, as the JVM's encoder sorts what it has encoded.
+unsafe fn members_written(cell: u32, element: u32) {
+    let held = __souther_list_length(cell);
+    if held < 2 {
+        if held == 1 {
+            written(__souther_list_get(cell, 0), element);
+        }
+        return;
+    }
+    let first = text::so_far();
+    let ends = alloc(4 * held);
+    for i in 0..held {
+        written(__souther_list_get(cell, i), element);
+        core::ptr::write_unaligned((ends + 4 * i) as usize as *mut u32, text::so_far());
+    }
+    let end = |i: u32| core::ptr::read_unaligned((ends + 4 * i) as usize as *const u32);
+    let start = |i: u32| if i == 0 { first } else { end(i - 1) };
+    // Read back from where the run is now, which its growing may have moved, and kept apart from it,
+    // since the run is written over next.
+    let (run, _) = text::ended();
+    let copied_at = alloc(end(held - 1) - first);
+    core::ptr::copy_nonoverlapping(
+        (run + first) as usize as *const u8,
+        copied_at as usize as *mut u8,
+        (end(held - 1) - first) as usize,
+    );
+    let read = alloc(4 * held);
+    for i in 0..held {
+        let node = json::__souther_json_parse(copied_at + start(i) - first, end(i) - start(i));
+        order::keyed(node);
+        core::ptr::write_unaligned((read + 4 * i) as usize as *mut u32, node);
+    }
+    let node = |i: u32| core::ptr::read_unaligned((read + 4 * i) as usize as *const u32);
+    // A set of numbers, of text or of names stands in the order it is written in already, which is
+    // asked of each neighbour once before anything is moved.
+    if (1..held).all(|i| order::as_written(node(i - 1), node(i)) < 0) {
+        text::back_to(first);
+        for i in 0..held {
+            if i > 0 {
+                write(b",");
+            }
+            text::push(copied_at + start(i) - first, end(i) - start(i));
+        }
+        return;
+    }
+    let order = core::slice::from_raw_parts_mut(alloc(4 * held) as usize as *mut u32, held as usize);
+    for (i, each) in order.iter_mut().enumerate() {
+        *each = i as u32;
+    }
+    order::sort_places(order, &|a, b| order::as_written(node(a), node(b)));
+    text::back_to(first);
+    for (k, &i) in order.iter().enumerate() {
+        if k > 0 {
+            write(b",");
+        }
+        text::push(copied_at + start(i) - first, end(i) - start(i));
     }
 }
 

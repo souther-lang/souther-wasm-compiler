@@ -94,6 +94,16 @@ pub unsafe extern "C" fn __souther_json_value(cell: u32, index: u32) -> u32 {
     read_u32(cell as usize + HEADER + 8 * index as usize + 4)
 }
 
+/// Puts an object's entries back, `held` key and value pairs from `entries`, in the order given:
+/// for a reader that orders them itself, the document having said nothing by its order.
+pub unsafe fn put_entries(cell: u32, entries: *const u32, held: u32) {
+    core::ptr::copy_nonoverlapping(
+        entries as *const u8,
+        (cell as usize + HEADER) as *mut u8,
+        8 * held as usize,
+    );
+}
+
 /// A whole number, written as JSON writes one.
 ///
 /// Answers the arena pointer and the length packed low and high, which is how everything that

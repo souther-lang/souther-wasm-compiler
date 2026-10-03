@@ -4,11 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import souther.runtime.Representations;
 import souther.wasm.Compiled;
 import souther.wasm.Running;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * A set as an array of its members, each held once, in the order Souther writes one in.
@@ -103,6 +107,114 @@ class ASetIsWrittenInTheOrderSoutherWritesOneTest {
         String written = "[{\"all\": [" + String.join(",", members) + "]}]";
         String answer = answerOf(module, export, written);
         return answer.substring(answer.indexOf('['), answer.lastIndexOf(']') + 1);
+    }
+
+    private static final String SHAPES = """
+            module shaping
+
+            data Point = { z: Int, a: Int, note: String? }
+
+            data Wide = { z: Int }
+            data Narrow = { a: Int }
+            data Shape = Wide | Narrow
+
+            data Code = Int
+            data Missing
+            data Key = Code | Missing
+
+            data Red
+            data Green
+            data Colour = Red | Green
+
+            data Points = { all: Set<Point> }
+            data Shapes = { all: Set<Shape> }
+            data Keys = { all: Set<Key> }
+            data Colours = { all: Set<Colour> }
+            data Runs = { all: Set<List<Int>> }
+
+            behavior echoPoints : (p: Points) -> Points
+            let echoPoints (p) = p
+
+            behavior echoShapes : (s: Shapes) -> Shapes
+            let echoShapes (s) = s
+
+            behavior echoKeys : (k: Keys) -> Keys
+            let echoKeys (k) = k
+
+            behavior echoColours : (c: Colours) -> Colours
+            let echoColours (c) = c
+
+            behavior echoRuns : (r: Runs) -> Runs
+            let echoRuns (r) = r
+            """;
+
+    /**
+     * A set of values written as objects, in the order of what is written: an object by its
+     * members read in the order of their keys, which is not the order a shape declares its fields
+     * in, and a member an option leaves out is not there to be read. A sum's tag is one key among
+     * the case's own, standing where its key sorts, and a newtype case's contents under theirs.
+     * Each set here is one whose members a declaration's order would put otherwise.
+     */
+    @Test
+    void writesMembersThatAreObjectsInTheOrderOfWhatIsWritten() {
+        Running module = compiled(SHAPES);
+
+        assertWrittenInTheJvmsOrder(module, "shaping.echoPoints",
+                "[{\"z\":1,\"a\":2},{\"z\":2,\"a\":1},{\"z\":0,\"a\":1,\"note\":\"x\"},"
+                        + "{\"z\":3,\"a\":1}]");
+        assertWrittenInTheJvmsOrder(module, "shaping.echoShapes",
+                "[{\"type\":\"Wide\",\"z\":1},{\"type\":\"Narrow\",\"a\":9},"
+                        + "{\"type\":\"Wide\",\"z\":0}]");
+        assertWrittenInTheJvmsOrder(module, "shaping.echoKeys",
+                "[{\"type\":\"Code\",\"value\":10},{\"type\":\"Missing\"},"
+                        + "{\"type\":\"Code\",\"value\":9}]");
+        assertWrittenInTheJvmsOrder(module, "shaping.echoColours", "[\"Red\",\"Green\"]");
+        assertWrittenInTheJvmsOrder(module, "shaping.echoRuns", "[[2],[1,5],[1],[]]");
+    }
+
+    /** That the members come back in the order the JVM's own comparison puts what was written. */
+    private static void assertWrittenInTheJvmsOrder(Running module, String export, String members) {
+        String answer = answerOf(module, export, "[{\"all\":" + members + "}]");
+        JsonNode written = JSON.readTree(answer).get("value").get("all");
+        List<Object> asWritten = new ArrayList<>();
+        for (JsonNode each : written) {
+            asWritten.add(carried(each));
+        }
+        assertThat(asWritten).describedAs(answer).hasSize(JSON.readTree(members).size())
+                .isEqualTo(ascending(asWritten));
+    }
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /** A written value as the JVM's encoder carries one, which is what its comparison reads. */
+    private static Object carried(JsonNode written) {
+        if (written.isNull()) {
+            return null;
+        }
+        if (written.isBoolean()) {
+            return written.booleanValue();
+        }
+        if (written.isIntegralNumber()) {
+            return written.longValue();
+        }
+        if (written.isNumber()) {
+            return written.decimalValue();
+        }
+        if (written.isString()) {
+            return written.stringValue();
+        }
+        if (written.isArray()) {
+            List<Object> elements = new ArrayList<>();
+            for (JsonNode each : written) {
+                elements.add(carried(each));
+            }
+            return elements;
+        }
+        Map<String, Object> members = new LinkedHashMap<>();
+        for (var each : written.properties()) {
+            members.put(each.getKey(), carried(each.getValue()));
+        }
+        return members;
     }
 
     @Test

@@ -1,14 +1,25 @@
-//! Where one value is written relative to another.
+//! Where one value stands relative to another, which is three questions.
 //!
-//! A `Set` and a `Map` are written in ascending order of what their members are written as, so that
-//! one collection is one document however it was built. What that order is belongs to Souther and
-//! not to this backend: it is `souther.runtime.Representations`, and this is that order over the
-//! values this runtime holds rather than over the forms a JVM encoder makes of them.
+//! The order the language states (`ranked`): what `<`, a sort, a max and a min place values by,
+//! asked of the set the checker settled to order them by. A case stands where that set declares it.
 //!
-//! Null first, then false, true, numbers, strings, arrays and objects. Numbers by the amount and
-//! then by the way it is written; strings by scalar value, which is the language's order on text and
-//! 199x-notation's; arrays element by element with the shorter first; objects as their members read
-//! in key order.
+//! The order a set's members and a map's keys stand in (`compare`), and the hash beside it
+//! (`hash_of`): one value is one place, and the language says nothing more of where. Asked of the
+//! values themselves — which type each is is the descriptor of the type it was made as, read off it
+//! (`identity`) — because the descriptor a collection holds is the type it was written as where it
+//! was made, which may be narrower than a value later put in it.
+//!
+//! The order a set is written in (`as_written`): ascending by what its members are written as, so
+//! that one collection is one document however it was built. That order belongs to Souther and not
+//! to this backend — it is `souther.runtime.Representations` — and it is asked of what was written,
+//! read back, so it answers about the document and nothing else. Null first, then false, true,
+//! numbers, strings, arrays and objects. Numbers by the amount and then by the way each is written;
+//! strings by scalar value, which is the language's order on text and 199x-notation's; arrays
+//! element by element with the shorter first; objects as their members read in key order.
+//!
+//! Three because each is asked of something different, and two of them answered by one function
+//! is what put a set in an order the JVM does not write it in, and took a case met as one type for
+//! another.
 
 use crate::decimal;
 use crate::descriptor::{
@@ -17,6 +28,7 @@ use crate::descriptor::{
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING, KIND_SUM,
     KIND_TIME, KIND_TUPLE, KIND_UNIT,
 };
+use crate::json;
 use crate::notation;
 use crate::rational;
 use crate::temporal;
@@ -238,7 +250,13 @@ unsafe fn bytes(hash: u32, at: u32, length: u32) -> u32 {
     out
 }
 
-/// Where a value is written relative to another of the same type.
+/// Where a value stands relative to another among a set's members or a map's keys, and whether
+/// they are one value.
+///
+/// An order the language leaves open, so it is this runtime's to keep: a value of a declared type
+/// by what it was made as (`declared`), and the rest much as they are written, which was once what
+/// this was for. It is not the order a set is written in, which `as_written` asks of the written
+/// document.
 pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
     // What an optional is written as is what it holds, or nothing at all — so what it is compared
     // by is that, and the cell holding it is not a value anybody wrote. Opened here rather than
@@ -391,6 +409,228 @@ unsafe fn held(cell: u32) -> u32 {
 /// Two runs of text by scalar value, which is the language's order on text.
 pub unsafe fn compare_runs(at: u32, length: u32, other: u32, other_length: u32) -> i32 {
     notation199x::compare(notation::str_at(at, length), notation::str_at(other, other_length)) as i32
+}
+
+/// Where one written value stands against another: two documents as `json` reads them, in the
+/// order `souther.runtime.Representations.compareExternalForms` puts external representations in.
+///
+/// Null first, then false, true, numbers, strings, arrays and objects. Numbers by the amount and
+/// then by the way each is written; strings by scalar value; arrays element by element with the
+/// shorter first; objects as their members read in the order of their keys, key against key and
+/// then value against value, with the one holding fewer first.
+pub unsafe fn as_written(left: u32, right: u32) -> i32 {
+    let (a, b) = (json::__souther_json_tag(left), json::__souther_json_tag(right));
+    if a != b {
+        return if a < b { -1 } else { 1 };
+    }
+    match a {
+        json::TAG_NUMBER => {
+            let (x, x_length) = (json::__souther_json_bytes(left), json::__souther_json_length(left));
+            let (y, y_length) =
+                (json::__souther_json_bytes(right), json::__souther_json_length(right));
+            let by_amount = amounts(x, x_length, y, y_length);
+            if by_amount != 0 {
+                return by_amount;
+            }
+            bytewise(x, x_length, y, y_length)
+        }
+        json::TAG_STRING => compare_runs(
+            json::__souther_json_bytes(left),
+            json::__souther_json_length(left),
+            json::__souther_json_bytes(right),
+            json::__souther_json_length(right),
+        ),
+        json::TAG_ARRAY => {
+            let (m, n) = (json::__souther_json_length(left), json::__souther_json_length(right));
+            for i in 0..m.min(n) {
+                let each = as_written(
+                    json::__souther_json_element(left, i),
+                    json::__souther_json_element(right, i),
+                );
+                if each != 0 {
+                    return each;
+                }
+            }
+            sign_of_difference(m, n)
+        }
+        // Read in the order `keyed` put the entries in, once, before any of this was asked.
+        json::TAG_OBJECT => {
+            let (m, n) = (json::__souther_json_length(left), json::__souther_json_length(right));
+            for i in 0..m.min(n) {
+                let (x, y) = (json::__souther_json_key(left, i), json::__souther_json_key(right, i));
+                let (x, x_length, y, y_length) = (
+                    json::__souther_json_bytes(x),
+                    json::__souther_json_length(x),
+                    json::__souther_json_bytes(y),
+                    json::__souther_json_length(y),
+                );
+                // Two values of one shape have one key at each place, so the bytes nearly always
+                // say they are one key without asking the order of text.
+                let by_key = if bytewise(x, x_length, y, y_length) == 0 {
+                    0
+                } else {
+                    compare_runs(x, x_length, y, y_length)
+                };
+                if by_key != 0 {
+                    return by_key;
+                }
+                let by_value =
+                    as_written(json::__souther_json_value(left, i), json::__souther_json_value(right, i));
+                if by_value != 0 {
+                    return by_value;
+                }
+            }
+            sign_of_difference(m, n)
+        }
+        _ => 0,
+    }
+}
+
+/// Puts every object in a document in the order of its keys, all the way down, so that
+/// `as_written` reads each in that order as it stands: done once for a document, where asking it of
+/// each comparison would sort the same keys again every time two values are compared.
+pub unsafe fn keyed(node: u32) {
+    match json::__souther_json_tag(node) {
+        json::TAG_ARRAY => {
+            for i in 0..json::__souther_json_length(node) {
+                keyed(json::__souther_json_element(node, i));
+            }
+        }
+        json::TAG_OBJECT => {
+            let held = json::__souther_json_length(node);
+            let order = core::slice::from_raw_parts_mut(
+                crate::alloc(4 * held.max(1)) as usize as *mut u32,
+                held as usize,
+            );
+            for (i, each) in order.iter_mut().enumerate() {
+                *each = i as u32;
+            }
+            sort_places(order, &|a, b| {
+                let (x, y) = (json::__souther_json_key(node, a), json::__souther_json_key(node, b));
+                compare_runs(
+                    json::__souther_json_bytes(x),
+                    json::__souther_json_length(x),
+                    json::__souther_json_bytes(y),
+                    json::__souther_json_length(y),
+                )
+            });
+            let entries = alloc_pairs(held);
+            for (to, &from) in order.iter().enumerate() {
+                let value = json::__souther_json_value(node, from);
+                keyed(value);
+                *entries.add(2 * to) = json::__souther_json_key(node, from);
+                *entries.add(2 * to + 1) = value;
+            }
+            json::put_entries(node, entries, held);
+        }
+        _ => {}
+    }
+}
+
+unsafe fn alloc_pairs(held: u32) -> *mut u32 {
+    crate::alloc(8 * held.max(1)) as usize as *mut u32
+}
+
+/// Two numbers as written, by the amount: two whole numbers by their digits, which is the amount
+/// read without reading it, and any other by the amount it is.
+unsafe fn amounts(x: u32, x_length: u32, y: u32, y_length: u32) -> i32 {
+    if let (Some(a), Some(b)) = (whole(x, x_length), whole(y, y_length)) {
+        // Sign first; then, of two the same sign, the one with more digits is further from nought.
+        if a.0 != b.0 {
+            return if a.0 { -1 } else { 1 };
+        }
+        let further = if a.1 != b.1 {
+            if a.1 < b.1 { -1 } else { 1 }
+        } else {
+            bytewise(a.2, a.1, b.2, b.1)
+        };
+        return if a.0 { -further } else { further };
+    }
+    let (p, q) = (decimal::parse(x, x_length), decimal::parse(y, y_length));
+    if p == 0 || q == 0 {
+        // Written by this runtime, so a number it cannot read back is its own writer and reader
+        // disagreeing.
+        abort(REASON_BACKEND_INVARIANT_BROKEN, 0, x as u64, y as u64);
+    }
+    decimal::compare(p, q)
+}
+
+/// A whole number's sign and digits, as the writer writes one — a minus where it is below nought
+/// and no leading zero — or nothing for a number written otherwise.
+unsafe fn whole(at: u32, length: u32) -> Option<(bool, u32, u32)> {
+    let bytes = core::slice::from_raw_parts(at as usize as *const u8, length as usize);
+    let (negative, digits) = match bytes.split_first() {
+        Some((b'-', rest)) => (true, rest),
+        _ => (false, bytes),
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    if digits.len() > 1 && digits[0] == b'0' {
+        return None;
+    }
+    let skipped = u32::from(negative);
+    Some((negative, length - skipped, at + skipped))
+}
+
+/// Puts places in the order `against` says, merged in runs that double.
+///
+/// One function for every caller, handed the order as a value rather than compiled once per order:
+/// the library's sort is compiled again for each, which every module that writes anything would
+/// carry several times over.
+pub unsafe fn sort_places(places: &mut [u32], against: &dyn Fn(u32, u32) -> i32) {
+    let held = places.len();
+    if held < 2 {
+        return;
+    }
+    let other = core::slice::from_raw_parts_mut(crate::alloc(4 * held as u32) as usize as *mut u32, held);
+    let mut width = 1;
+    let (mut from, mut into) = (places.as_mut_ptr(), other.as_mut_ptr());
+    while width < held {
+        let mut at = 0;
+        while at < held {
+            let middle = (at + width).min(held);
+            let end = (at + 2 * width).min(held);
+            let (mut i, mut j, mut k) = (at, middle, at);
+            while i < middle && j < end {
+                // The earlier run's first where the two stand level, so the order is stable.
+                if against(*from.add(j), *from.add(i)) < 0 {
+                    *into.add(k) = *from.add(j);
+                    j += 1;
+                } else {
+                    *into.add(k) = *from.add(i);
+                    i += 1;
+                }
+                k += 1;
+            }
+            while i < middle {
+                *into.add(k) = *from.add(i);
+                i += 1;
+                k += 1;
+            }
+            while j < end {
+                *into.add(k) = *from.add(j);
+                j += 1;
+                k += 1;
+            }
+            at = end;
+        }
+        core::mem::swap(&mut from, &mut into);
+        width *= 2;
+    }
+    if from != places.as_mut_ptr() {
+        core::ptr::copy_nonoverlapping(from, places.as_mut_ptr(), held);
+    }
+}
+
+fn sign_of_difference(m: u32, n: u32) -> i32 {
+    if m < n {
+        -1
+    } else if m > n {
+        1
+    } else {
+        0
+    }
 }
 
 /// Two runs of bytes, byte by byte, the shorter first where one begins the other.
