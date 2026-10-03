@@ -7,7 +7,8 @@
 // wrote from Raoh's catalog.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,16 +42,22 @@ async function compiled(model: string): Promise<Program> {
   writeFileSync(join(at, "model.sou"), model);
   const jar = readdirSync(join(ROOT, "target")).find((name) => name.endsWith("-cli.jar"));
   assert.ok(jar, "the compiler is built: mvn package at the repository's root");
-  execFileSync("java", ["-jar", join(ROOT, "target", jar), at, "-o", join(at, "model.wasm")]);
+  await promisify(execFile)("java", ["-jar", join(ROOT, "target", jar), at, "-o",
+    join(at, "model.wasm")]);
   return load(readFileSync(join(at, "model.wasm")));
 }
 
-for (const name of readdirSync(FIXTURES).filter((each) => each.endsWith(".json")).sort()) {
+// Every fixture's module is compiled at once, side by side, before any is read: what compiling costs
+// is a compiler started, and starting three one after another is waiting three times.
+const names = readdirSync(FIXTURES).filter((each) => each.endsWith(".json")).sort();
+const programs = new Map(names.map((name) => [name, compiled(fixture(join(FIXTURES, name)).model)]));
+
+for (const name of names) {
   const file = join(FIXTURES, name);
-  const { model, cases } = fixture(file);
+  const { cases } = fixture(file);
   const wanted = expected(file).cases;
   describe(name, async () => {
-    const program = await compiled(model);
+    const program = await programs.get(name)!;
     cases.forEach((each, at) => {
       it(each.about, () => {
         const read = program.decode(each.type, each.input);

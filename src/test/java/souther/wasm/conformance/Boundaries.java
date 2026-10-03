@@ -14,6 +14,7 @@ import net.unit8.raoh.decode.Decoder;
 import souther.compiler.Compiler;
 import souther.compiler.jvm.ClassFileImage;
 import souther.wasm.Compiled;
+import souther.wasm.Recent;
 import souther.wasm.Running;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.DeserializationFeature;
@@ -48,10 +49,17 @@ final class Boundaries {
     private static final ResourceBundleMessageResolver CATALOG =
             new ResourceBundleMessageResolver("net.unit8.raoh.messages");
 
+    /**
+     * The classes the JVM wrote for each model, written once for every case of the model: a
+     * fixture's cases are read one after another against one model, and a decoder holds nothing
+     * one reading leaves for the next.
+     */
+    private static final Recent<String, ClassLoader> LOADERS = new Recent<>(4);
+
     /** The JVM's reading: the generated class's {@code jsonDecoder()}. */
     static JsonNode jvm(String model, String type, JsonNode input) {
-        Map<String, ClassFileImage> classes = Compiler.compileModules(List.of(model));
-        ClassLoader loader = new Defined(classes, Boundaries.class.getClassLoader());
+        ClassLoader loader = LOADERS.of(model, kept -> kept, written -> new Defined(
+                Compiler.compileModules(List.of(written)), Boundaries.class.getClassLoader()));
         Result<?> result;
         try {
             Decoder<JsonNode, ?> decoder = (Decoder<JsonNode, ?>) loader.loadClass(type)

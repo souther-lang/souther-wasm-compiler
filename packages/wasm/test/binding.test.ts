@@ -3,7 +3,8 @@
 // generated from.
 
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,13 +55,29 @@ export async function priced(bytes: Uint8Array): Promise<string> {
 }
 `;
 
-/** The module compiled from `model`, and the binding generated from it, at a directory of their own. */
-async function generated(model: string): Promise<{ at: string; bytes: Uint8Array }> {
+const run = promisify(execFile);
+
+/**
+ * The module compiled from `model`, and the binding generated from it, at a directory of their own:
+ * once for every test that asks for the same model, since what is asked of it only reads it.
+ */
+const compiled = new Map<string, Promise<{ at: string; bytes: Uint8Array }>>();
+
+function generated(model: string): Promise<{ at: string; bytes: Uint8Array }> {
+  let held = compiled.get(model);
+  if (held === undefined) {
+    held = generating(model);
+    compiled.set(model, held);
+  }
+  return held;
+}
+
+async function generating(model: string): Promise<{ at: string; bytes: Uint8Array }> {
   const at = mkdtempSync(join(tmpdir(), "binding-"));
   writeFileSync(join(at, "model.sou"), model);
   const jar = readdirSync(join(ROOT, "target")).find((name) => name.endsWith("-cli.jar"));
   assert.ok(jar, "the compiler is built: mvn package at the repository's root");
-  execFileSync("java", ["-jar", join(ROOT, "target", jar), at, "-o", join(at, "model.wasm")]);
+  await run("java", ["-jar", join(ROOT, "target", jar), at, "-o", join(at, "model.wasm")]);
   const bytes = readFileSync(join(at, "model.wasm"));
   const [surface, held] = surfaceOf(await WebAssembly.compile(bytes));
   writeFileSync(join(at, "binding.ts"), bindingFor(surface, await fingerprintOf(held), RUNTIME));
@@ -69,28 +86,35 @@ async function generated(model: string): Promise<{ at: string; bytes: Uint8Array
 }
 
 /** What `tsc` says of the page, strict, or nothing where it compiles. */
-function checked(at: string): string {
-  const run = spawnSync(TSC, ["--noEmit", "--strict", "--target", "es2024", "--module", "nodenext",
-    "--moduleResolution", "nodenext", "--allowImportingTsExtensions", "--lib", "esnext,dom",
-    "--types", "node", "--skipLibCheck", join(at, "page.ts")], { encoding: "utf-8" });
-  return run.status === 0 ? "" : run.stdout + run.stderr;
+async function checked(at: string): Promise<string> {
+  try {
+    await run(TSC, ["--noEmit", "--strict", "--target", "es2024", "--module", "nodenext",
+      "--moduleResolution", "nodenext", "--allowImportingTsExtensions", "--lib", "esnext,dom",
+      "--types", "node", "--skipLibCheck", join(at, "page.ts")]);
+    return "";
+  } catch (refused) {
+    const { stdout, stderr } = refused as { stdout: string; stderr: string };
+    return stdout + stderr;
+  }
 }
 
-describe("a binding", () => {
+// Each test asks of a module of its own or only reads a shared one, so they run side by side: what
+// they cost is a compiler started and a page checked, mostly waiting.
+describe("a binding", { concurrency: true }, () => {
   it("compiles a page that reads what the model offers", async () => {
     const { at } = await generated(MODEL);
-    assert.equal(checked(at), "");
+    assert.equal(await checked(at), "");
   });
 
   it("stops a page compiling where a field it reads is renamed in the model", async () => {
     const { at } = await generated(MODEL.replace("{ total: Decimal }", "{ amount: Decimal }")
       .replace("Priced { total = 1.00m }", "Priced { amount = 1.00m }"));
-    assert.match(checked(at), /total/);
+    assert.match(await checked(at), /total/);
   });
 
   it("stops a page compiling where a case it names is renamed in the model", async () => {
     const { at } = await generated(MODEL.replace(/Premium/g, "Gold"));
-    assert.match(checked(at), /"Premium"/);
+    assert.match(await checked(at), /"Premium"/);
   });
 
   it("calls the module it was generated from, and answers what the model says", async () => {
