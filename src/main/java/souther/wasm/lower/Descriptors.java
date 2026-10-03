@@ -483,6 +483,19 @@ final class Descriptors {
         return patterns;
     }
 
+    /**
+     * What a newtype is a name for, or nothing where the type is no newtype. A value of one is
+     * laid out as the one field it is made of, so what it is a name for is that field's.
+     */
+    java.util.Optional<Type> wrappedBy(Type type) {
+        if (type instanceof Type.Ref reference
+                && reference.name() instanceof TypeSymbol.AtModule named
+                && declared(named) instanceof CheckedData.Newtype newtype) {
+            return java.util.Optional.of(newtype.fields().getFirst().type());
+        }
+        return java.util.Optional.empty();
+    }
+
     private CheckedData declared(TypeSymbol.AtModule name) {
         return program.declaration(name).data();
     }
