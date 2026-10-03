@@ -1461,7 +1461,7 @@ public final class WasmCompiler {
                         RuntimeAbi.Kernels.DECIMAL_MULTIPLY);
                 case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE,
                         RuntimeAbi.Kernels.DECIMAL_DIVIDE_BY);
-                case CONCAT -> arithmetic(out, binary, RuntimeAbi.CONCAT, null);
+                case CONCAT -> concatenation(out, binary);
                 case EQ -> comparison(out, binary, BodyWriter.Comparison.EQUAL);
                 case NE -> comparison(out, binary, BodyWriter.Comparison.UNEQUAL);
                 case LT -> comparison(out, binary, BodyWriter.Comparison.LESS);
@@ -1482,6 +1482,20 @@ public final class WasmCompiler {
                     value(out, binary.right());
                     out.localSet(answer).end().localGet(answer);
                 }
+            }
+        }
+
+        /**
+         * {@code ++}, which joins two strings or two lists: the checker settles both sides to the
+         * one type the answer is, so the answer's type says which.
+         */
+        private void concatenation(BodyWriter out, Core.Binary binary) {
+            value(out, binary.left());
+            value(out, binary.right());
+            if (binary.type() instanceof souther.compiler.types.Type.ListOf) {
+                out.constant(shapes.of(binary.type())).call(calls.of(RuntimeAbi.LIST_CONCAT));
+            } else {
+                out.call(calls.of(RuntimeAbi.CONCAT));
             }
         }
 

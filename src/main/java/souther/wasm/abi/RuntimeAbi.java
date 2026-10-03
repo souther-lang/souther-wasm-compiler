@@ -509,6 +509,10 @@ public final class RuntimeAbi {
     /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
     public static final String CONCAT = "__souther_concat";
 
+    /** {@code (i32 left, i32 right, i32 descriptor) -> i32}: the {@code ++} operator on
+     *  {@code List}, answering a list of the type the descriptor names. */
+    public static final String LIST_CONCAT = "__souther_list_concat";
+
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
 

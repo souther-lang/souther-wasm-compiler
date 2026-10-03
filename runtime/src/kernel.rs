@@ -640,6 +640,22 @@ pub unsafe extern "C" fn __souther_list_find(kept: u32, list: u32) -> u32 {
     value::__souther_none()
 }
 
+/// `xs ++ ys` on lists: the elements of the one and then of the other, as a list of the type the
+/// descriptor names. Always a new cell, since a side handed back as it is would carry its own
+/// descriptor and not the answer's.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_concat(left: u32, right: u32, descriptor: u32) -> u32 {
+    let (a, b) = (__souther_list_length(left), __souther_list_length(right));
+    let out = __souther_list(descriptor, a + b);
+    for i in 0..a {
+        __souther_list_set(out, i, __souther_list_get(left, i));
+    }
+    for i in 0..b {
+        __souther_list_set(out, a + i, __souther_list_get(right, i));
+    }
+    out
+}
+
 /// `List.sort(xs)`: the elements in the order their type places them.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_sort(list: u32, descriptor: u32) -> u32 {
