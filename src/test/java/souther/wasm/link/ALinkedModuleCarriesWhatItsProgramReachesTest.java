@@ -60,15 +60,24 @@ class ALinkedModuleCarriesWhatItsProgramReachesTest {
         assertThat(runtime.exports()).containsKeys(RuntimeAbi.HOST_EXPORTS.toArray(String[]::new));
     }
 
+    /**
+     * What the program does not reach is left out, which is said of what it reaches and not of how
+     * big the runtime is: the same program with one body also sorting — the same functions of its
+     * own, one kernel more reached — carries more. Held to a share of the runtime instead, this
+     * failed whenever the runtime lost a function it no longer needed, with nothing about the link
+     * changed.
+     */
     @Test
-    void leavesOutMostOfWhatTheProgramDoesNotReach() {
+    void leavesOutWhatTheProgramDoesNotReach() {
         WasmModule runtime = Parser.parse(Running.runtimeModule());
         WasmModule linked = Parser.parse(compiled());
+        WasmModule sorting = Parser.parse(Compiled.module(Compiled.program(List.of(PROGRAM.replace(
+                "List.fold((acc, x) -> acc + x, 0, xs)",
+                "List.fold((acc, x) -> acc + x, 0, List.sort(xs))")))));
 
-        // The program adds a handful of functions of its own, and reaches reading and writing a
-        // document, a list and arithmetic: a small part of what the runtime defines.
         assertThat(linked.functionSection().functionCount())
-                .isLessThan(runtime.functionSection().functionCount() / 2);
+                .isLessThan(sorting.functionSection().functionCount())
+                .isLessThan(runtime.functionSection().functionCount());
     }
 
     @Test

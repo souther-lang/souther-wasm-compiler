@@ -67,7 +67,11 @@ const PAGE: usize = 65536;
 ///
 /// Raised to 8 when an issue became Raoh's, with a message key and the metadata its constraint
 /// carries, and a descriptor of a type with rules came to point at what each rule is reported as.
-const ABI_VERSION: u32 = 8;
+///
+/// Raised to 9 when `++` stopped having entries of its own (issue #26): on strings it is
+/// `__souther_string_append` and on lists `__souther_list_append`, the operations `String.append`
+/// and `List.append` already were, and `__souther_concat` and `__souther_list_concat` are gone.
+const ABI_VERSION: u32 = 9;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.

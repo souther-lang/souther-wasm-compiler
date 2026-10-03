@@ -50,9 +50,11 @@ public final class RuntimeAbi {
      * for a reason it could not before, {@code NO_SUCH_TYPE}: a host naming reasons by the numbers
      * of 6 would not know it. Raised to 8 when an issue became Raoh's, with a message key and the
      * metadata its constraint carries, and a descriptor of a type with rules came to point at what
-     * each rule is reported as: a host reading the issues of 7 would find neither.
+     * each rule is reported as: a host reading the issues of 7 would find neither. Raised to 9 when
+     * {@code ++} stopped having entries of its own (issue #26): on strings it is
+     * {@link Kernels#STRING_APPEND} and on lists {@link #LIST_APPEND}.
      */
-    public static final int VERSION = 8;
+    public static final int VERSION = 9;
 
     /**
      * What of the runtime a linked module still shows its host: the memory, and what the steps
@@ -549,12 +551,10 @@ public final class RuntimeAbi {
         public static final String MAP_FROM_LIST = "__souther_map_from_list";
     }
 
-    /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
-    public static final String CONCAT = "__souther_concat";
-
-    /** {@code (i32 left, i32 right, i32 descriptor) -> i32}: the {@code ++} operator on
-     *  {@code List}, answering a list of the type the descriptor names. */
-    public static final String LIST_CONCAT = "__souther_list_concat";
+    /** {@code (i32 left, i32 right, i32 descriptor) -> i32}: {@code List.append}, which is the
+     *  {@code ++} operator on lists, answering a list of the type the descriptor names. On strings
+     *  the operator is {@link Kernels#STRING_APPEND}. */
+    public static final String LIST_APPEND = "__souther_list_append";
 
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";

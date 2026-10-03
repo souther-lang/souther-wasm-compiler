@@ -48,10 +48,11 @@ pub unsafe extern "C" fn __souther_string_slice(from: u32, to: u32, text: u32) -
     __souther_string(__souther_string_bytes(text) + start, end - start)
 }
 
-/// `String.append(a, b)`, which is the `++` operator's own account of joining two strings.
+/// `String.append(a, b)`, and `a ++ b` on two strings, which is the same operation written as an
+/// operator: one entry for the one thing, so that what `++` reaches is named by what it does.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_append(left: u32, right: u32) -> u32 {
-    value::__souther_concat(left, right)
+    value::joined(left, right)
 }
 
 /// `String.reverse`: the characters the other way round, canonicalized. Reversing can put a
@@ -644,11 +645,11 @@ pub unsafe extern "C" fn __souther_list_find(kept: u32, list: u32) -> u32 {
     value::__souther_none()
 }
 
-/// `xs ++ ys` on lists: the elements of the one and then of the other, as a list of the type the
-/// descriptor names. Always a new cell, since a side handed back as it is would carry its own
-/// descriptor and not the answer's.
+/// `List.append(xs, ys)`, and `xs ++ ys` on two lists: the elements of the one and then of the
+/// other, as a list of the type the descriptor names. Always a new cell, since a side handed back as
+/// it is would carry its own descriptor and not the answer's.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_concat(left: u32, right: u32, descriptor: u32) -> u32 {
+pub unsafe extern "C" fn __souther_list_append(left: u32, right: u32, descriptor: u32) -> u32 {
     let (a, b) = (__souther_list_length(left), __souther_list_length(right));
     let out = __souther_list(descriptor, a + b);
     for i in 0..a {
