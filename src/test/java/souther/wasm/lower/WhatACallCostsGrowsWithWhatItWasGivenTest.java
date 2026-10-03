@@ -68,6 +68,33 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
                 .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
     }
 
+    @Test
+    void makesASetOutOfAListByAboutAsMuchAgainForTwiceAsManyElements() {
+        Running module = compiled();
+
+        assertThat(howMuchMoreForFourTimesAsMuch(module, "growing.gathered",
+                descending(SMALLER), descending(LARGER)))
+                .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
+    }
+
+    @Test
+    void putsTwoSetsTogetherByAboutAsMuchAgainForTwiceAsManyMembers() {
+        Running module = compiled();
+
+        assertThat(howMuchMoreForFourTimesAsMuch(module, "growing.together",
+                twoSets(SMALLER), twoSets(LARGER)))
+                .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
+    }
+
+    @Test
+    void makesAMapOutOfPairsByAboutAsMuchAgainForTwiceAsManyPairs() {
+        Running module = compiled();
+
+        assertThat(howMuchMoreForFourTimesAsMuch(module, "growing.keyed",
+                descending(SMALLER), descending(LARGER)))
+                .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
+    }
+
     /**
      * How many times as long the larger of two takes.
      *
@@ -103,6 +130,14 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
         return "[{" + String.join(",", members) + "}]";
     }
 
+    /** Two sets, of the even numbers and of the odd ones, so no member of one is in the other. */
+    private static String twoSets(int held) {
+        return "[[" + IntStream.range(0, held).map(i -> 2 * i)
+                .mapToObj(String::valueOf).collect(Collectors.joining(",")) + "],["
+                + IntStream.range(0, held).map(i -> 2 * i + 1)
+                .mapToObj(String::valueOf).collect(Collectors.joining(",")) + "]]";
+    }
+
     private static String descending(int held) {
         return "[[" + IntStream.range(0, held).map(i -> held - i)
                 .mapToObj(String::valueOf).collect(Collectors.joining(",")) + "]]";
@@ -123,6 +158,18 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
                 behavior members2 : (xs: Set<Int>) -> Int
 
                 let members2 (xs) = Set.size(xs)
+
+                behavior gathered : (xs: List<Int>) -> Int
+
+                let gathered (xs) = Set.size(Set.fromList(xs))
+
+                behavior together : (a: Set<Int>, b: Set<Int>) -> Int
+
+                let together (a, b) = Set.size(Set.union(a, b))
+
+                behavior keyed : (xs: List<Int>) -> Int
+
+                let keyed (xs) = Map.size(Map.fromList(List.map(x -> (String.fromInt(x), x), xs)))
                 """))));
     }
 }

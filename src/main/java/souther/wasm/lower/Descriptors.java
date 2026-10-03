@@ -251,7 +251,7 @@ final class Descriptors {
         List<int[]> described = new ArrayList<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
-            described.add(new int[] {fragment.place(utf8), utf8.length, ofMember(member)});
+            described.add(new int[] {fragment.intern(utf8), utf8.length, ofMember(member)});
         }
         return written(carriesNothing ? KIND_ENUMERATION : KIND_SUM, name, described);
     }
@@ -309,7 +309,7 @@ final class Descriptors {
         List<int[]> written = new ArrayList<>();
         for (Member member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
-            written.add(new int[] {fragment.place(utf8), utf8.length, of(member.type())});
+            written.add(new int[] {fragment.intern(utf8), utf8.length, of(member.type())});
         }
         return filled(kind, name, descriptor, written);
     }
@@ -342,7 +342,7 @@ final class Descriptors {
         }
         if (product) {
             byte[] own = name.name().getBytes(StandardCharsets.UTF_8);
-            out.writeLittleEndian4(fragment.place(own))
+            out.writeLittleEndian4(fragment.intern(own))
                     .writeLittleEndian4(own.length)
                     .writeLittleEndian4(checks.applyAsInt(name));
         }

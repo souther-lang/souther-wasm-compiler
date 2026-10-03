@@ -23,6 +23,20 @@ Rust toolchain. Changing the runtime does: rebuild it with
     cp target/wasm32-unknown-unknown/release/souther_wasm_runtime.wasm \
        ../src/main/resources/souther/wasm/runtime.wasm
 
+What a string means is not written here. Its order, its length, its case, its canonical form,
+which characters are white space, which text is a day or a moment, and which strings a pattern
+accepts are rules Souther shares with Raoh, and
+[199x-notation](https://github.com/raoh-project/199x-notation) implements them once per language.
+The runtime takes the Rust crate, pinned to a commit in `runtime/Cargo.toml`, and Souther's own
+runtime takes the Java artifact, so the two backends answer from one account. A pattern is the one
+rule that crosses between them: the checker settles what it means, the Java half writes the machine
+that meaning is run as as an image with the Java artifact, and the runtime reads the image back with
+the crate.
+
+The crate allocates, and this runtime has no allocator of its own beyond the arena, so the arena is
+what it allocates from. Nothing is given back one allocation at a time; what a call made goes back
+with the arena.
+
 The Java half emits the program's own functions and links them onto that module. It never reads a
 runtime code body — only the section framing, the exports, and the constants a global or a segment
 offset is written with — so what the Rust toolchain emits inside a function is not something this
@@ -108,21 +122,8 @@ call reaches and what it does with a buffer too short to hold the answer.
 
 ## What is not written yet
 
-- What a pattern says by looking back or ahead. The checker settles the text of a `String.matches`
-  pattern, and this compiles that text into a machine before the program runs rather than at run
-  time. What it is compiled into holds every step the walk could be at rather than trying one way
-  and coming back — so a backreference, a lookaround and a lazy or possessive count
-  are refused, because each of them is a question about a way already taken. A named group and a
-  count above a thousand are refused too. Each is refused when the pattern is compiled, which is
-  the only place a pattern that would have been recognised differently can still be declined rather
-  than quietly answered.
-
-  A character written down as a number (`\x{1F600}`) is refused as well.
-
-  What a class names is not refused, and is not written down here either: a name like
-  `\p{IsHiragana}` is a fact about a version of Unicode, so it is asked of the reader whose flavour
-  the language declares the pattern in, one character at a time, and what comes out is placed in the
-  module. A table of this compiler's own would be right on the day it was written.
+- `Rational`. A quotient of two `Int`s is one, and a program that divides two of them is refused
+  as one this backend does not write yet.
 
 ## Running it
 

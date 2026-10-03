@@ -8,10 +8,12 @@
 //! range ends the call, a count no string could reach ends it rather than quietly making fewer
 //! copies than were asked for — and the tests run both and require them to agree.
 
+use heap::string::String;
+
 use crate::descriptor;
 use crate::json;
+use crate::notation::{self, canonical, holds, made, str_of, LONGEST_TEXT};
 use crate::order;
-use crate::regex;
 use crate::temporal;
 use crate::value::{
     self, __souther_int, __souther_int_value, __souther_list, __souther_list_get,
@@ -43,52 +45,43 @@ pub unsafe extern "C" fn __souther_string_slice(from: u32, to: u32, text: u32) -
     __souther_string(__souther_string_bytes(text) + start, end - start)
 }
 
-/// `String.append(a, b)`.
+/// `String.append(a, b)`, which is the `++` operator's own account of joining two strings.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_append(left: u32, right: u32) -> u32 {
     value::__souther_concat(left, right)
 }
 
-/// `String.reverse`: the characters the other way round, a character at a time.
+/// `String.reverse`: the characters the other way round, canonicalized. Reversing can put a
+/// combining mark right after a character it composes with, so the answer is not always the code
+/// points of the text in the other order.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_reverse(text: u32) -> u32 {
-    let bytes = __souther_string_bytes(text);
-    let length = __souther_string_length(text);
-    let out = next_free();
-    let mut at = length;
-    while at > 0 {
-        let start = start_of_character_before(bytes, at);
-        let width = at - start;
-        let piece = alloc(width);
-        core::ptr::copy_nonoverlapping(
-            (bytes + start) as *const u8,
-            piece as *mut u8,
-            width as usize,
-        );
-        at = start;
-    }
-    __souther_string(out, length)
+    canonical(&str_of(text).chars().rev().collect::<String>())
 }
 
-/// `String.repeat(n, s)`: nothing for a count of zero or less, and an end to the call for one no
-/// string could hold.
+/// `String.repeat(n, s)`: nothing for a count of zero or less, and an end to the call for copies
+/// no string could hold. The copies are measured before they are built, and by division, so a count
+/// near the top of `Int` is not multiplied past what is counted. Canonicalized: the seam between
+/// one copy and the next is the seam `++` canonicalizes.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_repeat(count: u32, text: u32) -> u32 {
     let times = __souther_int_value(count);
-    let length = __souther_string_length(text);
-    if times <= 0 || length == 0 {
-        return __souther_string(0, 0);
+    let held = str_of(text);
+    if times <= 0 || held.is_empty() {
+        return made("");
     }
-    if times > u32::MAX as i64 || (times as u64) * (length as u64) > u32::MAX as u64 {
-        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, times as u64, length as u64);
+    copies_hold(times, notation::length_of(text) as u64);
+    if notation::starts_stable(held) {
+        return value::__souther_string_repeated(held, times as u32);
     }
-    let bytes = __souther_string_bytes(text);
-    let out = next_free();
-    for _ in 0..times {
-        let piece = alloc(length);
-        core::ptr::copy_nonoverlapping(bytes as *const u8, piece as *mut u8, length as usize);
+    canonical(&held.repeat(times as usize))
+}
+
+/// Ends the call where `copies` copies of a text `code_points` long have no place.
+unsafe fn copies_hold(copies: i64, code_points: u64) {
+    if copies as u64 > LONGEST_TEXT as u64 / code_points {
+        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, copies as u64, code_points);
     }
-    __souther_string(out, length * times as u32)
 }
 
 /// `String.contains(sub, s)`.
@@ -97,15 +90,54 @@ pub unsafe extern "C" fn __souther_string_contains(part: u32, text: u32) -> u32 
     value::__souther_bool(u32::from(index_of(text, part).is_some()))
 }
 
-/// `String.matches(pattern, s)`, where the pattern text the checker settled was compiled ahead of
-/// the run and reaches here as the machine that recognises it.
+/// `String.matches(pattern, s)`, where what the checker settled the pattern as was written ahead
+/// of the run as the image of its machine, and reaches here as where that image is: a `u32` length
+/// and the image's ASCII bytes after it.
+///
+/// The image was written by 199x-notation's Java implementation, so one this runtime does not
+/// read is the compiler and the runtime built against releases that do not agree, not a program's
+/// own failure.
+///
+/// Reading an image costs about what the image is long, and one call often matches many strings
+/// against one pattern, so the last pattern read is kept with what its matches worked out. It
+/// lives in the arena, so popping the arena forgets it ([`forget_kept_pattern`]).
 #[no_mangle]
-pub unsafe extern "C" fn __souther_string_matches(text: u32, machine: u32) -> u32 {
-    value::__souther_bool(u32::from(regex::matches(
-        __souther_string_bytes(text),
-        __souther_string_length(text),
-        machine,
-    )))
+pub unsafe extern "C" fn __souther_string_matches(text: u32, image: u32) -> u32 {
+    let kept = &mut *core::ptr::addr_of_mut!(KEPT_PATTERN);
+    if kept.as_ref().map_or(true, |held| held.image != image) {
+        // Another pattern, read into this same arena: dropping the one kept gives nothing back,
+        // since the arena takes nothing back but by being popped.
+        if let Some(other) = kept.take() {
+            core::mem::forget(other);
+        }
+        let length = core::ptr::read_unaligned(image as usize as *const u32);
+        let pattern = match notation199x::Pattern::from_image(notation::str_at(image + 4, length)) {
+            Ok(pattern) => pattern,
+            Err(_) => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, image as u64, length as u64),
+        };
+        *kept = Some(KeptPattern {
+            image,
+            matcher: notation199x::OwnedMatcher::new(pattern),
+        });
+    }
+    let held = kept.as_mut().unwrap_unchecked();
+    value::__souther_bool(u32::from(held.matcher.matches(str_of(text))))
+}
+
+/// The pattern `String.matches` read last, and where its image is.
+struct KeptPattern {
+    image: u32,
+    matcher: notation199x::OwnedMatcher,
+}
+
+static mut KEPT_PATTERN: Option<KeptPattern> = None;
+
+/// Forgets the kept pattern as the arena it lives in is popped. Not dropped: dropping it would read
+/// memory the arena may already have handed out again.
+pub(crate) unsafe fn forget_kept_pattern() {
+    if let Some(gone) = (*core::ptr::addr_of_mut!(KEPT_PATTERN)).take() {
+        core::mem::forget(gone);
+    }
 }
 
 /// A moment a body wrote down, read from the text it was written as.
@@ -164,13 +196,35 @@ pub unsafe extern "C" fn __souther_string_from_decimal(amount: u32) -> u32 {
 
 /// `String.toDecimal(s)`, which answers the case it is told the name of where the text is no
 /// amount — the same way `String.toInt` answers one.
+///
+/// Which text is an amount is decimal text (spec §string-decimal-text) and nothing wider:
+/// `decimal::parse` also reads an exponent and a point with no digit on one side, because a JSON
+/// number and a literal are written that way, so the text is asked first.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_to_decimal(text: u32, absent: u32) -> u32 {
-    let held = crate::decimal::parse(__souther_string_bytes(text), __souther_string_length(text));
+    let at = __souther_string_bytes(text);
+    let length = __souther_string_length(text);
+    let held = if is_decimal_text(at, length) { crate::decimal::parse(at, length) } else { 0 };
     if held == 0 {
         return value::__souther_unit(absent);
     }
     held
+}
+
+/// Decimal text: an optional `+` or `-`, one or more ASCII digits, and optionally a `.` followed
+/// by one or more ASCII digits, and nothing else.
+unsafe fn is_decimal_text(at: u32, length: u32) -> bool {
+    let text = core::slice::from_raw_parts(at as *const u8, length as usize);
+    let unsigned = match text.first() {
+        Some(b'+') | Some(b'-') => &text[1..],
+        _ => text,
+    };
+    let (whole, fraction) = match unsigned.iter().position(|&b| b == b'.') {
+        Some(point) => (&unsigned[..point], Some(&unsigned[point + 1..])),
+        None => (unsigned, None),
+    };
+    let digits = |part: &[u8]| !part.is_empty() && part.iter().all(u8::is_ascii_digit);
+    digits(whole) && fraction.map_or(true, digits)
 }
 
 /// `Option.map(f, opt)`: what the block answers for what the option holds, or nothing.
@@ -208,99 +262,45 @@ pub unsafe extern "C" fn __souther_string_ends_with(suffix: u32, text: u32) -> u
 }
 
 /// `String.trim`: removes a maximal run of String whitespace (spec §string-whitespace) from each
-/// end, leaving the rest untouched. Scans code points via the existing UTF-8 primitives, so a
-/// character outside the whitespace set stops the run rather than being crossed as a byte would be.
+/// end, leaving the rest untouched. A character outside the whitespace set stops the run rather
+/// than being crossed.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_trim(text: u32) -> u32 {
-    let bytes = __souther_string_bytes(text);
-    let mut start = 0;
-    let mut end = __souther_string_length(text);
-    while start < end {
-        let width = character_width(core::ptr::read((bytes + start) as *const u8));
-        let point = code_point_at(bytes + start, width);
-        if !string_whitespace(point) {
-            break;
-        }
-        start += width;
-    }
-    while end > start {
-        let before = start_of_character_before(bytes, end);
-        let point = code_point_at(bytes + before, end - before);
-        if !string_whitespace(point) {
-            break;
-        }
-        end = before;
-    }
-    __souther_string(bytes + start, end - start)
+    made(str_of(text).trim_matches(notation199x::is_white_space))
 }
 
-/// `String.lowercase(s)`: Unicode 18.0.0's default case conversion, untailored (issue #21). See
-/// `crate::casing` for the algorithm — this is an ABI wrapper only.
+/// `String.lowercase(s)`: Unicode 18.0.0's default case conversion, untailored, canonicalized.
+/// One code point can map to several, so the mapped text can have no place; the conversion stops
+/// before writing past what a `String` holds.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_lowercase(text: u32) -> u32 {
-    crate::casing::lowercase(text)
+    cased(notation199x::lowercase_within(str_of(text), LONGEST_TEXT))
 }
 
-/// `String.uppercase(s)`. See `crate::casing`.
+/// `String.uppercase(s)`, by the same untailored mapping as `lowercase`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_uppercase(text: u32) -> u32 {
-    crate::casing::uppercase(text)
+    cased(notation199x::uppercase_within(str_of(text), LONGEST_TEXT))
+}
+
+unsafe fn cased(mapped: Option<String>) -> u32 {
+    match mapped {
+        Some(held) => canonical(&held),
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, LONGEST_TEXT as u64, 0),
+    }
 }
 
 /// `String.words(s)`: the pieces between runs of String whitespace (spec §string-whitespace),
-/// with none empty. Two passes over `next_word` — one to size the list, one to fill it — since the
-/// list must be allocated to its final length before anything is written into it.
+/// with none empty.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_words(text: u32, descriptor: u32) -> u32 {
-    let bytes = __souther_string_bytes(text);
-    let length = __souther_string_length(text);
-    let mut held = 0;
-    let mut at = 0;
-    while let Some((_, end)) = next_word(bytes, length, at) {
-        held += 1;
-        at = end;
-    }
-    let out = __souther_list(descriptor, held);
-    let mut i = 0;
-    at = 0;
-    while let Some((start, end)) = next_word(bytes, length, at) {
-        __souther_list_set(out, i, __souther_string(bytes + start, end - start));
-        i += 1;
-        at = end;
+    let held = str_of(text);
+    let words = || held.split(notation199x::is_white_space).filter(|word| !word.is_empty());
+    let out = __souther_list(descriptor, words().count() as u32);
+    for (i, word) in words().enumerate() {
+        __souther_list_set(out, i as u32, made(word));
     }
     out
-}
-
-/// The next word in `bytes[0..length]` at or after `at`: the byte range of a maximal run of
-/// non-whitespace code points, skipping any run of String whitespace first. `None` once nothing
-/// but whitespace remains. The one place word boundaries are decided, so `words`'s two passes
-/// cannot drift apart.
-unsafe fn next_word(bytes: u32, length: u32, mut at: u32) -> Option<(u32, u32)> {
-    while at < length {
-        let width = character_width(core::ptr::read((bytes + at) as *const u8));
-        let point = code_point_at(bytes + at, width);
-        if !string_whitespace(point) {
-            break;
-        }
-        at += width;
-    }
-
-    if at == length {
-        return None;
-    }
-
-    let start = at;
-
-    while at < length {
-        let width = character_width(core::ptr::read((bytes + at) as *const u8));
-        let point = code_point_at(bytes + at, width);
-        if string_whitespace(point) {
-            break;
-        }
-        at += width;
-    }
-
-    Some((start, at))
 }
 
 /// `String.lines(s)`: what `split` on a newline gives, after a carriage return before one is gone.
@@ -328,85 +328,63 @@ pub unsafe extern "C" fn __souther_string_lines(text: u32, descriptor: u32) -> u
     __souther_string_split(newline, joined, descriptor)
 }
 
-/// `String.padLeft(width, pad, s)` and `String.padRight(width, pad, s)`.
+/// `String.padLeft(width, pad, s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_pad_left(width: u32, pad: u32, text: u32) -> u32 {
-    let fill = padding(width, pad, text);
-    if __souther_string_length(fill) == 0 {
-        return text;
-    }
-    value::__souther_concat(fill, text)
+    padded(width, pad, text, true)
 }
 
 /// `String.padRight(width, pad, s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_pad_right(width: u32, pad: u32, text: u32) -> u32 {
-    let fill = padding(width, pad, text);
-    if __souther_string_length(fill) == 0 {
+    padded(width, pad, text, false)
+}
+
+/// `s` widened to exactly `width` code points with copies of `pad`, at the start or at the end,
+/// as `Strings.pad` widens it.
+///
+/// The fill is `pad` repeated a whole number of times, canonicalized, and cut to the code points
+/// still needed; then it is joined to `s` and canonicalized at that seam. Composing where copies
+/// meet, or where the fill meets `s`, can absorb a code point, so where the join comes up short one
+/// more code point is asked for and the fill is built again.
+///
+/// An empty `pad` and an `s` already `width` wide answer `s` before the width is asked of anything.
+/// `wanted <= current` comes before any subtraction, so a hugely negative width is that and not a
+/// wrapped positive one.
+unsafe fn padded(width: u32, pad: u32, text: u32, at_start: bool) -> u32 {
+    let wanted = __souther_int_value(width);
+    let current = notation::length_of(text) as i64;
+    if __souther_string_length(pad) == 0 || current >= wanted {
         return text;
     }
-    value::__souther_concat(text, fill)
-}
-
-/// What brings a string up to exactly a width in code points, cut so a long pad does not overshoot.
-///
-/// `wanted <= current` first and the subtraction after: the other order around, a hugely negative
-/// `wanted` (`String.padLeft(MIN_VALUE, ...)`, say) would answer `wanted - current` with a wrapped
-/// positive `missing` instead of the negative one that arithmetic actually has — the release
-/// profile has overflow checks off — and read that wrapped value as a width to abort over, where
-/// `Strings.pad`'s own `length(s) >= width` on the JVM (trivially true against any negative width)
-/// answers the text unchanged instead. Checking the sign before subtracting needs no wrap to avoid,
-/// where subtracting first and asking whether the answer looks negative can be lied to by one.
-unsafe fn padding(width: u32, pad: u32, text: u32) -> u32 {
-    let wanted = __souther_int_value(width);
-    let current = code_points(text) as i64;
-    if wanted <= current || __souther_string_length(pad) == 0 {
-        return __souther_string(0, 0);
-    }
-    let missing = wanted - current;
-    if missing > u32::MAX as i64 {
-        abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, wanted as u64, 0);
-    }
-    let each = code_points(pad) as i64;
-    let times = (missing + each - 1) / each;
-    let repeated = __souther_string_repeat(__souther_int(times), pad);
-    let cut = __souther_string_slice(__souther_int(0), __souther_int(missing), repeated);
-    cut
-}
-
-/// String whitespace (spec §string-whitespace): the fixed 25-code-point set `trim` and `words`
-/// both scan by. Enumerated rather than read off `char::is_whitespace` or a Unicode table, so a
-/// toolchain's Unicode version does not silently change what a Souther program means. Mirrors
-/// `souther.runtime.Strings.isWhitespace` in the JVM backend exactly.
-fn string_whitespace(point: u32) -> bool {
-    matches!(
-        point,
-        0x0009..=0x000d
-            | 0x0020
-            | 0x0085
-            | 0x00a0
-            | 0x1680
-            | 0x2000..=0x200a
-            | 0x2028
-            | 0x2029
-            | 0x202f
-            | 0x205f
-            | 0x3000
-    )
-}
-
-pub(crate) unsafe fn code_point_at(at: u32, width: u32) -> u32 {
-    let first = core::ptr::read(at as *const u8) as u32;
-    match width {
-        1 => first,
-        2 => ((first & 0x1f) << 6) | trailing(at, 1),
-        3 => ((first & 0x0f) << 12) | (trailing(at, 1) << 6) | trailing(at, 2),
-        _ => {
-            ((first & 0x07) << 18)
-                | (trailing(at, 1) << 12)
-                | (trailing(at, 2) << 6)
-                | trailing(at, 3)
+    holds(wanted as u64);
+    let each = notation::length_of(pad) as i64;
+    let mut need = wanted - current;
+    loop {
+        let copies = 1 + (need - 1) / each;
+        copies_hold(copies, each as u64);
+        let fill = notation199x::normalize(
+            notation199x::Form::Nfc,
+            &str_of(pad).repeat(copies as usize),
+        );
+        let cut = match fill.char_indices().nth(need as usize) {
+            Some((at, _)) => &fill[..at],
+            None => &fill[..],
+        };
+        holds(notation199x::scalar_count(cut) as u64 + current as u64);
+        let mut joined = String::new();
+        if at_start {
+            joined.push_str(cut);
+            joined.push_str(str_of(text));
+        } else {
+            joined.push_str(str_of(text));
+            joined.push_str(cut);
         }
+        let answer = canonical(&joined);
+        if notation::length_of(answer) as i64 >= wanted {
+            return answer;
+        }
+        need += 1;
     }
 }
 
@@ -456,71 +434,50 @@ pub unsafe extern "C" fn __souther_string_split(separator: u32, text: u32, descr
     out
 }
 
-/// `String.join(sep, xs)`.
+/// `String.join(sep, xs)`, canonicalized: a seam the separator makes can leave NFC as one `++`
+/// makes can. A list can hold one string many times over, so the joined length is measured first.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_join(separator: u32, texts: u32) -> u32 {
     let held = __souther_list_length(texts);
-    let out = next_free();
-    let mut total = 0;
+    let mut pieces = heap::vec::Vec::with_capacity(2 * held as usize);
     for i in 0..held {
         if i > 0 {
-            total += copied(separator);
+            pieces.push(str_of(separator));
         }
-        total += copied(__souther_list_get(texts, i));
+        pieces.push(str_of(__souther_list_get(texts, i)));
     }
-    __souther_string(out, total)
+    notation::joined(&pieces)
 }
 
-/// `String.concat(xs)`.
+/// `String.concat(xs)`, which is `join` with nothing between.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_concat_all(texts: u32) -> u32 {
-    let out = next_free();
-    let mut total = 0;
-    for i in 0..__souther_list_length(texts) {
-        total += copied(__souther_list_get(texts, i));
-    }
-    __souther_string(out, total)
+    __souther_string_join(made(""), texts)
 }
 
 /// `String.replace(target, replacement, s)`. An empty target leaves the string alone.
+/// Canonicalized, since a replacement makes the seam `++` does; a long replacement for a short
+/// target lengthens the text once per occurrence, so the answer is measured first.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_replace(target: u32, with: u32, text: u32) -> u32 {
-    let width = __souther_string_length(target);
-    if width == 0 {
-        return __souther_string(__souther_string_bytes(text), __souther_string_length(text));
+    let wanted = str_of(target);
+    if wanted.is_empty() {
+        return text;
     }
-    let bytes = __souther_string_bytes(text);
-    let length = __souther_string_length(text);
-    let out = next_free();
-    let mut total = 0;
-    let mut at = 0;
-    while at < length {
-        if at + width <= length && same(bytes + at, __souther_string_bytes(target), width) {
-            total += copied(with);
-            at += width;
-        } else {
-            let piece = alloc(1);
-            core::ptr::write(piece as *mut u8, core::ptr::read((bytes + at) as *const u8));
-            total += 1;
-            at += 1;
-        }
-    }
-    __souther_string(out, total)
+    let held = str_of(text);
+    let occurrences = held.matches(wanted).count() as i64;
+    let longer_by = notation::length_of(with) as i64 - notation::length_of(target) as i64;
+    holds((notation::length_of(text) as i64 + occurrences * longer_by) as u64);
+    canonical(&held.replace(wanted, str_of(with)))
 }
 
 /// `String.characters(s)`: one string per code point.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_characters(text: u32, descriptor: u32) -> u32 {
-    let bytes = __souther_string_bytes(text);
-    let length = __souther_string_length(text);
+    let held = str_of(text);
     let out = __souther_list(descriptor, code_points(text));
-    let mut at = 0;
-    let mut i = 0;
-    while at < length {
-        let width = character_width(core::ptr::read((bytes + at) as *const u8));
-        __souther_list_set(out, i, __souther_string(bytes + at, width));
-        at += width;
-        i += 1;
+    for (i, (at, character)) in held.char_indices().enumerate() {
+        __souther_list_set(out, i as u32, made(&held[at..at + character.len_utf8()]));
     }
     out
 }
@@ -528,28 +485,9 @@ pub unsafe extern "C" fn __souther_string_characters(text: u32, descriptor: u32)
 /// `String.codePoints(s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_code_points(text: u32, descriptor: u32) -> u32 {
-    let bytes = __souther_string_bytes(text);
-    let length = __souther_string_length(text);
     let out = __souther_list(descriptor, code_points(text));
-    let mut at = 0;
-    let mut i = 0;
-    while at < length {
-        let first = core::ptr::read((bytes + at) as *const u8) as u32;
-        let width = character_width(first as u8);
-        let point = match width {
-            1 => first,
-            2 => ((first & 0x1f) << 6) | trailing(bytes + at, 1),
-            3 => ((first & 0x0f) << 12) | (trailing(bytes + at, 1) << 6) | trailing(bytes + at, 2),
-            _ => {
-                ((first & 0x07) << 18)
-                    | (trailing(bytes + at, 1) << 12)
-                    | (trailing(bytes + at, 2) << 6)
-                    | trailing(bytes + at, 3)
-            }
-        };
-        __souther_list_set(out, i, __souther_int(point as i64));
-        at += width;
-        i += 1;
+    for (i, character) in str_of(text).chars().enumerate() {
+        __souther_list_set(out, i as u32, __souther_int(character as i64));
     }
     out
 }
@@ -701,6 +639,22 @@ pub unsafe extern "C" fn __souther_list_find(kept: u32, list: u32) -> u32 {
         }
     }
     value::__souther_none()
+}
+
+/// `xs ++ ys` on lists: the elements of the one and then of the other, as a list of the type the
+/// descriptor names. Always a new cell, since a side handed back as it is would carry its own
+/// descriptor and not the answer's.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_concat(left: u32, right: u32, descriptor: u32) -> u32 {
+    let (a, b) = (__souther_list_length(left), __souther_list_length(right));
+    let out = __souther_list(descriptor, a + b);
+    for i in 0..a {
+        __souther_list_set(out, i, __souther_list_get(left, i));
+    }
+    for i in 0..b {
+        __souther_list_set(out, a + i, __souther_list_get(right, i));
+    }
+    out
 }
 
 /// `List.sort(xs)`: the elements in the order their type places them.
@@ -893,29 +847,9 @@ pub unsafe extern "C" fn __souther_list_range(first: u32, last: u32, descriptor:
     out
 }
 
-/// Copies a string's bytes onto the arena's top and answers how many.
-unsafe fn copied(text: u32) -> u32 {
-    let length = __souther_string_length(text);
-    let at = alloc(length);
-    core::ptr::copy_nonoverlapping(
-        __souther_string_bytes(text) as *const u8,
-        at as *mut u8,
-        length as usize,
-    );
-    length
-}
-
 /// How many code points a string holds.
 unsafe fn code_points(text: u32) -> u32 {
-    let bytes = __souther_string_bytes(text);
-    let length = __souther_string_length(text);
-    let mut held = 0;
-    let mut at = 0;
-    while at < length {
-        at += character_width(core::ptr::read((bytes + at) as *const u8));
-        held += 1;
-    }
-    held
+    notation::length_of(text)
 }
 
 /// The byte a code point index stands at. Out of range ends the call, wherever it was written.
@@ -923,37 +857,8 @@ unsafe fn offset_of(text: u32, index: i64, held: u32) -> u32 {
     if index < 0 || index > held as i64 {
         abort(REASON_INVALID_BOUNDS, 0, index as u64, held as u64);
     }
-    let bytes = __souther_string_bytes(text);
-    let mut at = 0;
-    for _ in 0..index {
-        at += character_width(core::ptr::read((bytes + at) as *const u8));
-    }
-    at
-}
-
-/// Where the character ending at a byte starts.
-unsafe fn start_of_character_before(bytes: u32, at: u32) -> u32 {
-    let mut start = at - 1;
-    while start > 0 && (core::ptr::read((bytes + start) as *const u8) & 0xc0) == 0x80 {
-        start -= 1;
-    }
-    start
-}
-
-pub(crate) fn character_width(first: u8) -> u32 {
-    if first < 0x80 {
-        1
-    } else if first < 0xe0 {
-        2
-    } else if first < 0xf0 {
-        3
-    } else {
-        4
-    }
-}
-
-unsafe fn trailing(at: u32, offset: u32) -> u32 {
-    (core::ptr::read((at + offset) as *const u8) as u32) & 0x3f
+    let held = str_of(text);
+    held.char_indices().nth(index as usize).map_or(held.len(), |(at, _)| at) as u32
 }
 
 unsafe fn index_of(text: u32, part: u32) -> Option<u32> {
@@ -1002,105 +907,149 @@ pub unsafe extern "C" fn __souther_set_singleton(value: u32, descriptor: u32) ->
     out
 }
 
-/// `Set.insert(value, s)`.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_set_insert(value: u32, set: u32, descriptor: u32) -> u32 {
+/// Where a value stands in a set, or where it would go: a set's members are in ascending order,
+/// so this halves rather than walks.
+unsafe fn place_in(set: u32, value: u32, element: u32) -> Result<u32, u32> {
+    let mut low = 0;
+    let mut high = __souther_list_length(set);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let held = order::compare(__souther_list_get(set, middle), value, element);
+        if held == 0 {
+            return Ok(middle);
+        }
+        if held < 0 {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    Err(low)
+}
+
+/// A set's members with one put in at a place, or taken out of one.
+unsafe fn spliced(set: u32, at: u32, put: Option<u32>, descriptor: u32) -> u32 {
     let held = __souther_list_length(set);
-    let element = descriptor::member(descriptor, 0);
+    let out = __souther_list(descriptor, if put.is_some() { held + 1 } else { held - 1 });
+    let mut into = 0;
     for i in 0..held {
-        if order::compare(__souther_list_get(set, i), value, element) == 0 {
-            return set;
+        if i == at {
+            if let Some(value) = put {
+                __souther_list_set(out, into, value);
+                into += 1;
+            } else {
+                continue;
+            }
         }
+        __souther_list_set(out, into, __souther_list_get(set, i));
+        into += 1;
     }
-    let out = __souther_list(descriptor, held + 1);
-    let mut at = 0;
-    let mut placed = false;
-    for i in 0..held {
-        let each = __souther_list_get(set, i);
-        if !placed && order::compare(value, each, element) < 0 {
-            __souther_list_set(out, at, value);
-            at += 1;
-            placed = true;
+    if at == held {
+        if let Some(value) = put {
+            __souther_list_set(out, into, value);
         }
-        __souther_list_set(out, at, each);
-        at += 1;
-    }
-    if !placed {
-        __souther_list_set(out, at, value);
     }
     out
+}
+
+/// `Set.insert(value, s)`. A value the set already holds leaves it as it is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_set_insert(value: u32, set: u32, descriptor: u32) -> u32 {
+    match place_in(set, value, descriptor::member(descriptor, 0)) {
+        Ok(_) => set,
+        Err(at) => spliced(set, at, Some(value), descriptor),
+    }
 }
 
 /// `Set.remove(value, s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_remove(value: u32, set: u32, descriptor: u32) -> u32 {
-    let held = __souther_list_length(set);
-    let element = descriptor::member(descriptor, 0);
-    let mut keeping = 0;
-    for i in 0..held {
-        if order::compare(__souther_list_get(set, i), value, element) != 0 {
-            keeping += 1;
-        }
+    match place_in(set, value, descriptor::member(descriptor, 0)) {
+        Ok(at) => spliced(set, at, None, descriptor),
+        Err(_) => set,
     }
-    let out = __souther_list(descriptor, keeping);
-    let mut at = 0;
-    for i in 0..held {
-        let each = __souther_list_get(set, i);
-        if order::compare(each, value, element) != 0 {
-            __souther_list_set(out, at, each);
-            at += 1;
-        }
-    }
-    out
 }
 
 /// `Set.contains(value, s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_contains(value: u32, set: u32) -> u32 {
     let descriptor = core::ptr::read_unaligned((set as usize + 4) as *const u32);
+    let held = place_in(set, value, descriptor::member(descriptor, 0)).is_ok();
+    value::__souther_bool(u32::from(held))
+}
+
+/// What two sets come to together, in one walk down both: each is in ascending order, so the
+/// smaller of the two members in front is the next one either could answer. Where they hold one
+/// member, the left set's is the one kept, as putting the right's into the left keeps it.
+unsafe fn merged(left: u32, right: u32, descriptor: u32, keep: Keep) -> u32 {
     let element = descriptor::member(descriptor, 0);
-    for i in 0..__souther_list_length(set) {
-        if order::compare(__souther_list_get(set, i), value, element) == 0 {
-            return value::__souther_bool(1);
+    let (a, b) = (__souther_list_length(left), __souther_list_length(right));
+    let room = alloc(4 * (a + b));
+    let (mut i, mut j, mut kept) = (0, 0, 0);
+    let mut take = |member: u32| {
+        core::ptr::write_unaligned((room + 4 * kept) as *mut u32, member);
+        kept += 1;
+    };
+    while i < a || j < b {
+        let held = if i == a {
+            1
+        } else if j == b {
+            -1
+        } else {
+            order::compare(__souther_list_get(left, i), __souther_list_get(right, j), element)
+        };
+        if held < 0 {
+            if keep != Keep::Both {
+                take(__souther_list_get(left, i));
+            }
+            i += 1;
+        } else if held > 0 {
+            if keep == Keep::Either {
+                take(__souther_list_get(right, j));
+            }
+            j += 1;
+        } else {
+            if keep != Keep::LeftOnly {
+                take(__souther_list_get(left, i));
+            }
+            i += 1;
+            j += 1;
         }
     }
-    value::__souther_bool(0)
+    let out = __souther_list(descriptor, kept);
+    for at in 0..kept {
+        __souther_list_set(out, at, core::ptr::read_unaligned((room + 4 * at) as *const u32));
+    }
+    out
+}
+
+/// Which members of two sets a walk down both keeps.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Keep {
+    /// Every member of either.
+    Either,
+    /// The members of both.
+    Both,
+    /// The members of the left that the right does not hold.
+    LeftOnly,
 }
 
 /// `Set.union(a, b)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_union(left: u32, right: u32, descriptor: u32) -> u32 {
-    let mut out = left;
-    for i in 0..__souther_list_length(right) {
-        out = __souther_set_insert(__souther_list_get(right, i), out, descriptor);
-    }
-    out
+    merged(left, right, descriptor, Keep::Either)
 }
 
 /// `Set.intersection(a, b)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_intersection(left: u32, right: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_set_empty(descriptor);
-    for i in 0..__souther_list_length(left) {
-        let each = __souther_list_get(left, i);
-        if value::__souther_bool_value(__souther_set_contains(each, right)) != 0 {
-            out = __souther_set_insert(each, out, descriptor);
-        }
-    }
-    out
+    merged(left, right, descriptor, Keep::Both)
 }
 
 /// `Set.difference(a, b)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_difference(left: u32, right: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_set_empty(descriptor);
-    for i in 0..__souther_list_length(left) {
-        let each = __souther_list_get(left, i);
-        if value::__souther_bool_value(__souther_set_contains(each, right)) == 0 {
-            out = __souther_set_insert(each, out, descriptor);
-        }
-    }
-    out
+    merged(left, right, descriptor, Keep::LeftOnly)
 }
 
 /// `Set.isEmpty(s)` and `Map.isEmpty(m)`.
@@ -1126,14 +1075,16 @@ pub unsafe extern "C" fn __souther_set_to_list(set: u32, descriptor: u32) -> u32
     out
 }
 
-/// `Set.fromList(xs)`.
+/// `Set.fromList(xs)`: sorted once, the first of members that are one kept, as putting them in
+/// one at a time keeps it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_from_list(list: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_set_empty(descriptor);
-    for i in 0..__souther_list_length(list) {
-        out = __souther_set_insert(__souther_list_get(list, i), out, descriptor);
+    let held = __souther_list_length(list);
+    let copy = __souther_list(descriptor, held);
+    for i in 0..held {
+        __souther_list_set(copy, i, __souther_list_get(list, i));
     }
-    out
+    value::sorted_and_deduplicated(copy, descriptor)
 }
 
 /// `Map.empty`.
@@ -1196,32 +1147,37 @@ pub unsafe extern "C" fn __souther_map_insert(
     descriptor: u32,
 ) -> u32 {
     let entries = value::__souther_map_length(map);
-    if let Some(at) = entry_of(key, map) {
-        let out = value::__souther_map(descriptor, entries);
-        for i in 0..entries {
-            let value_of = if i == at { held } else { value::__souther_map_value(map, i) };
-            value::__souther_map_set(out, i, value::__souther_map_key(map, i), value_of);
+    match place_of(key, map) {
+        Ok(at) => {
+            let out = value::__souther_map(descriptor, entries);
+            for i in 0..entries {
+                let value_of = if i == at { held } else { value::__souther_map_value(map, i) };
+                value::__souther_map_set(out, i, value::__souther_map_key(map, i), value_of);
+            }
+            out
         }
-        return out;
-    }
-    let out = value::__souther_map(descriptor, entries + 1);
-    let keys = value::map_keys(map);
-    let mut at = 0;
-    let mut placed = false;
-    for i in 0..entries {
-        let each = value::__souther_map_key(map, i);
-        if !placed && written_before(key, each, keys) {
-            value::__souther_map_set(out, at, key, held);
-            at += 1;
-            placed = true;
+        Err(at) => {
+            let out = value::__souther_map(descriptor, entries + 1);
+            let mut into = 0;
+            for i in 0..entries {
+                if i == at {
+                    value::__souther_map_set(out, into, key, held);
+                    into += 1;
+                }
+                value::__souther_map_set(
+                    out,
+                    into,
+                    value::__souther_map_key(map, i),
+                    value::__souther_map_value(map, i),
+                );
+                into += 1;
+            }
+            if at == entries {
+                value::__souther_map_set(out, into, key, held);
+            }
+            out
         }
-        value::__souther_map_set(out, at, each, value::__souther_map_value(map, i));
-        at += 1;
     }
-    if !placed {
-        value::__souther_map_set(out, at, key, held);
-    }
-    out
 }
 
 /// `Map.toList(m)`: a pair per entry, in the order the map holds them.
@@ -1239,18 +1195,42 @@ pub unsafe extern "C" fn __souther_map_to_list(map: u32, descriptor: u32) -> u32
 }
 
 /// `Map.fromList(entries)`: what the pairs say, the last of two at one key standing.
+///
+/// Sorted once by key, keeping pairs of one key in the order they were written, rather than put in
+/// one at a time. A key written twice keeps the first key and the last value, as putting the pairs
+/// in one at a time would.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_from_list(list: u32, descriptor: u32) -> u32 {
-    let mut out = __souther_map_empty(descriptor);
-    for i in 0..__souther_list_length(list) {
+    let held = __souther_list_length(list);
+    let out = value::__souther_map(descriptor, held);
+    for i in 0..held {
         let pair = __souther_list_get(list, i);
-        out = __souther_map_insert(
+        value::__souther_map_set(
+            out,
+            i,
             value::__souther_tuple_get(pair, 0),
             value::__souther_tuple_get(pair, 1),
-            out,
-            descriptor,
         );
     }
+    let keys = value::map_keys(out);
+    value::sorted_by_key(out, keys);
+    let mut kept = 0;
+    for i in 0..held {
+        let key = value::__souther_map_key(out, i);
+        let same_as_last = kept > 0 && {
+            let (a, a_length) = value::key_text(value::__souther_map_key(out, kept - 1), keys);
+            let (b, b_length) = value::key_text(key, keys);
+            order::compare_runs(a, a_length, b, b_length) == 0
+        };
+        if same_as_last {
+            let first = value::__souther_map_key(out, kept - 1);
+            value::__souther_map_set(out, kept - 1, first, value::__souther_map_value(out, i));
+        } else {
+            value::__souther_map_set(out, kept, key, value::__souther_map_value(out, i));
+            kept += 1;
+        }
+    }
+    value::map_of_length(out, kept);
     out
 }
 
@@ -1280,13 +1260,18 @@ pub unsafe extern "C" fn __souther_map_remove(key: u32, map: u32, descriptor: u3
 }
 
 /// Where a key stands in a map, or nowhere.
+unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
+    place_of(key, map).ok()
+}
+
+/// Where a key stands in a map, or where it would go.
 ///
 /// By what the key is written as, because that is what one entry of a map is: a member of an
 /// object, and two spellings of one moment name one member.
 ///
 /// Halved rather than walked: a map's entries stand in the order their keys are written, so
 /// whether a key is there is answered by asking the middle one and dropping the half it is not in.
-unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
+unsafe fn place_of(key: u32, map: u32) -> Result<u32, u32> {
     let keys = value::map_keys(map);
     let (wanted, wanted_length) = value::key_text(key, keys);
     let mut low = 0;
@@ -1296,7 +1281,7 @@ unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
         let (each, each_length) = value::key_text(value::__souther_map_key(map, middle), keys);
         let held = order::compare_runs(each, each_length, wanted, wanted_length);
         if held == 0 {
-            return Some(middle);
+            return Ok(middle);
         }
         if held < 0 {
             low = middle + 1;
@@ -1304,14 +1289,7 @@ unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
             high = middle;
         }
     }
-    None
-}
-
-/// Whether one key is written before another, which is the order a map's entries stand in.
-unsafe fn written_before(key: u32, other: u32, keys: u32) -> bool {
-    let (a, a_length) = value::key_text(key, keys);
-    let (b, b_length) = value::key_text(other, keys);
-    order::compare_runs(a, a_length, b, b_length) < 0
+    Err(low)
 }
 
 /// How many a set or a map holds.

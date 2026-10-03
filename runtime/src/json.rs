@@ -330,8 +330,10 @@ impl Reader {
 
     unsafe fn string(&mut self) -> u32 {
         self.expect(b'"');
-        // Unescaping only shortens, so the escaped span bounds what the unescaped bytes need.
-        let room = self.end - self.at;
+        // Unescaping only shortens, so the escaped span bounds what the unescaped bytes need. The
+        // span is this string's and not the rest of the document's: a document of many strings
+        // would otherwise take room for the rest of itself once per string.
+        let room = self.escaped_span();
         let out = cell(TAG_STRING, 0);
         let _ = alloc(room as u32);
         let mut written = 0usize;
@@ -353,6 +355,21 @@ impl Reader {
         }
         write_u32(out as usize + 4, written as u32);
         out
+    }
+
+    /// How many bytes from here to the quote that closes the string, which a backslash in front of
+    /// does not. A string that never closes is not read, so a document without the quote is
+    /// malformed here.
+    unsafe fn escaped_span(&self) -> usize {
+        let mut at = self.at;
+        while at < self.end {
+            match read_u8(at) {
+                b'"' => return at - self.at,
+                b'\\' => at += 2,
+                _ => at += 1,
+            }
+        }
+        self.malformed()
     }
 
     /// Writes what one backslash escape stands for, and answers how many bytes that took.

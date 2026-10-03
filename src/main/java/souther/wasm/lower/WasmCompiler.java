@@ -490,6 +490,7 @@ public final class WasmCompiler {
 
         private final CheckedProgram program;
         private final WasmFragment fragment;
+        private final Patterns patterns;
         private final Runtime calls;
         private final Descriptors shapes;
         private final Map<ValueName, Integer> reached;
@@ -503,22 +504,86 @@ public final class WasmCompiler {
                 Map<ValueName, Integer> reached) {
             this.program = program;
             this.fragment = fragment;
+            this.patterns = new Patterns(fragment);
             this.calls = calls;
             this.shapes = shapes;
             this.reached = reached;
         }
 
-        /** A declaration's own function: its parameters as cells, its answer as one. */
+        /**
+         * A declaration's own function: its parameters as cells, its answer as one.
+         *
+         * <p>A call of the declaration to itself where its answer is the declaration's answer is not
+         * a call: the arguments are put where the parameters are and the body runs again from the
+         * top. So a walk written as a recursion, which is how {@code List.fold} is written, runs in
+         * one frame however long the list is, where a call per element would run out of stack a few
+         * thousand elements in.
+         */
         byte[] overValues(Written written) {
-            out = new BodyWriter(written.parameters().size(), 0);
+            int arity = written.parameters().size();
+            out = new BodyWriter(arity, 0);
             locals = new HashMap<>();
             writing = written.declares();
             requirementsInScope = written.requirements();
-            for (int i = 0; i < written.parameters().size(); i++) {
+            for (int i = 0; i < arity; i++) {
                 locals.put(written.parameters().get(i).binding(), i);
             }
-            value(out, written.body());
+            int answer = scratch();
+            out.block().loop();
+            again = new Again(written.declares(), arity, out.depth());
+            answer(out, written.body());
+            again = null;
+            out.localSet(answer).leave(1).end().end().localGet(answer);
             return out.body();
+        }
+
+        /**
+         * Where a call of the declaration being written to itself goes back to instead: the loop
+         * opened at that depth around its body, whose parameters are its first locals.
+         */
+        private record Again(Object declaration, int arity, int depth) {}
+
+        /** The declaration being written and its loop, or null where nothing goes back. */
+        private Again again;
+
+        /** How a part of an expression is written: as a value, or as the function's answer. */
+        private interface Writing {
+            void write(BodyWriter out, Core expression);
+        }
+
+        /**
+         * An expression that is the answer of the function being written.
+         *
+         * <p>Where it chooses or binds on the way to its answer, each part its answer is is the
+         * function's answer too, and is written here again; a call of the declaration to itself
+         * there goes back to the top of the body. Everything else is written as a value.
+         *
+         * <p>Every construct is named and none falls through, so a construct added to the language
+         * is a question this compiler has to answer, not one it answers by not asking: a construct
+         * whose answer is one of its parts that fell to the value side would leave a recursion
+         * through it a call per step, which is the stack running out for a long enough walk.
+         */
+        private void answer(BodyWriter out, Core expression) {
+            switch (expression) {
+                case Core.If chosen -> chosen(out, chosen, this::answer);
+                case Core.IfConstructed attempted -> attempt(out, attempted, this::answer);
+                case Core.LetIn bound -> bound(out, bound, this::answer);
+                case Core.Match chosen -> match(out, chosen, this::answer);
+                case Core.Widen widened -> answer(out, widened.value());
+                case Core.Call call -> {
+                    if (goesBack(call)) {
+                        goBack(out, call);
+                    } else {
+                        call(out, call);
+                    }
+                }
+                case Core.Int _, Core.Decimal _, Core.Str _, Core.Bool _, Core.Temporal _,
+                        Core.Read _, Core.UnitValue _, Core.MaterialisedValue _, Core.Neg _,
+                        Core.FieldAccess _, Core.FieldProjection _, Core.Binary _,
+                        Core.PreservedCall _, Core.Apply _, Core.Block _, Core.ListLit _,
+                        Core.OptionSome _, Core.OptionNone _, Core.Tuple _, Core.TupleGet _,
+                        Core.Construct _, Core.Unreachable _ -> value(out, expression);
+            }
         }
 
         /**
@@ -683,7 +748,7 @@ public final class WasmCompiler {
                         .constant(i)
                         .call(calls.of(RuntimeAbi.ARGUMENT))
                         .constant(shapes.of(takes.get(i)))
-                        .constant(fragment.place(path))
+                        .constant(fragment.intern(path))
                         .constant(path.length)
                         .call(calls.of(RuntimeAbi.READ))
                         .localSet(read[i]);
@@ -725,7 +790,7 @@ public final class WasmCompiler {
                 case Core.Bool bool -> out.constant(bool.value() ? 1 : 0).call(calls.of(RuntimeAbi.BOOL));
                 case Core.Str text -> {
                     byte[] utf8 = text.value().getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(utf8))
+                    out.constant(fragment.intern(utf8))
                             .constant(utf8.length)
                             .call(calls.of(RuntimeAbi.STRING));
                 }
@@ -735,13 +800,13 @@ public final class WasmCompiler {
                     // scale is: a thousand written to two places carries two.
                     byte[] written = amount.value().toPlainString()
                             .getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(written))
+                    out.constant(fragment.intern(written))
                             .constant(written.length)
                             .call(calls.of(RuntimeAbi.DECIMAL_WRITTEN));
                 }
                 case Core.Temporal written -> {
                     byte[] utf8 = written.text().getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(utf8))
+                    out.constant(fragment.intern(utf8))
                             .constant(utf8.length)
                             .call(calls.of(switch (written.kind()) {
                                 case DATE -> RuntimeAbi.DATE_WRITTEN;
@@ -804,12 +869,12 @@ public final class WasmCompiler {
                     byte[] why = nothing.reason().getBytes(StandardCharsets.UTF_8);
                     out.constant(WasmAbortMapping.representationOf(onlyKindOf(nothing)))
                             .constant(0)
-                            .constant((long) fragment.place(why))
+                            .constant((long) fragment.intern(why))
                             .constant((long) why.length)
                             .call(calls.of(RuntimeAbi.ABORT))
                             .unreachable();
                 }
-                case Core.IfConstructed attempted -> attempt(out, attempted);
+                case Core.IfConstructed attempted -> attempt(out, attempted, this::value);
                 case Core.FieldAccess read -> {
                     value(out, read.target());
                     TypeSymbol.AtModule shape = shapeOf(read.target());
@@ -819,7 +884,7 @@ public final class WasmCompiler {
                     } else {
                         // Read off a set of alternatives, so the value says where the field is.
                         byte[] named = read.field().getBytes(StandardCharsets.UTF_8);
-                        out.constant(fragment.place(named))
+                        out.constant(fragment.intern(named))
                                 .constant(named.length)
                                 .call(calls.of(RuntimeAbi.RECORD_NAMED));
                     }
@@ -832,22 +897,8 @@ public final class WasmCompiler {
                             ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
                 }
                 case Core.Binary binary -> binary(out, binary);
-                case Core.If chosen -> {
-                    int answer = scratch();
-                    value(out, chosen.cond());
-                    out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifNotZero();
-                    value(out, chosen.then());
-                    out.localSet(answer).otherwise();
-                    value(out, chosen.els());
-                    out.localSet(answer).end().localGet(answer);
-                }
-                case Core.LetIn bound -> {
-                    int local = scratch();
-                    value(out, bound.value());
-                    out.localSet(local);
-                    locals.put(bound.binder().binding(), local);
-                    value(out, bound.body());
-                }
+                case Core.If chosen -> chosen(out, chosen, this::value);
+                case Core.LetIn bound -> bound(out, bound, this::value);
                 case Core.Tuple together -> {
                     int pair = scratch();
                     out.constant(together.elements().size())
@@ -864,10 +915,13 @@ public final class WasmCompiler {
                     value(out, place.tuple());
                     out.constant(place.index()).call(calls.of(RuntimeAbi.TUPLE_GET));
                 }
-                case Core.Match chosen -> match(out, chosen);
+                case Core.Match chosen -> match(out, chosen, this::value);
                 case Core.Block block -> closure(out, block);
                 case Core.Apply applied -> apply(out, applied);
                 case Core.Call call -> call(out, call);
+                // Every value here is a cell that says what it is, so a value standing as a wider
+                // type is the same cell, and nothing is written for the widening.
+                case Core.Widen widened -> value(out, widened.value());
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {
@@ -923,6 +977,10 @@ public final class WasmCompiler {
             BodyWriter around = out;
             Map<BindingId, Integer> outer = locals;
             Object was = writing;
+            // The block is a function of its own, so a call in it is never the declaration around
+            // it going back to its top.
+            Again goingBack = again;
+            again = null;
 
             out = new BodyWriter(1 + block.params().size(), 0);
             locals = new HashMap<>();
@@ -937,6 +995,7 @@ public final class WasmCompiler {
             value(out, block.body());
             byte[] body = out.body();
 
+            again = goingBack;
             out = around;
             locals = outer;
             writing = was;
@@ -977,11 +1036,9 @@ public final class WasmCompiler {
                 throw new NotLowered(writing + " reaches " + call.fn()
                         + ", and this backend reaches a helper and a behavior");
             }
-            ValueName name = switch (declaration.reaches()) {
-                case Core.Reaches.AHelper helper -> helper.declaration();
-                case Core.Reaches.APublishedValue published -> published.declaration();
-                case Core.Reaches.ABehavior reaches -> reaches.behavior();
-            };
+            // A helper, a value and a behavior are each a body this program reaches by the name it
+            // was declared under, so which of them it is decides nothing here.
+            ValueName name = declaration.reaches().declaration();
             Integer index = reached.get(name);
             if (index == null) {
                 throw new NotLowered(writing + " reaches " + name
@@ -991,6 +1048,30 @@ public final class WasmCompiler {
                 value(out, argument);
             }
             out.call(index);
+        }
+
+        /** Whether a call is the declaration being written calling itself. */
+        private boolean goesBack(Core.Call call) {
+            return again != null
+                    && call.fn() instanceof Core.Reached.OfDeclaration declaration
+                    && declaration.reaches().declaration().equals(again.declaration())
+                    && call.args().size() == again.arity();
+        }
+
+        /**
+         * A call of the declaration to itself, as its answer: every argument is worked out before
+         * any parameter is put back, since an argument may read the parameter it replaces, and then
+         * the body runs again. Nothing follows that is reached, so what the arm it is in goes on to
+         * write is not run.
+         */
+        private void goBack(BodyWriter out, Core.Call call) {
+            for (Core argument : call.args()) {
+                value(out, argument);
+            }
+            for (int i = again.arity() - 1; i >= 0; i--) {
+                out.localSet(i);
+            }
+            out.leave(out.depth() - again.depth());
         }
 
         /**
@@ -1122,23 +1203,28 @@ public final class WasmCompiler {
         private void recognised(BodyWriter out, Core.Call call) {
             // The call cannot be built without this settlement, so a different one is the
             // checker's contract broken and not something this backend lacks.
-            Core.CallSettlement.StringMatches settled =
-                    (Core.CallSettlement.StringMatches) call.settlement();
+            Core.KernelFact.StringMatches settled = (Core.KernelFact.StringMatches) factOf(call);
             value(out, call.args().get(1));
-            out.constant(Patterns.place(fragment, settled.pattern()))
+            out.constant(patterns.of(settled))
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
         }
 
+        /** What the checker settled about a kernel's application, beside what it takes. A call
+         *  reaching a kernel is one the checker built as such, so any other settlement is its
+         *  contract broken. */
+        private Core.KernelFact factOf(Core.Call call) {
+            return ((Core.CallSettlement.AtKernel) call.settlement()).fact();
+        }
+
         /** The Type a {@code sortBy} call's ordering requirement was checked against — the key
-         *  block's result, not the list's element. Read off {@link Core.CallSettlement.OrderingSubject}
+         *  block's result, not the list's element. Read off {@link Core.KernelFact.OrderingSubject}
          *  rather than re-derived from the block's declared type, so this backend never disagrees with
          *  what the checker settled. */
         private souther.compiler.types.Type orderingSubject(Core.Call call) {
             // CallElaborator cannot produce a sortBy application without this settlement, so a
             // different one here is the checker's contract broken and not a capability this backend
             // lacks — the same distinction `recognised` draws for String.matches's settled pattern.
-            Core.CallSettlement.OrderingSubject settled =
-                    (Core.CallSettlement.OrderingSubject) call.settlement();
+            Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
             return settled.type();
         }
 
@@ -1201,6 +1287,28 @@ public final class WasmCompiler {
             return record;
         }
 
+        /** An {@code if}: the condition as a value, and each branch written the way {@code ways}
+         *  writes what the whole is. */
+        private void chosen(BodyWriter out, Core.If chosen, Writing ways) {
+            int answer = scratch();
+            value(out, chosen.cond());
+            out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifNotZero();
+            ways.write(out, chosen.then());
+            out.localSet(answer).otherwise();
+            ways.write(out, chosen.els());
+            out.localSet(answer).end().localGet(answer);
+        }
+
+        /** A {@code let}: what is bound as a value, and the body the way {@code body} writes what
+         *  the whole is. */
+        private void bound(BodyWriter out, Core.LetIn bound, Writing body) {
+            int local = scratch();
+            value(out, bound.value());
+            out.localSet(local);
+            locals.put(bound.binder().binding(), local);
+            body.write(out, bound.body());
+        }
+
         /**
          * An attempted construction: what must hold of the value decides which way the body goes.
          *
@@ -1209,7 +1317,7 @@ public final class WasmCompiler {
          * departure naming no clause takes any — the checker has established that one always
          * matches, so what follows every arm is the end of a call nothing written reaches.
          */
-        private void attempt(BodyWriter out, Core.IfConstructed attempted) {
+        private void attempt(BodyWriter out, Core.IfConstructed attempted, Writing ways) {
             Core.Construct made = attempted.construct();
             TypeSymbol.AtModule name = made.typeName();
             int record = constructed(out, made);
@@ -1222,7 +1330,7 @@ public final class WasmCompiler {
 
             out.localGet(broken).constant(-1).compares(BodyWriter.Comparison.EQUAL).ifNotZero();
             locals.put(attempted.binder().binding(), record);
-            value(out, attempted.then());
+            ways.write(out, attempted.then());
             out.localSet(answer).otherwise();
 
             List<ValueShape.Invariant> clauses = shapes.invariantsOf(name);
@@ -1236,7 +1344,7 @@ public final class WasmCompiler {
                         .compares(BodyWriter.Comparison.EQUAL)
                         .ifNotZero();
                 opened++;
-                value(out, arm.body());
+                ways.write(out, arm.body());
                 out.localSet(answer).otherwise();
             }
             // What is left is the departure naming no clause, which any failure takes. Where there
@@ -1246,7 +1354,7 @@ public final class WasmCompiler {
                     .filter(arm -> arm.clause().isEmpty())
                     .findFirst();
             if (any.isPresent()) {
-                value(out, any.get().body());
+                ways.write(out, any.get().body());
                 out.localSet(answer);
             } else {
                 out.constant(WasmFault.BACKEND_INVARIANT_BROKEN.code())
@@ -1282,7 +1390,7 @@ public final class WasmCompiler {
          * <p>Where an arm selects on an option, what it tests is whether the option holds
          * something, and what it binds is what the option holds — not the option.
          */
-        private void match(BodyWriter out, Core.Match chosen) {
+        private void match(BodyWriter out, Core.Match chosen, Writing arms) {
             int subject = scratch();
             int answer = scratch();
             value(out, chosen.scrutinee());
@@ -1293,7 +1401,7 @@ public final class WasmCompiler {
                 condition(out, arm, subject);
                 out.ifNotZero();
                 bind(out, arm, subject);
-                value(out, arm.body());
+                arms.write(out, arm.body());
                 out.localSet(answer).otherwise();
                 opened++;
             }
@@ -1378,7 +1486,7 @@ public final class WasmCompiler {
                         RuntimeAbi.Kernels.DECIMAL_MULTIPLY);
                 case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE,
                         RuntimeAbi.Kernels.DECIMAL_DIVIDE_BY);
-                case CONCAT -> arithmetic(out, binary, RuntimeAbi.CONCAT, null);
+                case CONCAT -> concatenation(out, binary);
                 case EQ -> comparison(out, binary, BodyWriter.Comparison.EQUAL);
                 case NE -> comparison(out, binary, BodyWriter.Comparison.UNEQUAL);
                 case LT -> comparison(out, binary, BodyWriter.Comparison.LESS);
@@ -1399,6 +1507,20 @@ public final class WasmCompiler {
                     value(out, binary.right());
                     out.localSet(answer).end().localGet(answer);
                 }
+            }
+        }
+
+        /**
+         * {@code ++}, which joins two strings or two lists: the checker settles both sides to the
+         * one type the answer is, so the answer's type says which.
+         */
+        private void concatenation(BodyWriter out, Core.Binary binary) {
+            value(out, binary.left());
+            value(out, binary.right());
+            if (binary.type() instanceof souther.compiler.types.Type.ListOf) {
+                out.constant(shapes.of(binary.type())).call(calls.of(RuntimeAbi.LIST_CONCAT));
+            } else {
+                out.call(calls.of(RuntimeAbi.CONCAT));
             }
         }
 

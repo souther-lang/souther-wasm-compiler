@@ -24,16 +24,16 @@
 
 #![no_std]
 
+extern crate alloc as heap;
+
 mod captures;
-mod casing;
-mod casing_data;
 mod decimal;
 mod descriptor;
 mod issues;
 mod kernel;
 mod json;
+mod notation;
 mod order;
-mod regex;
 mod temporal;
 mod text;
 mod value;
@@ -51,7 +51,11 @@ const PAGE: usize = 65536;
 /// reason numbers kept their value but changed what they mean (5 generalised from `Int` overflow
 /// alone to every `REQUIRED_FORM_HAS_NO_PLACE` case, 7 from a match falling through alone to any
 /// internal invariant breaking, 8 and 9 were renamed to the language's own names), and 11 is new.
-const ABI_VERSION: u32 = 4;
+///
+/// Raised to 5 when what `__souther_string_matches` is told became the image of the pattern's
+/// machine that 199x-notation writes, in place of the compiler's own list of steps: a module
+/// linked by the older compiler would hand this runtime steps it reads as an image.
+const ABI_VERSION: u32 = 5;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -127,6 +131,7 @@ pub unsafe extern "C" fn __ronto_alloc_reset(mark: u32) {
         __souther_abort(REASON_BAD_MARK, 0, mark as u64, ARENA_TOP as u64);
     }
     ARENA_TOP = mark;
+    arena_popped();
 }
 
 /// Where a string a call answered with is, in the one place a component reads a result from.
@@ -157,6 +162,21 @@ pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_arena_rewind() {
     ARENA_TOP = ARENA_BASE;
+    arena_popped();
+}
+
+/// Forgets everything this crate keeps between calls that lives in the arena, as the arena is
+/// popped.
+///
+/// The one place such state ends, and the only two ways the arena is popped both come here, so
+/// what is kept is never read after the memory under it has been handed out again. Not left to the
+/// next call to set straight: a caller that pops and then reaches the runtime some other way than
+/// through an export's start would otherwise read, or write through, memory that is something
+/// else's by then.
+unsafe fn arena_popped() {
+    kernel::forget_kept_pattern();
+    issues::forget();
+    text::forget();
 }
 
 /// What the canonical ABI allocates and reallocates with.
@@ -345,6 +365,46 @@ pub const REASON_INVALID_BOUNDS: u32 = 10;
 /// lowered here emits an `ensures` check (see the Java `WasmCompiler`) — reserved here so the
 /// number is fixed before anything does. Represents `AbortKind::ENSURES_NOT_HELD`.
 pub const REASON_ENSURES_NOT_HELD: u32 = 11;
+
+/// The arena, as what `alloc` allocates from: for 199x-notation, and for the text this crate
+/// builds to hand to it.
+///
+/// Nothing is given back one allocation at a time: what a call made goes back with the arena when
+/// the caller pops it, so `dealloc` does nothing. What the library builds lives no longer than the
+/// call that asked for it, and nothing here keeps any of it past that call.
+///
+/// The arena hands out exactly what it is asked for, so that a run written piece by piece stays
+/// one run, and an alignment is taken here by padding first. A caller writing a run therefore asks
+/// the library for nothing between its first piece and its last.
+struct Arena;
+
+unsafe impl core::alloc::GlobalAlloc for Arena {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        let over = ARENA_TOP % layout.align();
+        if over != 0 {
+            let _ = __ronto_alloc((layout.align() - over) as u32);
+        }
+        __ronto_alloc(layout.size() as u32) as *mut u8
+    }
+
+    unsafe fn dealloc(&self, _at: *mut u8, _layout: core::alloc::Layout) {}
+
+    /// Grows in place where the allocation is the last the arena handed out, which is what a
+    /// string being built usually is, and moves it otherwise.
+    unsafe fn realloc(&self, at: *mut u8, layout: core::alloc::Layout, wanted: usize) -> *mut u8 {
+        if at as usize + layout.size() == ARENA_TOP && wanted >= layout.size() {
+            let _ = __ronto_alloc((wanted - layout.size()) as u32);
+            return at;
+        }
+        let moved = self.alloc(core::alloc::Layout::from_size_align_unchecked(wanted, layout.align()));
+        let kept = if layout.size() < wanted { layout.size() } else { wanted };
+        core::ptr::copy_nonoverlapping(at, moved, kept);
+        moved
+    }
+}
+
+#[global_allocator]
+static ARENA: Arena = Arena;
 
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says

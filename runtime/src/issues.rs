@@ -20,6 +20,8 @@ use crate::alloc;
 
 /// A place held something other than what it was declared to hold.
 pub const CODE_TYPE_MISMATCH: &[u8] = b"type_mismatch";
+/// A string that denotes no value of the declared type: text that is no `String`, or no temporal.
+pub const CODE_INVALID_FORMAT: &[u8] = b"invalid_format";
 /// A number was outside what the declared type holds.
 pub const CODE_OUT_OF_RANGE: &[u8] = b"out_of_range";
 /// A collection had the wrong number of elements.
@@ -51,10 +53,15 @@ const RECORD: usize = 36;
 
 /// Forgets what an earlier call found.
 ///
-/// Called as an export's body starts. The records themselves are the arena's and are gone when the
-/// caller resets; what has to be forgotten here is the list's head, which is not.
+/// Called as an export's body starts, since two calls may share one arena. The records themselves
+/// are the arena's; what has to be forgotten here is the list's head, which is not.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_issues_begin() {
+    forget();
+}
+
+/// Forgets the list, as an export starts and as the arena its records live in is popped.
+pub(crate) unsafe fn forget() {
     FIRST = 0;
     LAST = 0;
     COUNT = 0;

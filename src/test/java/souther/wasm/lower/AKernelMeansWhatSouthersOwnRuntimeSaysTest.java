@@ -35,6 +35,9 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
         // run through souther-runtime, not merely through whichever the WASM backend implements.
         " padded ", "　ごきげんよう　", "a 　b", "\u0085  ",
         "a​b", "a﻿b", "a\u001cb",
+        // Each already canonical, and each one that an operation can leave canonical only by
+        // composing: turned around, repeated or joined, the combining acute lands after the e.
+        "\u0301e", "\u0301", "e", "\u00c5\u0327",
     };
 
     @Test
