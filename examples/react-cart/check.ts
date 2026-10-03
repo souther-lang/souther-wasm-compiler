@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { amount, load as loadModule, messageOf, numeral, type Numeric } from "@souther/wasm";
+import { amount, load as loadModule, messageOf, numeral, READS, type Numeric } from "@souther/wasm";
 import { load, type Cart } from "./src/cart.ts";
 
 const bound = await load(readFileSync("public/cart.wasm"));
@@ -190,24 +190,27 @@ let spread (pair, today, yesterday) = today(pair) - yesterday(pair)
 }
 
 // A module whose surface is of another version is refused when it is loaded, rather than read as
-// this one: a version 3 surface names an export for every behavior, published or kept, and taken
-// for a version 4 one a kept behavior would be offered to the caller.
+// this one: what a surface of another version says, it says differently or not at all. The versions
+// are the glue's own (`READS`), and the other one is written in as many bytes as this one, so the
+// module is still one a browser compiles and only what it says it is has changed.
 {
+  const reads = READS.surface;
+  const other = String(reads - 1).length === String(reads).length ? reads - 1 : reads + 1;
   const bytes = readFileSync("public/cart.wasm");
   const text = bytes.toString("latin1");
-  const at = text.indexOf('{"version":4,');
-  same("where the surface says its version", at >= 0 && text.indexOf('{"version":4,', at + 1) < 0,
-    true);
-  const older = Buffer.from(bytes);
-  older.write('{"version":3,', at, "latin1");
+  const written = `{"version":${reads},`;
+  const at = text.indexOf(written);
+  same("where the surface says its version", at >= 0 && text.indexOf(written, at + 1) < 0, true);
+  const another = Buffer.from(bytes);
+  another.write(`{"version":${other},`, at, "latin1");
   let refused: string | null = null;
   try {
-    await loadModule(older);
+    await loadModule(another);
   } catch (said) {
     refused = said instanceof Error ? said.message : String(said);
   }
-  same("what loading a version 3 surface says", refused,
-    "this module's surface is version 3, and this glue reads version 4");
+  same("what loading a surface of another version says", refused,
+    `this module's surface is version ${other}, and this glue reads version ${reads}`);
 }
 
 console.log(wrong === 0 ? "the glue calls a compiled program" : `${wrong} did not hold`);
