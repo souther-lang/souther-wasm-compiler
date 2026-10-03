@@ -1214,6 +1214,11 @@ unsafe fn room_for(descriptor: u32, room: u32) -> u32 {
     let at = alloc(4);
     core::ptr::write_unaligned(at as usize as *mut u32, room);
     let cell = value::__souther_map(descriptor, room);
+    // The word is found by where the cell is, so the cell has to follow it. The arena hands out
+    // the next bytes, and an arena that did not would have the room read off whatever was there.
+    if cell != at + 4 {
+        abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, at as u64, cell as u64);
+    }
     value::map_of_length(cell, 0);
     cell
 }
