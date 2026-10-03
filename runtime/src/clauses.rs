@@ -251,26 +251,51 @@ unsafe fn out_of_range_amount(
 
 /// A list holding some value more than once, reported with each such value once, in the order
 /// its second writing was met.
+///
+/// Found by putting the elements' places in the order of their values, so that equal values stand
+/// together, which costs a list the boundary is handed about its length times its logarithm and not
+/// the square of it: a document of tens of thousands of elements is what a caller may send, and its
+/// being wrong is not a reason for reading it to take minutes. Asked of `order::compare` alone, the
+/// same question every value's order is, so nothing more of the runtime is linked for it.
 unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bool {
     let n = value::__souther_list_length(held);
-    // The values found twice, kept in the arena as the call's other workings are.
-    let duplicates = crate::alloc(4 * n.max(1));
-    let mut found = 0u32;
+    if n < 2 {
+        return false;
+    }
+    // The places, in order of value, and of place among equal values.
+    let places = crate::alloc(4 * n);
+    let spare = crate::alloc(4 * n);
     for i in 0..n {
-        let each = value::__souther_list_get(held, i);
-        let seen_before = (0..i).any(|j| {
-            crate::order::compare(value::__souther_list_get(held, j), each, element) == 0
-        });
-        let already = (0..found).any(|k| crate::order::compare(read(duplicates + 4 * k), each,
-            element) == 0);
-        if seen_before && !already {
-            core::ptr::write_unaligned((duplicates + 4 * found) as *mut u32, each);
+        put(places, i, i);
+    }
+    let before = |left: u32, right: u32| {
+        let order = crate::order::compare(value::__souther_list_get(held, left),
+            value::__souther_list_get(held, right), element);
+        order < 0 || (order == 0 && left < right)
+    };
+    sorted(places, spare, n, &before);
+    // Each run of equal values that is longer than one is a value written twice; where its second
+    // writing stands is the run's second place.
+    let seconds = crate::alloc(4 * n);
+    let mut found = 0u32;
+    let mut at = 0;
+    while at < n {
+        let mut end = at + 1;
+        while end < n && crate::order::compare(value::__souther_list_get(held, get(places, at)),
+            value::__souther_list_get(held, get(places, end)), element) == 0 {
+            end += 1;
+        }
+        if end - at > 1 {
+            put(seconds, found, get(places, at + 1));
             found += 1;
         }
+        at = end;
     }
     if found == 0 {
         return false;
     }
+    // In the order the second writings were met.
+    sorted(seconds, spare, found, &|left: u32, right: u32| left < right);
     meta::begin();
     crate::text::begin();
     crate::text::put(b"[");
@@ -278,13 +303,62 @@ unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bo
         if k > 0 {
             crate::text::put(b",");
         }
-        value::written(read(duplicates + 4 * k), element);
+        value::written(value::__souther_list_get(held, get(seconds, k)), element);
     }
     crate::text::put(b"]");
-    let (at, length) = crate::text::ended();
-    meta::raw(b"duplicates", at, length);
+    let (written_at, length) = crate::text::ended();
+    meta::raw(b"duplicates", written_at, length);
     issues::issue(b"duplicate_element", path, path_length, meta::end());
     true
+}
+
+/// Sorts `n` words at `words` by `before`, merging runs through `spare`: stable, and about `n`
+/// times its logarithm comparisons whatever order the words came in.
+unsafe fn sorted(words: u32, spare: u32, n: u32, before: &dyn Fn(u32, u32) -> bool) {
+    let mut width = 1;
+    let (mut from, mut into) = (words, spare);
+    while width < n {
+        let mut start = 0;
+        while start < n {
+            let middle = (start + width).min(n);
+            let end = (start + 2 * width).min(n);
+            let (mut left, mut right, mut out) = (start, middle, start);
+            while left < middle && right < end {
+                if before(get(from, right), get(from, left)) {
+                    put(into, out, get(from, right));
+                    right += 1;
+                } else {
+                    put(into, out, get(from, left));
+                    left += 1;
+                }
+                out += 1;
+            }
+            while left < middle {
+                put(into, out, get(from, left));
+                left += 1;
+                out += 1;
+            }
+            while right < end {
+                put(into, out, get(from, right));
+                right += 1;
+                out += 1;
+            }
+            start = end;
+        }
+        core::mem::swap(&mut from, &mut into);
+        width *= 2;
+    }
+    if from != words {
+        core::ptr::copy_nonoverlapping(from as *const u8, words as *mut u8, (4 * n) as usize);
+    }
+}
+
+unsafe fn get(words: u32, at: u32) -> u32 {
+    read(words + 4 * at)
+}
+
+unsafe fn put(words: u32, at: u32, value: u32) {
+    core::ptr::write_unaligned((words + 4 * at) as *mut u32, value);
 }
 
 /// How many code points a `String` holds, which is what `String.length` counts.
