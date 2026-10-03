@@ -1467,8 +1467,8 @@ public final class WasmCompiler {
             // a different one here is the checker's contract broken and not a capability this
             // backend lacks — the same distinction `recognised` draws for String.matches's pattern.
             Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
-            out.constant(shapes.layersOf(settled.type()))
-                    .constant(shapes.orderOf(settled.type(), settled.ordering()));
+            souther.compiler.types.Type as = shapes.orderedAs(settled.type(), settled.ordering());
+            out.constant(shapes.layersTo(settled.type(), as)).constant(shapes.of(as));
         }
 
         /**
@@ -1884,7 +1884,8 @@ public final class WasmCompiler {
          *
          * <p>What the operands are read as and what orders them are two answers, and the checker
          * gives both. The reading says how each operand is taken — at its exact value, or opened
-         * from every newtype it wears, which stands where the value it wraps stands — and which
+         * through the newtypes it wears to the type the pair is read in ({@link
+         * Descriptors#layersTo}), which stops at a newtype that type lists as a case — and which
          * type sameness is asked in. The order of {@code <} and the others is the
          * {@link Core.OrderingBasis}, which no reading says: cases of one sum held as a union of
          * them read as they stand, and the union keeps its cases in the order of their names while
@@ -1914,8 +1915,8 @@ public final class WasmCompiler {
                 out.comparesWide(how);
                 return;
             }
-            opened(out, left);
-            opened(out, right);
+            opened(out, left, in);
+            opened(out, right, in);
             ordered(out, in, how);
         }
 
@@ -1928,14 +1929,12 @@ public final class WasmCompiler {
                     .compares(how);
         }
 
-        /** Leaves an operand as what it is made of, opening each newtype it wears. */
-        private void opened(BodyWriter out, Core operand) {
+        /** Leaves an operand as a value of {@code as}, opened through the newtypes it wears short
+         *  of that ({@link Descriptors#layersTo}). */
+        private void opened(BodyWriter out, Core operand, souther.compiler.types.Type as) {
             value(out, operand);
-            souther.compiler.types.Type held = operand.type();
-            for (var within = shapes.wrappedBy(held); within.isPresent();
-                    within = shapes.wrappedBy(held)) {
+            for (int i = shapes.layersTo(operand.type(), as); i > 0; i--) {
                 out.constant(0).call(calls.of(RuntimeAbi.RECORD_GET));
-                held = within.get();
             }
         }
 
@@ -1945,7 +1944,7 @@ public final class WasmCompiler {
                 wide(out, operand);
                 return;
             }
-            opened(out, operand);
+            opened(out, operand, souther.compiler.types.Type.Prim.INT);
             out.loadWide(Cell.PAYLOAD);
         }
 

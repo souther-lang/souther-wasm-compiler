@@ -116,10 +116,6 @@ final class Descriptors {
         }
     }
 
-    private static boolean isBareTag(CheckedAlternativesForm form) {
-        return form instanceof CheckedAlternativesForm.Enumeration;
-    }
-
     /**
      * A union no behavior answers, which only a body holds.
      *
@@ -129,20 +125,11 @@ final class Descriptors {
      * unit, so that a descriptor never says something about a set the checker would not.
      */
     private int unsettled(Type.Union union) {
-        List<TypeSymbol> leaves = new ArrayList<>();
-        for (TypeSymbol member : union.members()) {
-            List<TypeSymbol> under = member instanceof TypeSymbol.AtModule named
-                    && declared(named) instanceof CheckedData.Sum sum ? sum.cases() : List.of(member);
-            for (TypeSymbol leaf : under) {
-                if (!leaves.contains(leaf)) {
-                    leaves.add(leaf);
-                }
-            }
-        }
+        List<TypeSymbol> leaves = leavesOf(union);
         boolean units = !leaves.isEmpty() && leaves.stream().allMatch(
                 each -> each instanceof TypeSymbol.AtModule held
                         && declared(held) instanceof CheckedData.Unit);
-        return alternatives(null, leaves, units);
+        return alternatives(null, leaves, units ? new CheckedAlternativesForm.Enumeration() : null);
     }
 
     /**
@@ -184,7 +171,7 @@ final class Descriptors {
             case Type.Union union -> {
                 CheckedBoundaryOutput.Cases settled = answered.get(union);
                 yield settled != null
-                        ? alternatives(null, settled.cases(), isBareTag(settled.representation()))
+                        ? alternatives(null, settled.cases(), settled.representation())
                         : unsettled(union);
             }
             case Type.MapOf map -> {
@@ -317,7 +304,7 @@ final class Descriptors {
             // A sum's cases are its leaves: a case written as another sum is carried here as the
             // cases under it, so nothing nested reaches this and the tag always names a leaf.
             case CheckedData.Sum choice ->
-                    alternatives(name, choice.cases(), isBareTag(choice.representation()));
+                    alternatives(name, choice.cases(), choice.representation());
         };
     }
 
@@ -330,19 +317,35 @@ final class Descriptors {
      * read it the same way or one set is two documents — so the form is the checker's answer, read
      * here and never worked out again from the members.
      *
+     * <p>Where the name stands beside what an alternative carries, the keys it stands under are
+     * the checker's too ({@link CheckedAlternativesForm.Discriminated}): the tag's, and the one a
+     * case that is not laid out as fields — a newtype, a primitive — keeps its own form under. The
+     * descriptor carries both, so the runtime reading and writing the set spells neither.
+     *
      * @param name the type the set is declared as, or null where nobody named the members together
      * @param members the leaves, a member that is itself a sum already descended into: a value of
      *     the set carries the descriptor of the leaf it is, and that is what it is told apart by
-     * @param carriesNothing whether the set travels as a bare tag
+     * @param form how the set travels, or null for a set only a body holds, which never crosses
+     *     and so has no keys to stand under
      */
     private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members,
-            boolean carriesNothing) {
+            CheckedAlternativesForm form) {
         List<int[]> described = new ArrayList<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
             described.add(new int[] {fragment.intern(utf8), utf8.length, ofMember(member)});
         }
-        return written(carriesNothing ? KIND_ENUMERATION : KIND_SUM, name, described);
+        if (form instanceof CheckedAlternativesForm.Enumeration) {
+            return written(KIND_ENUMERATION, name, described);
+        }
+        int[] keys = {0, 0, 0, 0};
+        if (form instanceof CheckedAlternativesForm.Discriminated(String tag, String contents)) {
+            byte[] tagged = tag.getBytes(StandardCharsets.UTF_8);
+            byte[] held = contents.getBytes(StandardCharsets.UTF_8);
+            keys = new int[] {fragment.intern(tagged), tagged.length,
+                    fragment.intern(held), held.length};
+        }
+        return written(KIND_SUM, name, described, keys);
     }
 
     /** A field of a shape, or a case of a sum: what it is called and what it holds. */
@@ -437,25 +440,33 @@ final class Descriptors {
         return filled(kind, name, descriptor, written);
     }
 
-    /** A set of alternatives whose members were described before the descriptor was reserved. */
-    private int written(int kind, TypeSymbol.AtModule name, List<int[]> members) {
-        int descriptor = reserveFor(kind, name, members.size());
-        return filled(kind, name, descriptor, members);
+    /**
+     * A set of alternatives whose members were described before the descriptor was reserved,
+     * with {@code after} written after them: a sum's keys.
+     */
+    private int written(int kind, TypeSymbol.AtModule name, List<int[]> members, int... after) {
+        int descriptor = reserveFor(kind, name, members.size(), after.length);
+        return filled(kind, name, descriptor, members, after);
     }
 
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members) {
+        return reserveFor(kind, name, members, 0);
+    }
+
+    private int reserveFor(int kind, TypeSymbol.AtModule name, int members, int after) {
         // A form a value is built out of carries its own name and the slot of what checks it,
         // after its fields.
         // A set of names carries its own name too, for an issue saying a name is not one of them.
         int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 16 : 0)
-                + (kind == KIND_ENUMERATION ? 8 : 0));
+                + (kind == KIND_ENUMERATION ? 8 : 0) + 4 * after);
         if (name != null) {
             byName.put(name, descriptor);
         }
         return descriptor;
     }
 
-    private int filled(int kind, TypeSymbol.AtModule name, int descriptor, List<int[]> written) {
+    private int filled(int kind, TypeSymbol.AtModule name, int descriptor, List<int[]> written,
+            int... after) {
         boolean product = carriesRules(kind);
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         WasmWriter out = new WasmWriter(table);
@@ -477,6 +488,9 @@ final class Descriptors {
             byte[] own = name == null ? new byte[0] : name.name().getBytes(StandardCharsets.UTF_8);
             out.writeLittleEndian4(own.length == 0 ? 0 : fragment.intern(own))
                     .writeLittleEndian4(own.length);
+        }
+        for (int word : after) {
+            out.writeLittleEndian4(word);
         }
         fragment.fill(descriptor, table.toByteArray());
         return descriptor;
@@ -527,30 +541,78 @@ final class Descriptors {
         return held;
     }
 
-    /** How many newtypes a type is, one inside the next: how many fields a value of it is opened
-     *  through before what it is made of is reached. */
-    int layersOf(Type type) {
+    /**
+     * The leaves of a set of alternatives — a sum's cases, a union's members with each sum among
+     * them descended into, as the checker's are — or nothing for a type that is no such set.
+     */
+    List<TypeSymbol> leavesOf(Type type) {
+        List<TypeSymbol> members = switch (type) {
+            case Type.Union union -> List.copyOf(union.members());
+            case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule named
+                    && declared(named) instanceof CheckedData.Sum -> List.of(named);
+            default -> List.of();
+        };
+        List<TypeSymbol> leaves = new ArrayList<>();
+        for (TypeSymbol member : members) {
+            List<TypeSymbol> under = member instanceof TypeSymbol.AtModule named
+                    && declared(named) instanceof CheckedData.Sum sum ? sum.cases() : List.of(member);
+            for (TypeSymbol leaf : under) {
+                if (!leaves.contains(leaf)) {
+                    leaves.add(leaf);
+                }
+            }
+        }
+        return leaves;
+    }
+
+    /**
+     * How many newtypes a value held as {@code held} is opened through before it is a value of
+     * {@code as}: none where it is one already, or where {@code as} is a set of alternatives that
+     * lists it as one of them; one more for each newtype it wears short of that.
+     *
+     * <p>A newtype stands where what it wraps stands, so a value of one is opened to be compared or
+     * placed as what it wraps — {@code Money} as the {@code Int} beside it, {@code BetaN} as the
+     * {@code Beta} its sum places. But a newtype a sum lists as a case is a value of that sum as it
+     * stands: {@code Code} beside a {@code Key} is the {@code Key} it is, and opened it would be an
+     * {@code Int} the {@code Key} has no case for. So how far a value is opened is asked of what it
+     * is opened to, and never answered as every newtype it has.
+     */
+    int layersTo(Type held, Type as) {
+        List<TypeSymbol> listed = leavesOf(as);
         int layers = 0;
-        for (var within = wrappedBy(type); within.isPresent(); within = wrappedBy(within.get())) {
+        Type at = held;
+        while (!at.equals(as) && !(at instanceof Type.Ref reference
+                && listed.contains(reference.name()))) {
+            Optional<Type> within = wrappedBy(at);
+            if (within.isEmpty()) {
+                break;
+            }
+            at = within.get();
             layers++;
         }
         return layers;
     }
 
     /**
-     * The descriptor of the order the checker settled for values of {@code held}
-     * ({@link Core.OrderingBasis}), for values already opened from every newtype they are
-     * ({@link #layersOf}).
+     * What values held as {@code held} are placed as on the order the checker settled for them
+     * ({@link Core.OrderingBasis}): the basis, under every newtype it is. With no basis there was
+     * no value to order, and they are placed as what they are.
+     */
+    Type orderedAs(Type held, Optional<Core.OrderingBasis> ordering) {
+        return madeOf(ordering.map(Core.OrderingBasis::type).orElse(held));
+    }
+
+    /**
+     * The descriptor of the order the checker settled for values of {@code held}, for values
+     * opened to it ({@link #layersTo}).
      *
      * <p>How a value is held and what orders it are two answers, and this is only the second.
      * A newtype over a case — {@code data BetaN = Beta}, {@code Beta} one case of {@code Rising} —
      * is opened to a {@code Beta}, which has no order of its own, and placed by {@code Rising}; a
-     * union of cases is placed by the sum listing them; a newtype over a number by the number. In
-     * every one of them what the opened value is placed by is the basis, so nothing here asks
-     * which of them it is. With no basis there was no value to order.
+     * union of cases is placed by the sum listing them; a newtype over a number by the number.
      */
     int orderOf(Type held, Optional<Core.OrderingBasis> ordering) {
-        return of(madeOf(ordering.map(Core.OrderingBasis::type).orElse(held)));
+        return of(orderedAs(held, ordering));
     }
 
     private CheckedData declared(TypeSymbol.AtModule name) {

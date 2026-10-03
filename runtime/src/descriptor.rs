@@ -36,6 +36,9 @@
 //! +8  per case: u32 where its tag is, u32 how long, u32 the case's own descriptor
 //! then, of an ENUMERATION, u32 where the set's own name is, u32 how long (nothing where nobody
 //!      named it)
+//! then, of a SUM, u32 where the key the tag stands under is, u32 how long, u32 where the key a
+//!      case carried as itself stands under is, u32 how long — the checker's, nothing for a set
+//!      only a body holds
 //!
 //! kind LIST / OPTION
 //! +4  u32 one
@@ -155,6 +158,40 @@ pub unsafe fn invariant(descriptor: u32) -> u32 {
 pub unsafe fn enumeration_name(descriptor: u32) -> (u32, u32) {
     let at = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
     (read(at), read(at + 4))
+}
+
+/// The key a sum's tag stands under, as the checker settled the sum's form. Nothing — no address —
+/// for a set only a body holds, which nothing reads or writes.
+pub unsafe fn tag_key(descriptor: u32) -> (u32, u32) {
+    let at = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
+    (read(at), read(at + 4))
+}
+
+/// The key a case of a sum that is carried as itself stands under, beside the tag.
+pub unsafe fn contents_key(descriptor: u32) -> (u32, u32) {
+    let at = descriptor as usize + 8 + 12 * arity(descriptor) as usize + 8;
+    (read(at), read(at + 4))
+}
+
+/// What a case of a set of alternatives carries, by what its own descriptor is.
+///
+/// The checker's three (`CaseShape`), decided the way it decides them: a unit carries nothing but
+/// which case it is, a shape lays its fields beside the tag, and anything else — a newtype, a
+/// primitive member of an answer — is carried as itself, its own form unchanged under a key of its
+/// own. Every place that reads, writes, compares or hashes what a case carries asks this, so a
+/// kind is never one of the three in one place and another of them somewhere else.
+pub enum Carried {
+    Nothing,
+    Fields,
+    Itself,
+}
+
+pub unsafe fn carried(case: u32) -> Carried {
+    match kind(case) {
+        KIND_UNIT => Carried::Nothing,
+        KIND_PRODUCT => Carried::Fields,
+        _ => Carried::Itself,
+    }
 }
 
 /// Where the table of what a product's clauses are reported as is (`crate::clauses`).

@@ -12,7 +12,7 @@
 
 use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
+    self, Carried, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
     KIND_INT, KIND_NEWTYPE,
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING, KIND_SUM,
     KIND_TIME, KIND_TUPLE, KIND_UNIT,
@@ -166,13 +166,18 @@ pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
         // it still hashes it as itself.
         KIND_UNIT | KIND_PRODUCT | KIND_ENUMERATION | KIND_SUM => {
             let case = case_held(cell);
-            let mut hash = mixed(HASH_START, case);
-            if descriptor::kind(case) == KIND_PRODUCT {
-                for i in 0..descriptor::arity(case) {
-                    hash = mixed(hash, hash_of(value::__souther_record_get(cell, i), descriptor::member(case, i)));
+            let which = mixed(HASH_START, case);
+            match descriptor::carried(case) {
+                Carried::Nothing => which,
+                Carried::Fields => {
+                    let mut hash = which;
+                    for i in 0..descriptor::arity(case) {
+                        hash = mixed(hash, hash_of(value::__souther_record_get(cell, i), descriptor::member(case, i)));
+                    }
+                    hash
                 }
+                Carried::Itself => mixed(which, hash_of(cell, case)),
             }
-            hash
         }
         KIND_TUPLE => {
             let mut hash = HASH_START;
@@ -433,27 +438,31 @@ fn declares_a_value(kind: u32) -> bool {
 /// fields read off a cell that has none. The cell says which case it is, and that case's own
 /// descriptor reads it. Which case decides first, by the name it is written as — a set of units is
 /// written as their names, and a sum as an object whose tag comes first — and then what the case
-/// carries, field by field.
+/// carries, as `descriptor::carried` says it carries it: nothing, its fields one by one, or itself,
+/// read by its own descriptor — a newtype case by what it wraps.
 unsafe fn declared(left: u32, right: u32) -> i32 {
     let by_case = cases(left, right);
     if by_case != 0 {
         return by_case;
     }
     let own = case_held(left);
-    if descriptor::kind(own) != KIND_PRODUCT {
-        return 0;
-    }
-    for i in 0..descriptor::arity(own) {
-        let each = compare(
-            value::__souther_record_get(left, i),
-            value::__souther_record_get(right, i),
-            descriptor::member(own, i),
-        );
-        if each != 0 {
-            return each;
+    match descriptor::carried(own) {
+        Carried::Nothing => 0,
+        Carried::Fields => {
+            for i in 0..descriptor::arity(own) {
+                let each = compare(
+                    value::__souther_record_get(left, i),
+                    value::__souther_record_get(right, i),
+                    descriptor::member(own, i),
+                );
+                if each != 0 {
+                    return each;
+                }
+            }
+            0
         }
+        Carried::Itself => compare(left, right, own),
     }
-    0
 }
 
 /// Two maps: their entries read in key order, key against key and then value against value, with
@@ -500,7 +509,16 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
 /// union narrower than the sum a value later put in it was made as, and does not list that value
 /// at all. One case is one descriptor wherever it is listed, so this is the same answer for every
 /// set that lists it.
+///
+/// Only a value of a declared type holds one: a unit's cell and a shape's, a newtype's among them.
+/// A primitive holds none, and what its cell has there is not a descriptor, so a primitive met here
+/// is a set of alternatives that has one as a member reaching a place that tells cases apart this
+/// way, which the compiler does not write. It ends the call rather than reading a name off nothing.
 pub unsafe fn case_held(cell: u32) -> u32 {
+    let tag = core::ptr::read_unaligned(cell as usize as *const u32);
+    if tag != value::TAG_UNIT && tag != value::TAG_RECORD {
+        abort(REASON_BACKEND_INVARIANT_BROKEN, 0, tag as u64, cell as u64);
+    }
     core::ptr::read_unaligned((cell as usize + 4) as *const u32)
 }
 
@@ -531,11 +549,8 @@ unsafe fn cases(left: u32, right: u32) -> i32 {
 /// handing this a set the value is not one of, and it ends the call: taken for the first case, it
 /// would be equal to that one, which is a wrong answer and not a failure.
 unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {
-    let own = case_held(cell);
-    for i in 0..descriptor::arity(descriptor) {
-        if descriptor::member(descriptor, i) == own {
-            return i;
-        }
+    match value::member_of(cell, descriptor) {
+        Some(i) => i,
+        None => abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, cell as u64, 0),
     }
-    abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, own as u64, cell as u64)
 }

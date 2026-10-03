@@ -30,8 +30,8 @@
 
 use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
-    KIND_INT, KIND_NEWTYPE,
+    self, Carried, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION,
+    KIND_INSTANT, KIND_INT, KIND_NEWTYPE,
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING, KIND_SUM,
     KIND_TIME, KIND_TUPLE, KIND_UNIT,
 };
@@ -343,13 +343,7 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
 /// Which of a set's alternatives a value is, as its place in what declared it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_case_of(cell: u32, descriptor: u32) -> u32 {
-    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        if descriptor::member(descriptor, i) == held {
-            return i;
-        }
-    }
-    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64)
+    case_among(cell, descriptor)
 }
 
 /// Whether an option holds something.
@@ -1508,14 +1502,15 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
         mismatch(path, path_length, tag, b"object");
         return 0;
     }
-    let written = entry(value, DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32);
+    let tagged_under = keyed(descriptor::tag_key(descriptor), descriptor);
+    let written = entry(value, tagged_under.0, tagged_under.1);
     if written == 0 {
-        let (at, at_length) = below(path, path_length, discriminator());
+        let (at, at_length) = below(path, path_length, tagged_under);
         required(at, at_length);
         return 0;
     }
     if json::__souther_json_tag(written) != json::TAG_STRING {
-        let (at, at_length) = below(path, path_length, discriminator());
+        let (at, at_length) = below(path, path_length, tagged_under);
         mismatch(at, at_length, json::__souther_json_tag(written), b"string");
         return 0;
     }
@@ -1524,11 +1519,27 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     for i in 0..descriptor::arity(descriptor) {
         let (case, case_length) = descriptor::name(descriptor, i);
         if same(case, case_length, held, held_length) {
-            return __souther_read(value, descriptor::member(descriptor, i), path, path_length);
+            let member = descriptor::member(descriptor, i);
+            return match descriptor::carried(member) {
+                // A unit and a shape are read from the object membership gave them, the tag
+                // beside whatever fields they lay there.
+                Carried::Nothing | Carried::Fields => __souther_read(value, member, path, path_length),
+                // Anything else keeps its own form, under a key of its own beside the tag.
+                Carried::Itself => {
+                    let contents_under = keyed(descriptor::contents_key(descriptor), descriptor);
+                    let (at, at_length) = below(path, path_length, contents_under);
+                    let contents = entry(value, contents_under.0, contents_under.1);
+                    if contents == 0 {
+                        required(at, at_length);
+                        return 0;
+                    }
+                    __souther_read(contents, member, at, at_length)
+                }
+            };
         }
     }
     // A tag naming no case is not one of those the sum allows, and which those are is said.
-    let (at, at_length) = below(path, path_length, discriminator());
+    let (at, at_length) = below(path, path_length, tagged_under);
     issues::meta::begin();
     issues::meta::texts(
         b"allowed",
@@ -1538,13 +1549,14 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     0
 }
 
-/// The key a sum's case is named under. ADR-0004's derived discriminator, which is what the JVM
-/// backend's derived codec reads and writes.
-const DISCRIMINATOR: &[u8] = b"type";
-
-/// Where the discriminator's name is, for a path built through it.
-fn discriminator() -> (u32, u32) {
-    (DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32)
+/// A key of a sum's form, as its descriptor carries it from the checker. A sum with no keys is one
+/// only a body holds, which the checker never let cross, so reading or writing one is this crate
+/// and the compiler disagreeing about what crosses.
+unsafe fn keyed(key: (u32, u32), descriptor: u32) -> (u32, u32) {
+    if key.1 == 0 {
+        abort(crate::REASON_BACKEND_INVARIANT_BROKEN, descriptor, 0, 0);
+    }
+    key
 }
 
 /// What an object wrote at a key, or nothing.
@@ -1665,42 +1677,54 @@ pub(crate) unsafe fn written(cell: u32, descriptor: u32) {
     }
 }
 
-/// A value of a sum, under the tag of the case it is.
-///
-/// Which case is asked of the value: a cell holds the descriptor of the type it was made as, and
-/// that is one of the cases the place's own type offers.
+/// A value of a sum, under the tag of the case it is, and what that case carries as the checker's
+/// form for the sum lays it: a shape's fields beside the tag, and anything carried as itself under
+/// a key of its own.
 unsafe fn tagged(cell: u32, descriptor: u32) {
-    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        let case = descriptor::member(descriptor, i);
-        if case == held {
-            let (tag, tag_length) = descriptor::name(descriptor, i);
-            write(b"{\"");
-            write(DISCRIMINATOR);
-            write(b"\":");
-            copied(json::__souther_json_write_string(tag, tag_length));
-            if descriptor::kind(case) == KIND_PRODUCT {
-                fields(cell, case, true);
-            } else {
-                write(b"}");
-            }
-            return;
+    let i = case_among(cell, descriptor);
+    let case = descriptor::member(descriptor, i);
+    let (tag, tag_length) = descriptor::name(descriptor, i);
+    let (key, key_length) = keyed(descriptor::tag_key(descriptor), descriptor);
+    write(b"{");
+    copied(json::__souther_json_write_string(key, key_length));
+    write(b":");
+    copied(json::__souther_json_write_string(tag, tag_length));
+    match descriptor::carried(case) {
+        Carried::Nothing => write(b"}"),
+        Carried::Fields => fields(cell, case, true),
+        Carried::Itself => {
+            let (key, key_length) = keyed(descriptor::contents_key(descriptor), descriptor);
+            write(b",");
+            copied(json::__souther_json_write_string(key, key_length));
+            write(b":");
+            written(cell, case);
+            write(b"}");
         }
     }
-    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64);
 }
 
 /// The name of the alternative a value is, which for a set that carries nothing is the whole of it.
 unsafe fn named(cell: u32, descriptor: u32) {
-    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        if descriptor::member(descriptor, i) == held {
-            let (tag, tag_length) = descriptor::name(descriptor, i);
-            copied(json::__souther_json_write_string(tag, tag_length));
-            return;
-        }
+    let (tag, tag_length) = descriptor::name(descriptor, case_among(cell, descriptor));
+    copied(json::__souther_json_write_string(tag, tag_length));
+}
+
+/// Which of a set's alternatives a value is, as its place among them, or nothing where it is none.
+///
+/// Asked as `__souther_is` asks it of each: a value of a declared type by the descriptor it was
+/// made as, and a primitive — which holds none — by its tag. The one account of which member a
+/// value is, for writing it, for the order a declaration states, and for a `match`.
+pub(crate) unsafe fn member_of(cell: u32, descriptor: u32) -> Option<u32> {
+    (0..descriptor::arity(descriptor)).find(|&i| __souther_is(cell, descriptor::member(descriptor, i)) != 0)
+}
+
+/// The same, where the value has to be one: a place whose type the checker settled holds a value
+/// of one of its members.
+unsafe fn case_among(cell: u32, descriptor: u32) -> u32 {
+    match member_of(cell, descriptor) {
+        Some(i) => i,
+        None => abort(REASON_NOT_A_VALUE, descriptor, cell as u64, 0),
     }
-    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64);
 }
 
 /// A record's fields, either as the whole object or as the rest of one already opened by a tag.
