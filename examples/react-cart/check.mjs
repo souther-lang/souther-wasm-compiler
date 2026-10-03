@@ -6,7 +6,10 @@
 // which way round a pointer and a length come back, what number each reason goes by — is agreed
 // about here or nowhere.
 
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { load, amount } from "./src/souther.js";
 
 const program = await load(readFileSync("public/cart.wasm"));
@@ -129,6 +132,33 @@ for (let i = 0; i < 200; i++) {
     member: "Standard" }]);
 }
 same("what a call gave back", program.arenaTop(), before);
+
+// What a model reaches out for is answered by name, and the call out carries a number: the surface
+// is what says which name each number is. The cart reaches out for nothing, so a model that does is
+// compiled here by the same compiler the page's model is.
+{
+  const at = mkdtempSync(join(tmpdir(), "reaching-"));
+  writeFileSync(join(at, "rates.sou"), `module rates
+
+behavior today : (pair: String) -> Int
+
+behavior yesterday : (pair: String) -> Int
+
+behavior spread : (pair: String) -> Int
+    depends on today, yesterday
+
+let spread (pair, today, yesterday) = today(pair) - yesterday(pair)
+`);
+  const jar = readdirSync("../../target").find((name) => name.endsWith("-cli.jar"));
+  execFileSync("java", ["-jar", join("../../target", jar), at, "-o", join(at, "rates.wasm")]);
+  const reaching = await load(readFileSync(join(at, "rates.wasm")), {
+    "rates.today": (pair) => (pair === "USDJPY" ? 150 : 0),
+    "rates.yesterday": (pair) => (pair === "USDJPY" ? 147 : 0),
+  });
+  same("what it reaches out for", reaching.reachesOutFor, ["rates.today", "rates.yesterday"]);
+  same("what it answers from what was supplied", reaching.call("rates.spread", ["USDJPY"]),
+    { value: 3 });
+}
 
 console.log(wrong === 0 ? "the glue calls a compiled program" : `${wrong} did not hold`);
 process.exit(wrong === 0 ? 0 : 1);

@@ -136,33 +136,6 @@ public final class WasmFragment {
     }
 
     /**
-     * Says that the module reaches out for a behavior, and under which number.
-     *
-     * <p>A call out carries a number rather than a name — a name would travel as bytes on every
-     * call for something a caller looks up once — so the module has to say what the numbers are.
-     * It says it in itself rather than beside itself: a caller holding the module holds this, and
-     * there is no second file to be given the wrong one of.
-     *
-     * @param ordinal the number a call out carries
-     * @param behavior the name the model declares it under
-     * @param elsewhere whether another build has an implementation, rather than the caller
-     */
-    public void reachesOutFor(int ordinal, String behavior, boolean elsewhere) {
-        crossings.add(new Crossing(ordinal, behavior, elsewhere));
-    }
-
-    /** What the module reaches out for, in the order the numbers run. */
-    List<Crossing> crossings() {
-        return crossings;
-    }
-
-    /** One behavior the module reaches out for. */
-    record Crossing(int ordinal, String behavior, boolean elsewhere) {
-    }
-
-    private final List<Crossing> crossings = new ArrayList<>();
-
-    /**
      * Says what the program offers a caller: its behaviors, what they take and answer, and what a
      * value of each type it names looks like as it crosses. Carried in the module for the reason
      * the crossings are.

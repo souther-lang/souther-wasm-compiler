@@ -117,23 +117,35 @@ public final class WasmCompiler {
     /**
      * What a program reaches out for, in the order it numbers them.
      *
-     * <p>The same order the module's own crossings are numbered in, because it is read from the
-     * same walk: a component asks for each of these as an interface, and which one a call is for
-     * is the number the program was compiled with.
+     * <p>The order the module numbers them in, because it is the same list: a component asks for
+     * each of these as an interface, and which one a call is for is the number the program was
+     * compiled with.
      *
      * @param program what a Souther compile checked
      * @return each behavior the program declares and does not implement
      */
     public static List<Component.Reach> reachedOutFor(CheckedProgram program) {
-        List<Component.Reach> reaches = new ArrayList<>();
+        return reachingOut(program).stream()
+                .map(behavior -> new Component.Reach(
+                        behavior.name().module(), behavior.name().name()))
+                .toList();
+    }
+
+    /**
+     * Each behavior the program declares and does not implement, in the order of the numbers a
+     * call out carries for them: a call out names what it reaches by its place here, and
+     * {@code souther:surface} says each one's place as its {@code reachOut}.
+     */
+    private static List<CheckedBehavior> reachingOut(CheckedProgram program) {
+        List<CheckedBehavior> reaching = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
                 if (isReachedOutFor(behavior)) {
-                    reaches.add(new Component.Reach(module.name(), behavior.name().name()));
+                    reaching.add(behavior);
                 }
             }
         }
-        return reaches;
+        return List.copyOf(reaching);
     }
 
     /** Whether what stands for a behavior is a call out of the program rather than a body. */
@@ -191,6 +203,12 @@ public final class WasmCompiler {
         // written, so most are gone by now — but not one that reaches itself, which cannot be.
         List<Written> written = new ArrayList<>();
         List<Crossing> injected = new ArrayList<>();
+        // The number a call out carries for each behavior reached out for, worked out once for the
+        // calls and for what the module says of them.
+        Map<ValueName.Behavior, Integer> reachOut = new LinkedHashMap<>();
+        for (CheckedBehavior each : reachingOut(program)) {
+            reachOut.put(each.name(), reachOut.size());
+        }
         List<Composed> composed = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedHelper helper : module.helpers()) {
@@ -207,13 +225,8 @@ public final class WasmCompiler {
                 // Reached out for, and the two reasons are one call. What a module holds for a
                 // behavior nobody in this program wrote is the same either way; which of them it
                 // is is what the module says about itself, not how the call is made.
-                if (behavior.implementation() instanceof CheckedImplementation.Injected
-                        || behavior.implementation()
-                                instanceof CheckedImplementation.ImplementedElsewhere) {
-                    boolean elsewhere = behavior.implementation()
-                            instanceof CheckedImplementation.ImplementedElsewhere;
-                    fragment.reachesOutFor(injected.size(), exportName(behavior.name()), elsewhere);
-                    injected.add(new Crossing(index, behavior, injected.size()));
+                if (isReachedOutFor(behavior)) {
+                    injected.add(new Crossing(index, behavior, reachOut.get(behavior.name())));
                     continue;
                 }
                 if (behavior.implementation() instanceof CheckedImplementation.Composed held) {
@@ -280,7 +293,7 @@ public final class WasmCompiler {
         if (lifted) {
             liftable(fragment, calls, program);
         }
-        fragment.offers(Surface.of(program, decodable));
+        fragment.offers(Surface.of(program, decodable, reachOut));
         return Linker.link(fragment);
     }
 
@@ -330,7 +343,7 @@ public final class WasmCompiler {
      *
      * <p>The number is what the caller is told: an ordinal of this build. Not a name — a name would
      * travel as bytes on every call for something a caller looks up once — so the module says what
-     * the numbers are, in a section of itself.
+     * the numbers are, as each behavior's {@code reachOut} in {@code souther:surface}.
      */
     private record Crossing(int index, CheckedBehavior behavior, int ordinal) {
     }

@@ -24,6 +24,7 @@ import souther.compiler.program.Publication;
 import souther.compiler.types.LeafScalar;
 import souther.compiler.types.MapKeyRepresentation;
 import souther.compiler.types.TypeSymbol;
+import souther.compiler.types.ValueName;
 
 /**
  * What a program offers a caller, written as the JSON the module carries under
@@ -61,22 +62,27 @@ final class Surface {
      *
      * <p>Version 1 said each module's behaviors and the declarations they name. Version 2 says, of
      * a declaration a caller may read a value of on its own, the number it is read under
-     * ({@code "decode"}). What each version says is held to a file named for it by
+     * ({@code "decode"}). Version 3 says, of a behavior the program reaches out for, the number a
+     * call out carries for it ({@code "reachOut"}), which a section of its own used to say beside
+     * the surface. What each version says is held to a file named for it by
      * {@code TheSurfaceChangesOnlyWithItsVersionTest}, so what it says cannot change while this
      * stays where it is.
      */
-    static final int VERSION = 2;
+    static final int VERSION = 3;
 
     private final CheckedProgram program;
     private final Map<TypeSymbol.AtModule, Integer> decodable = new LinkedHashMap<>();
+    private final Map<ValueName.Behavior, Integer> reachOut;
     private final Map<TypeSymbol.AtModule, Declared> named = new LinkedHashMap<>();
     private final Deque<TypeSymbol.AtModule> pending = new ArrayDeque<>();
 
-    private Surface(CheckedProgram program, List<TypeSymbol.AtModule> decodable) {
+    private Surface(CheckedProgram program, List<TypeSymbol.AtModule> decodable,
+            Map<ValueName.Behavior, Integer> reachOut) {
         this.program = program;
         for (int i = 0; i < decodable.size(); i++) {
             this.decodable.put(decodable.get(i), i);
         }
+        this.reachOut = Map.copyOf(reachOut);
     }
 
     /**
@@ -84,9 +90,12 @@ final class Surface {
      *
      * @param decodable the types a caller may read a value of on its own, in the order their
      *     numbers run, as the module was built with them
+     * @param reachOut the number a call out carries for each behavior the program reaches out for,
+     *     as the module was built with them
      */
-    static String of(CheckedProgram program, List<TypeSymbol.AtModule> decodable) {
-        return new Surface(program, decodable).written();
+    static String of(CheckedProgram program, List<TypeSymbol.AtModule> decodable,
+            Map<ValueName.Behavior, Integer> reachOut) {
+        return new Surface(program, decodable, reachOut).written();
     }
 
     private String written() {
@@ -131,6 +140,9 @@ final class Surface {
                 + ",\"export\":" + quoted(WasmCompiler.exportName(behavior.name()))
                 + ",\"published\":" + (module.publicationOf(behavior.name()) == Publication.PUBLISHED)
                 + ",\"implementation\":" + quoted(implementation(behavior.implementation()))
+                // Only where a call is made out of the module, which is where a number is carried.
+                + (reachOut.containsKey(behavior.name())
+                        ? ",\"reachOut\":" + reachOut.get(behavior.name()) : "")
                 + ",\"parameters\":" + parameters
                 + ",\"answers\":" + output(signature.output()) + "}";
     }

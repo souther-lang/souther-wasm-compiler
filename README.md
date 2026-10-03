@@ -57,14 +57,16 @@ linked module exports what a host calls and nothing else; the rest is the link's
 
 A behavior this program holds no implementation for is reached the same way whichever of the two
 reasons it is — the caller supplies it, or another build already did — because to a caller reaching
-in they are the same call, and only one of them has an artifact to be found somewhere. Which it is
-is in the module: `souther:crossings` says what each number a call out carries is the name of, and
-which of them another build implements. In the module rather than beside it, so a caller holding
-one cannot be handed the wrong other.
+in they are the same call, and only one of them has an artifact to be found somewhere. A call out
+carries a number rather than a name, and which behavior each number is, is in the module — on the
+surface below, as the behavior's `reachOut`, beside its `implementation`, which says which of the two
+reasons it is. In the module rather than beside it, so a caller holding one cannot be handed the
+wrong other.
 
 What a caller writes code against is in the module too. `souther:surface` is one JSON object: each
 module's behaviors, with the export each is called through, who answers it (`here`, `injected`,
-`unwritten` or `elsewhere`), the names and types of what it takes and the type it answers — an
+`unwritten` or `elsewhere`), the number a call out carries for one the program reaches out for, the
+names and types of what it takes and the type it answers — an
 answer nobody named as both its `members`, the union as it was written, and its `crossing`, the
 leaves those descend to and the form they travel in, because the leaves alone are a union nobody
 wrote; and every

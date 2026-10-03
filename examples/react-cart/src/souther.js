@@ -29,10 +29,7 @@ const REASONS = {
   12: "a number the module gives no type under",
 };
 
-/** Where the module says what it reaches out for, and under which numbers. */
-const CROSSINGS = "souther:crossings";
-
-/** Where the module says what it offers a caller. */
+/** Where the module says what it offers a caller, and what it reaches out for under which numbers. */
 const SURFACE = "souther:surface";
 
 /**
@@ -59,7 +56,7 @@ export function amount(written) {
  */
 export async function load(source, supplied = {}) {
   const module = await WebAssembly.compile(await asBytes(source));
-  const program = new Program(supplied, crossingsIn(module), surfaceOf(module));
+  const program = new Program(supplied, surfaceOf(module));
   program.ready(await WebAssembly.instantiate(module, {
     souther: { host_call: program.reachOut },
   }));
@@ -75,20 +72,10 @@ async function asBytes(source) {
 }
 
 /**
- * What the module says it reaches out for.
- *
- * A call out carries a number and not a name, so the module says what the numbers are, in a
- * section of itself. In itself and not beside itself: a caller holding the module holds this, and
- * there is no second file to be handed the wrong one of.
- */
-function crossingsIn(module) {
-  const held = WebAssembly.Module.customSections(module, CROSSINGS);
-  return held.length === 0 ? [] : JSON.parse(decoder.decode(held[0]));
-}
-
-/**
- * What the module offers a caller: its behaviors and what each takes and answers, and what a value
- * of each type they name looks like. Carried in the module for the reason the crossings are.
+ * What the module offers a caller: its behaviors and what each takes and answers, what a value of
+ * each type they name looks like, and the number a call out carries for each behavior it reaches
+ * out for. In the module and not beside it: a caller holding the module holds this, and there is no
+ * second file to be handed the wrong one of.
  */
 function surfaceOf(module) {
   const held = WebAssembly.Module.customSections(module, SURFACE);
@@ -102,9 +89,13 @@ class Program {
   #surface;
   #decodable;
 
-  constructor(supplied, crossings, surface) {
+  constructor(supplied, surface) {
     this.#supplied = supplied;
-    this.#crossings = crossings;
+    // A call out carries a number and not a name, and the surface says which behavior each is.
+    this.#crossings = (surface?.modules ?? [])
+      .flatMap((module) => module.behaviors)
+      .filter((behavior) => behavior.reachOut !== undefined)
+      .map((behavior) => ({ ordinal: behavior.reachOut, behavior: behavior.export }));
     this.#surface = surface;
     // Resolved once, by name: the numbers are this module's, and only its own surface says which
     // type each one is.
