@@ -5,10 +5,13 @@ page hands over what was typed and shows what came back. The shape of a product 
 quantity is at least one, appear nowhere in the TypeScript.
 
     (cd ../.. && mvn package)
+    (cd ../../packages/wasm && npm install && npm run build)
     npm install
     npm run dev
 
-The first line builds the compiler, which is what turns the model into a module. `npm run dev`
+The first line builds the compiler, which is what turns the model into a module, and the second
+the glue the page calls it through, which the page reads as a project installing it would.
+`npm run dev`
 compiles the model with it, writes the module's TypeScript binding into `src/cart.ts`, and then
 starts Vite, so it is what to run again after changing the model. `npm run build` checks the page
 against the binding with `tsc` before it bundles it: a field or a case renamed in the model is a
