@@ -432,14 +432,6 @@ final class Descriptors {
      * other — so it is found where it is declared rather than only where a module would put it.
      */
     private CheckedData declared(TypeSymbol.AtModule name) {
-        for (CheckedData each : program.languageDeclarations()) {
-            // By the name every declaration answers, not by asking each form in turn: a form this
-            // does not name would be looked for where a module's declarations are and not found
-            // there, and the day the language declares one that is what would happen.
-            if (each.name().equals(name)) {
-                return each;
-            }
-        }
         return program.declaration(name).data();
     }
 
