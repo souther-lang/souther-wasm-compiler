@@ -1822,16 +1822,23 @@ public final class WasmCompiler {
         }
 
         /**
-         * {@code ++}, which joins two strings or two lists: the checker settles both sides to the
-         * one type the answer is, so the answer's type says which.
+         * {@code ++}, joined by what its operands are: two strings as {@code String.append} joins
+         * them and two lists as {@code List.append} does. They are two runtime operations because
+         * the cells they join do not share a layout, so a type that is neither is not given either
+         * of them: one reaching the string join was how two lists came to answer the left one.
          */
         private void concatenation(BodyWriter out, Core.Binary binary) {
-            value(out, binary.left());
-            value(out, binary.right());
-            if (binary.type() instanceof souther.compiler.types.Type.ListOf) {
-                out.constant(shapes.of(binary.type())).call(calls.of(RuntimeAbi.LIST_CONCAT));
+            souther.compiler.types.Type operand = binary.left().type();
+            if (operand == souther.compiler.types.Type.Prim.STRING) {
+                value(out, binary.left());
+                value(out, binary.right());
+                out.call(calls.of(RuntimeAbi.Kernels.STRING_APPEND));
+            } else if (operand instanceof souther.compiler.types.Type.ListOf) {
+                value(out, binary.left());
+                value(out, binary.right());
+                out.constant(shapes.of(binary.type())).call(calls.of(RuntimeAbi.LIST_APPEND));
             } else {
-                out.call(calls.of(RuntimeAbi.CONCAT));
+                throw new NotLowered(writing + " joins a " + operand + " with ++");
             }
         }
 

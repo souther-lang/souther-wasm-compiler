@@ -353,10 +353,12 @@ pub unsafe extern "C" fn __souther_compare(left: u32, right: u32, descriptor: u3
     order::ranked(left, right, descriptor)
 }
 
-/// The `++` operator on `String`, canonicalized. Each side is NFC, but NFC is not closed under
-/// joining: a letter followed by a combining mark composes into one code point at the seam.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_concat(left: u32, right: u32) -> u32 {
+/// Two strings joined, canonicalized. Each side is NFC, but NFC is not closed under joining: a
+/// letter followed by a combining mark composes into one code point at the seam.
+///
+/// Not an entry of its own: `++` on strings is `String.append`, and reaches this through
+/// `__souther_string_append` like any other call of it.
+pub unsafe fn joined(left: u32, right: u32) -> u32 {
     if __souther_string_length(right) == 0 {
         return left;
     }
