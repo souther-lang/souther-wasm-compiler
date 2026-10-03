@@ -61,7 +61,7 @@ class ACallerReadsAValueOfAPublishedTypeOnItsOwnTest {
         assertThat(decoded(module, numberOf(module, "Sku"), "\"nope\""))
                 .startsWith("{\"issues\":[")
                 .contains("\"path\":\"\"")
-                .contains("\"code\":\"invariant_violation\"");
+                .contains("\"code\":\"invalid_format\"");
         assertThat(decoded(module, numberOf(module, "Line"), "{\"quantity\":0}"))
                 .contains("\"code\":\"invariant_violation\"");
         assertThat(decoded(module, numberOf(module, "Line"), "{\"quantity\":\"two\"}"))

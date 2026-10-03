@@ -41,7 +41,7 @@ same("a product code read on its own", program.decode("cart.Sku", "ABC-1234"),
 
 same("a product code that is not one, read on its own",
   program.decode("cart.Sku", "nope").issues.map((it) => [it.path, it.code]),
-  [["", "invariant_violation"]]);
+  [["", "invalid_format"]]);
 
 same("a basket with something in it",
   program.call("cart.price", [{
@@ -63,15 +63,15 @@ same("a product code that is not one",
   program.call("cart.price", [{
     lines: [{ sku: "nope", quantity: 1, unitPrice: 1 }], member: "Standard",
   }]),
-  { issues: [{ path: "/0/lines/0/sku", code: "invariant_violation",
-    meta: { actual: "0", expected: "Sku" } }] });
+  { issues: [{ path: "/0/lines/0/sku", code: "invalid_format", messageKey: "invalid_format",
+    meta: { pattern: "[A-Z]{3}-[0-9]{4}" } }] });
 
 same("a quantity that is not a number",
   program.call("cart.price", [{
     lines: [{ sku: "ABC-1234", quantity: "two", unitPrice: 1 }], member: "Standard",
   }]),
-  { issues: [{ path: "/0/lines/0/quantity", code: "type_mismatch",
-    meta: { actual: "string", expected: "Int" } }] });
+  { issues: [{ path: "/0/lines/0/quantity", code: "type_mismatch", messageKey: "type_mismatch",
+    meta: { actual: "string", expected: "long" } }] });
 
 // Everything a call made goes back at the reset, so the tenth call is the first.
 for (let i = 1; i <= 10; i++) {
@@ -86,7 +86,8 @@ for (let i = 1; i <= 10; i++) {
 // a caller writing one is bad input like any other.
 same("a call given nothing",
   program.call("cart.price", []),
-  { issues: [{ path: "", code: "invalid_size", meta: { actual: "0", expected: "1" } }] });
+  { issues: [{ path: "", code: "invalid_size", messageKey: "invalid_size",
+    meta: { actual: 0, expected: 1 } }] });
 
 // An amount is held to whatever precision it was written with, and a JavaScript number is not. So
 // one is handed over as its digits and comes back as its digits wherever a number could not have

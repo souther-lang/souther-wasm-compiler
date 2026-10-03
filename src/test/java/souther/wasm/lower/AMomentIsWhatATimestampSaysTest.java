@@ -88,7 +88,7 @@ class AMomentIsWhatATimestampSaysTest {
                     .describedAs(written + " is no moment to Souther either").isPresent();
             assertThat(answerOf(module, "timeline.same", quoted(written)))
                     .describedAs(written)
-                    .contains("\"expected\":\"Instant\"");
+                    .contains("\"code\":\"invalid_format\"");
         }
         assertThat(answerOf(module, "timeline.same", "7")).contains("\"actual\":\"number\"");
     }
@@ -100,7 +100,7 @@ class AMomentIsWhatATimestampSaysTest {
         // A leap second is the one thing a parse would quietly move: what an outside timestamp
         // said would come back as the second before it, and nothing downstream could tell.
         assertThat(answerOf(module, "timeline.same", quoted("2016-12-31T23:59:60Z")))
-                .contains("\"expected\":\"Instant\"");
+                .contains("\"code\":\"invalid_format\"");
     }
 
     @Test

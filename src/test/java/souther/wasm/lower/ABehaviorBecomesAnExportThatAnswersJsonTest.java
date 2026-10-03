@@ -153,10 +153,11 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
 
         assertThat(answerOf(module, "strict.echo", "[\"7\"]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\","
-                        + "\"meta\":{\"actual\":\"string\",\"expected\":\"Int\"}}]}");
+                        + "\"messageKey\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"string\",\"expected\":\"long\"}}]}");
         assertThat(answerOf(module, "strict.echo", "[1.5]")).contains("\"code\":\"type_mismatch\"");
         assertThat(answerOf(module, "strict.echo", "[99999999999999999999]"))
-                .contains("\"code\":\"out_of_range\"");
+                .contains("\"messageKey\":\"type_mismatch.numeric_range\"");
     }
 
     @Test
@@ -171,10 +172,12 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
 
         assertThat(answerOf(module, "strict.echo", "[1, 2]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"\",\"code\":\"invalid_size\","
-                        + "\"meta\":{\"actual\":\"2\",\"expected\":\"1\"}}]}");
+                        + "\"messageKey\":\"invalid_size\","
+                        + "\"meta\":{\"actual\":2,\"expected\":1}}]}");
         assertThat(answerOf(module, "strict.echo", "7")).isEqualTo(
                 "{\"issues\":[{\"path\":\"\",\"code\":\"type_mismatch\","
-                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"arguments\"}}]}");
+                        + "\"messageKey\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"array\"}}]}");
     }
 
     @Test
@@ -190,8 +193,8 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
         String answer = answerOf(module, "several.all", "[\"x\", 1, false]");
 
         assertThat(answer).contains("\"path\":\"/0\"", "\"path\":\"/1\"", "\"path\":\"/2\"");
-        assertThat(answer).contains("\"expected\":\"Int\"", "\"expected\":\"Bool\"",
-                "\"expected\":\"String\"");
+        assertThat(answer).contains("\"expected\":\"long\"", "\"expected\":\"boolean\"",
+                "\"expected\":\"string\"");
     }
 
     /**
@@ -213,7 +216,8 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
 
         assertThat(answerOf(module, "strict.echo", "[1e99999999999]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\","
-                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"Decimal\"}}]}");
+                        + "\"messageKey\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"number\"}}]}");
     }
 
     @Test

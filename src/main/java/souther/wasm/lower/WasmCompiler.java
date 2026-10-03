@@ -575,7 +575,7 @@ public final class WasmCompiler {
                 java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf) {
             this.program = program;
             this.fragment = fragment;
-            this.patterns = new Patterns(fragment);
+            this.patterns = shapes.patterns();
             this.cells = new Cells(fragment);
             this.calls = calls;
             this.shapes = shapes;

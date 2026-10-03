@@ -48,8 +48,7 @@ class ANameForAValueCrossesAsThatValueTest {
         assertThat(answerOf(module, "naming.reference", "\"1000-000001\""))
                 .isEqualTo("{\"value\":\"1000-000001\"}");
         assertThat(answerOf(module, "naming.reference", "\"nope\""))
-                .contains("invariant_violation")
-                .contains("\"expected\":\"OrderNo\"");
+                .contains("\"code\":\"invalid_format\"");
     }
 
     @Test

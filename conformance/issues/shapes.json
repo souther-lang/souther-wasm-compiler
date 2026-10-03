@@ -1,0 +1,414 @@
+{
+  "model": "module forms\n\ndata Point = { x: Int, label: String, note: String? }\n\ndata Red\ndata Green\ndata Colour = Red | Green\n\ndata Circle = { radius: Int }\ndata Square = { side: Int }\ndata Shape = Circle | Square\n\ndata Day = Date\n\ndata At = Time\n\ndata Stamp = DateTime\n\ndata Moment = Instant\n\ndata Amount = Decimal\n\ndata Flag = Bool\n\ndata Points = List<Point>\n\ndata Counts = Map<String, Int>\n\ndata Unique = Set<Int>\n\ndata ByDay = Map<Date, Int>\n\ndata ByColour = Map<Colour, Int>\n",
+  "cases": [
+    {
+      "about": "a field of the wrong kind",
+      "type": "forms.Point",
+      "input": {
+        "x": "one",
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "string",
+            "expected": "long"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a field left out",
+      "type": "forms.Point",
+      "input": {
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "required",
+          "messageKey": "required",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "every field wrong at once",
+      "type": "forms.Point",
+      "input": {
+        "x": true
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "boolean",
+            "expected": "long"
+          }
+        },
+        {
+          "path": "/label",
+          "code": "required",
+          "messageKey": "required",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "an object where a shape is not",
+      "type": "forms.Point",
+      "input": [
+        1
+      ],
+      "expect": [
+        {
+          "path": "",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "array",
+            "expected": "object"
+          }
+        }
+      ]
+    },
+    {
+      "about": "null where a shape is",
+      "type": "forms.Point",
+      "input": null,
+      "expect": [
+        {
+          "path": "",
+          "code": "required",
+          "messageKey": "required",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "an optional field given null",
+      "type": "forms.Point",
+      "input": {
+        "x": 1,
+        "label": "a",
+        "note": null
+      },
+      "expect": "value"
+    },
+    {
+      "about": "a whole number with a fraction",
+      "type": "forms.Point",
+      "input": {
+        "x": 1.5,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "long"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a whole number wider than an Int",
+      "type": "forms.Point",
+      "input": {
+        "x": 9223372036854775808,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch.numeric_range",
+          "meta": {
+            "expected": "long"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a name no case of an enumeration has",
+      "type": "forms.Colour",
+      "input": "Blue",
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {
+            "type": "Colour"
+          }
+        }
+      ],
+      "note": "Raoh's enum reader folds ASCII case and says invalid_format.enum with allowed; Souther's enumerations are case-sensitive, and the JVM says invalid_format with type. Held here to the JVM until the language says which."
+    },
+    {
+      "about": "a number where an enumeration's name is",
+      "type": "forms.Colour",
+      "input": 1,
+      "expect": [
+        {
+          "path": "",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "string"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a tag no case of a sum has",
+      "type": "forms.Shape",
+      "input": {
+        "type": "Triangle",
+        "side": 1
+      },
+      "expect": [
+        {
+          "path": "/type",
+          "code": "not_allowed",
+          "messageKey": "not_allowed",
+          "meta": {
+            "allowed": [
+              "Circle",
+              "Square"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "about": "a sum without its tag",
+      "type": "forms.Shape",
+      "input": {
+        "side": 1
+      },
+      "expect": [
+        {
+          "path": "/type",
+          "code": "required",
+          "messageKey": "required",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "a case of a sum with a field wrong",
+      "type": "forms.Shape",
+      "input": {
+        "type": "Square",
+        "side": "big"
+      },
+      "expect": [
+        {
+          "path": "/side",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "string",
+            "expected": "long"
+          }
+        }
+      ]
+    },
+    {
+      "about": "text that is no date",
+      "type": "forms.Day",
+      "input": "2026-13-01",
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "text that is no time",
+      "type": "forms.At",
+      "input": "25:00",
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "text that is no date-time",
+      "type": "forms.Stamp",
+      "input": "2026-01-01",
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "text that is no instant",
+      "type": "forms.Moment",
+      "input": "2026-01-01T00:00:00",
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "a number where a date is",
+      "type": "forms.Day",
+      "input": 20260101,
+      "expect": [
+        {
+          "path": "",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "string"
+          }
+        }
+      ]
+    },
+    {
+      "about": "text where an amount is",
+      "type": "forms.Amount",
+      "input": "1.00",
+      "expect": [
+        {
+          "path": "",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "string",
+            "expected": "number"
+          }
+        }
+      ]
+    },
+    {
+      "about": "text where a truth is",
+      "type": "forms.Flag",
+      "input": "true",
+      "expect": [
+        {
+          "path": "",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "string",
+            "expected": "boolean"
+          }
+        }
+      ]
+    },
+    {
+      "about": "an element of a list wrong",
+      "type": "forms.Points",
+      "input": [
+        {
+          "x": 1,
+          "label": "a"
+        },
+        {
+          "x": "two",
+          "label": "b"
+        }
+      ],
+      "expect": [
+        {
+          "path": "/1/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "string",
+            "expected": "long"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a value of a map wrong",
+      "type": "forms.Counts",
+      "input": {
+        "a": 1,
+        "b": "two"
+      },
+      "expect": [
+        {
+          "path": "/b",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "string",
+            "expected": "long"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a set given a member twice",
+      "type": "forms.Unique",
+      "input": [
+        1,
+        2,
+        1
+      ],
+      "expect": "value"
+    },
+    {
+      "about": "a member name that is no date, where a map is keyed by days",
+      "type": "forms.ByDay",
+      "input": {
+        "2026-02-30": 1
+      },
+      "expect": [
+        {
+          "path": "/2026-02-30",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {}
+        }
+      ]
+    },
+    {
+      "about": "a member name that is no case, where a map is keyed by an enumeration",
+      "type": "forms.ByColour",
+      "input": {
+        "Purple": 1
+      },
+      "expect": [
+        {
+          "path": "/Purple",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {
+            "type": "Colour"
+          }
+        }
+      ]
+    }
+  ]
+}

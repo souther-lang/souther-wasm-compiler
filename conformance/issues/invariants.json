@@ -1,0 +1,147 @@
+{
+  "model": "module shop\n\ndata Sku = String\n    invariant written = String.matches(\"[A-Z]{3}-[0-9]{4}\", value)\n\ndata Name = String\n    invariant String.length(value) >= 1\n\ndata Quantity = Int\n    invariant value >= 1\n\ndata Percent = Int\n    invariant value >= 0\n    invariant value <= 100\n\ndata Line = { sku: Sku, quantity: Int }\n    invariant atLeastOne = quantity >= 1\n    invariant quantity <= 99\n\ndata Tags = List<String>\n    invariant List.length(value) >= 1\n",
+  "cases": [
+    {
+      "about": "a pattern a newtype holds its value to fails as the format it is",
+      "type": "shop.Sku",
+      "input": "nope",
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {
+            "pattern": "[A-Z]{3}-[0-9]{4}"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a newtype value that holds is the value",
+      "type": "shop.Sku",
+      "input": "ABC-1234",
+      "expect": "value"
+    },
+    {
+      "about": "a length a newtype holds its value to fails as too short",
+      "type": "shop.Name",
+      "input": "",
+      "expect": [
+        {
+          "path": "",
+          "code": "too_short",
+          "messageKey": "too_short",
+          "meta": {
+            "actual": 0,
+            "min": 1
+          }
+        }
+      ]
+    },
+    {
+      "about": "a lower bound fails as out of range at its minimum",
+      "type": "shop.Quantity",
+      "input": 0,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.minimum",
+          "meta": {
+            "actual": 0,
+            "min": 1
+          }
+        }
+      ]
+    },
+    {
+      "about": "an upper bound fails as out of range at its maximum",
+      "type": "shop.Percent",
+      "input": 101,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.maximum",
+          "meta": {
+            "actual": 101,
+            "max": 100
+          }
+        }
+      ]
+    },
+    {
+      "about": "an object's named clause fails as an invariant violation naming it",
+      "type": "shop.Line",
+      "input": {
+        "sku": "ABC-1234",
+        "quantity": 0
+      },
+      "expect": [
+        {
+          "path": "",
+          "code": "invariant_violation",
+          "messageKey": "invariant_violation",
+          "meta": {
+            "clause": "atLeastOne",
+            "module": "shop",
+            "type": "Line"
+          }
+        }
+      ]
+    },
+    {
+      "about": "an object's unnamed clause names the type and no clause",
+      "type": "shop.Line",
+      "input": {
+        "sku": "ABC-1234",
+        "quantity": 100
+      },
+      "expect": [
+        {
+          "path": "",
+          "code": "invariant_violation",
+          "messageKey": "invariant_violation",
+          "meta": {
+            "module": "shop",
+            "type": "Line"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a field's own rule is reported at the field",
+      "type": "shop.Line",
+      "input": {
+        "sku": "nope",
+        "quantity": 1
+      },
+      "expect": [
+        {
+          "path": "/sku",
+          "code": "invalid_format",
+          "messageKey": "invalid_format",
+          "meta": {
+            "pattern": "[A-Z]{3}-[0-9]{4}"
+          }
+        }
+      ]
+    },
+    {
+      "about": "a list's length fails as too small",
+      "type": "shop.Tags",
+      "input": [],
+      "expect": [
+        {
+          "path": "",
+          "code": "too_small",
+          "messageKey": "too_small.nonempty",
+          "meta": {
+            "actual": 0,
+            "min": 1
+          }
+        }
+      ]
+    }
+  ]
+}

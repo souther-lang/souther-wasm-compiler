@@ -27,6 +27,7 @@
 extern crate alloc as heap;
 
 mod captures;
+mod clauses;
 mod decimal;
 mod descriptor;
 mod issues;
@@ -63,7 +64,10 @@ const PAGE: usize = 65536;
 ///
 /// Raised to 7 when a call could end for a reason it could not before, `NO_SUCH_TYPE`, which a host
 /// naming reasons by the numbers of 6 would not know.
-const ABI_VERSION: u32 = 7;
+///
+/// Raised to 8 when an issue became Raoh's, with a message key and the metadata its constraint
+/// carries, and a descriptor of a type with rules came to point at what each rule is reported as.
+const ABI_VERSION: u32 = 8;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
