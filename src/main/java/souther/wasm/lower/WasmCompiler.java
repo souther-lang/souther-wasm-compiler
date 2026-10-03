@@ -490,6 +490,7 @@ public final class WasmCompiler {
 
         private final CheckedProgram program;
         private final WasmFragment fragment;
+        private final Patterns patterns;
         private final Runtime calls;
         private final Descriptors shapes;
         private final Map<ValueName, Integer> reached;
@@ -503,6 +504,7 @@ public final class WasmCompiler {
                 Map<ValueName, Integer> reached) {
             this.program = program;
             this.fragment = fragment;
+            this.patterns = new Patterns(fragment);
             this.calls = calls;
             this.shapes = shapes;
             this.reached = reached;
@@ -1125,7 +1127,7 @@ public final class WasmCompiler {
             // checker's contract broken and not something this backend lacks.
             Core.KernelFact.StringMatches settled = (Core.KernelFact.StringMatches) factOf(call);
             value(out, call.args().get(1));
-            out.constant(Patterns.place(fragment, settled))
+            out.constant(patterns.of(settled))
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
         }
 

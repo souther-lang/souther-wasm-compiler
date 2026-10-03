@@ -71,6 +71,9 @@ pub unsafe extern "C" fn __souther_string_repeat(count: u32, text: u32) -> u32 {
         return made("");
     }
     copies_hold(times, notation::length_of(text) as u64);
+    if notation::starts_stable(held) {
+        return value::__souther_string_repeated(held, times as u32);
+    }
     canonical(&held.repeat(times as usize))
 }
 
@@ -94,16 +97,47 @@ pub unsafe extern "C" fn __souther_string_contains(part: u32, text: u32) -> u32 
 /// The image was written by 199x-notation's Java implementation, so one this runtime does not
 /// read is the compiler and the runtime built against releases that do not agree, not a program's
 /// own failure.
+///
+/// Reading an image costs about what the image is long, and one call often matches many strings
+/// against one pattern, so the last pattern read is kept with what its matches worked out. It
+/// lives in the arena, so it is kept only until the arena is popped, and read again after that.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_matches(text: u32, image: u32) -> u32 {
-    let length = core::ptr::read_unaligned(image as usize as *const u32);
-    let written = notation::str_at(image + 4, length);
-    let pattern = match notation199x::Pattern::from_image(written) {
-        Ok(pattern) => pattern,
-        Err(_) => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, image as u64, length as u64),
+    let epoch = crate::arena_epoch();
+    let kept = &mut *core::ptr::addr_of_mut!(KEPT_PATTERN);
+    let current = match kept.as_ref() {
+        Some(held) => held.image == image && held.epoch == epoch,
+        None => false,
     };
-    value::__souther_bool(u32::from(pattern.matches(str_of(text))))
+    if !current {
+        // What was kept may lie in arena memory handed out again since, so it is let go without
+        // being dropped: dropping it would read whatever is there now.
+        if let Some(stale) = kept.take() {
+            core::mem::forget(stale);
+        }
+        let length = core::ptr::read_unaligned(image as usize as *const u32);
+        let pattern = match notation199x::Pattern::from_image(notation::str_at(image + 4, length)) {
+            Ok(pattern) => pattern,
+            Err(_) => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, image as u64, length as u64),
+        };
+        *kept = Some(KeptPattern {
+            image,
+            epoch,
+            matcher: notation199x::OwnedMatcher::new(pattern),
+        });
+    }
+    let held = kept.as_mut().unwrap_unchecked();
+    value::__souther_bool(u32::from(held.matcher.matches(str_of(text))))
 }
+
+/// The pattern `String.matches` read last, where its image is, and the arena it was read into.
+struct KeptPattern {
+    image: u32,
+    epoch: u32,
+    matcher: notation199x::OwnedMatcher,
+}
+
+static mut KEPT_PATTERN: Option<KeptPattern> = None;
 
 /// A moment a body wrote down, read from the text it was written as.
 #[no_mangle]
@@ -404,23 +438,14 @@ pub unsafe extern "C" fn __souther_string_split(separator: u32, text: u32, descr
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_join(separator: u32, texts: u32) -> u32 {
     let held = __souther_list_length(texts);
-    let mut code_points = if held == 0 {
-        0
-    } else {
-        notation::length_of(separator) as u64 * (held as u64 - 1)
-    };
-    for i in 0..held {
-        code_points += notation::length_of(__souther_list_get(texts, i)) as u64;
-    }
-    holds(code_points);
-    let mut joined = String::new();
+    let mut pieces = heap::vec::Vec::with_capacity(2 * held as usize);
     for i in 0..held {
         if i > 0 {
-            joined.push_str(str_of(separator));
+            pieces.push(str_of(separator));
         }
-        joined.push_str(str_of(__souther_list_get(texts, i)));
+        pieces.push(str_of(__souther_list_get(texts, i)));
     }
-    canonical(&joined)
+    notation::joined(&pieces)
 }
 
 /// `String.concat(xs)`, which is `join` with nothing between.

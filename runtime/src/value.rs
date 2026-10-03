@@ -132,6 +132,30 @@ pub unsafe extern "C" fn __souther_string(pointer: u32, length: u32) -> u32 {
     cell
 }
 
+/// A string made of pieces written one after another, each copied once.
+pub unsafe fn __souther_string_of(pieces: &[&str]) -> u32 {
+    let length: usize = pieces.iter().map(|piece| piece.len()).sum();
+    let cell = header(TAG_STRING, length as u32);
+    let mut at = alloc(length as u32) as usize;
+    for piece in pieces {
+        core::ptr::copy_nonoverlapping(piece.as_ptr(), at as *mut u8, piece.len());
+        at += piece.len();
+    }
+    cell
+}
+
+/// A string of `times` copies of `text`, written straight into the cell.
+pub unsafe fn __souther_string_repeated(text: &str, times: u32) -> u32 {
+    let length = text.len() as u32 * times;
+    let cell = header(TAG_STRING, length);
+    let mut at = alloc(length) as usize;
+    for _ in 0..times {
+        core::ptr::copy_nonoverlapping(text.as_ptr(), at as *mut u8, text.len());
+        at += text.len();
+    }
+    cell
+}
+
 /// The one value of a type that has one.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_unit(descriptor: u32) -> u32 {
@@ -313,10 +337,13 @@ pub unsafe extern "C" fn __souther_compare(left: u32, right: u32, descriptor: u3
 /// joining: a letter followed by a combining mark composes into one code point at the seam.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_concat(left: u32, right: u32) -> u32 {
-    notation::holds(notation::length_of(left) as u64 + notation::length_of(right) as u64);
-    let mut joined = heap::string::String::from(notation::str_of(left));
-    joined.push_str(notation::str_of(right));
-    notation::canonical(&joined)
+    if __souther_string_length(right) == 0 {
+        return left;
+    }
+    if __souther_string_length(left) == 0 {
+        return right;
+    }
+    notation::joined(&[notation::str_of(left), notation::str_of(right)])
 }
 
 /// A map of that many entries, with nothing in them yet.

@@ -139,6 +139,25 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
     }
 
     @Test
+    void asksEachPatternOfOneCallAboutItsOwnStrings() {
+        // The runtime keeps the pattern it read last, so two patterns asked in turn within one call
+        // are each read again rather than one of them answering for the other.
+        Running module = Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+                module checking
+
+                behavior sorted : (xs: List<String>) -> List<String>
+
+                let sorted (xs) = List.map(x ->
+                    if String.matches("[0-9]+", x) then "digits"
+                    else if String.matches("[a-z]+", x) then "letters"
+                    else "neither", xs)
+                """))));
+
+        assertThat(answerOf(module, "checking.sorted", "[\"12\",\"ab\",\"34\",\"A\",\"cd\"]"))
+                .isEqualTo("{\"value\":[\"digits\",\"letters\",\"digits\",\"neither\",\"letters\"]}");
+    }
+
+    @Test
     void usesThePatternTheCheckerSettledUnderALocalBinding() {
         Running module = Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
                 module checking
@@ -171,11 +190,15 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
     }
 
     private static String answerOf(Running module, String argument) {
+        return answerOf(module, "checking.fits", argument);
+    }
+
+    private static String answerOf(Running module, String export, String argument) {
         String written = "[" + argument + "]";
         int mark = module.call(RuntimeAbi.ALLOC_MARK);
         int address = module.staged(written);
         long[] answer = module.callWithString(
-                "checking.fits", address, written.getBytes(StandardCharsets.UTF_8).length);
+                export, address, written.getBytes(StandardCharsets.UTF_8).length);
         String held = new String(
                 module.read((int) answer[0], (int) answer[1]), StandardCharsets.UTF_8);
         module.call(RuntimeAbi.ALLOC_RESET, mark);
