@@ -20,6 +20,7 @@ use crate::descriptor::{
 use crate::notation;
 use crate::temporal;
 use crate::value;
+use crate::{abort, REASON_BACKEND_INVARIANT_BROKEN};
 
 const RANK_NULL: i32 = 0;
 const RANK_FALSE: i32 = 1;
@@ -116,12 +117,19 @@ pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
 
 /// A hash of a value, the same for any two that `ranked` answers nothing between.
 ///
-/// Read off what `ranked` and `compare` compare and off nothing else, part by part, so two values
-/// that stand in one place have one hash whatever cells hold them: an amount by how much it is and
-/// not by its scale, a moment by when it is and not by how it was spelt, a case by which case it is.
-/// Where reading a part would be a second account of what `compare` does with it, the part is left
-/// out — a map is hashed by how many entries it holds — which makes more values share a hash and
-/// none that are one have two.
+/// Read off what `ranked` and `compare` compare, part by part, so two values that stand in one place
+/// have one hash whatever cells hold them: an amount by how much it is and not by its scale, a
+/// moment by when it is and not by how it was spelt, a case by which case it is.
+///
+/// And off every part they compare, none left out. A hash that leaves a part out is still never
+/// two hashes for one value, but every value differing only in that part shares one, and a caller
+/// choosing keys can make every key of a map collide: a table looking keys up by hash then walks
+/// every key per key, which is the square of how many there are. So a map is hashed by its entries,
+/// each key with its value, added up so that the order the entries stand in decides nothing, as
+/// the JVM backend's `PersistentHashMap.valueHash` does.
+///
+/// Every kind a descriptor can name has its own arm. One this does not know ends the call rather
+/// than sharing a hash with every other value of its kind.
 pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
     match descriptor::kind(descriptor) {
         KIND_NEWTYPE => hash_of(value::__souther_record_get(cell, 0), descriptor::member(descriptor, 0)),
@@ -173,8 +181,22 @@ pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
             }
             hash
         }
-        KIND_MAP => mixed(HASH_START, value::__souther_map_length(cell)),
-        _ => HASH_START,
+        KIND_MAP => {
+            let keys = descriptor::member(descriptor, 0);
+            let values = descriptor::member(descriptor, 1);
+            let held = value::__souther_map_length(cell);
+            let mut entries: u32 = 0;
+            for i in 0..held {
+                entries = entries.wrapping_add(mixed(
+                    hash_of(value::__souther_map_key(cell, i), keys),
+                    hash_of(value::__souther_map_value(cell, i), values),
+                ));
+            }
+            mixed(mixed(HASH_START, held), entries)
+        }
+        // A type with one value: every value of it is that one.
+        KIND_UNIT => HASH_START,
+        other => abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, other as u64, cell as u64),
     }
 }
 

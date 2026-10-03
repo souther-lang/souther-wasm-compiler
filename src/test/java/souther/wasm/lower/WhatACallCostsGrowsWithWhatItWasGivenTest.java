@@ -106,6 +106,18 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
                 .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
     }
 
+    @Test
+    void growsAMapKeyedByMapsByAboutAsMuchAgainForTwiceAsMany() {
+        Running module = compiled();
+
+        // Every key is a map of one entry and every one holds as many entries as the others, so a
+        // hash that read how many a map holds and not what it holds would be one hash for all of
+        // them, and every key put in would be compared with every key before it.
+        assertThat(howMuchMoreForFourTimesAsMuch(module, "growing.nested",
+                descending(SMALLER), descending(LARGER)))
+                .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
+    }
+
     /**
      * How many times as long the larger of two takes.
      *
@@ -186,6 +198,11 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
                 behavior keyed : (xs: List<Int>) -> Int
 
                 let keyed (xs) = Map.size(Map.fromList(List.map(x -> (String.fromInt(x), x), xs)))
+
+                behavior nested : (xs: List<Int>) -> Int
+
+                let nested (xs) = Map.size(
+                    List.fold((acc, x) -> Map.insert(Map.singleton(x, x), x, acc), Map.empty, xs))
 
                 behavior tallied : (xs: List<String>) -> Int
 

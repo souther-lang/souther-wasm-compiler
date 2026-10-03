@@ -97,9 +97,11 @@ public final class WasmTreeShaker {
 	 * are indistinguishable {@code i32.const} immediates), so it drops the segment purely
 	 * on the owners' reachability. Dropping leaves an uninitialized (all-zero) hole in
 	 * linear memory at the segment's offset -- sound precisely because nothing reachable
-	 * reads it. Segment indices are the positions in the data section; the backend emits
-	 * no bulk-memory instructions ({@code memory.init}/{@code data.drop}), so removing a
-	 * segment never breaks a {@code dataidx} reference.
+	 * reads it. Segment indices are the positions in the data section. A segment a
+	 * surviving {@code memory.init} or {@code data.drop} names by index is kept whatever
+	 * this claims, since that instruction is a use the claim did not count; every index
+	 * such an instruction names, and the data count section, is renumbered past the
+	 * segments that were dropped.
 	 *
 	 * @param segmentIndex index of the segment within the data section
 	 * @param ownerFuncIndices global function indices (pre-shake) that own the segment
