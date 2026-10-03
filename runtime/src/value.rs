@@ -955,7 +955,9 @@ unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
     }
 }
 
-/// A number is read as the amount it names, keeping the digits it was written with.
+/// A number is read as the amount it names, keeping the digits it was written with. A number whose
+/// scale no `Int` holds names no `Decimal`: it is a number, so the type is right, and as with text
+/// that denotes no `String` it is the format that is wrong.
 unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
@@ -967,7 +969,7 @@ unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
         json::__souther_json_length(value),
     );
     if held == 0 {
-        mismatch(path, path_length, tag, b"number");
+        issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::none());
         return 0;
     }
     held
@@ -1773,7 +1775,7 @@ unsafe fn members_written(cell: u32, element: u32) {
     );
     let read = alloc(4 * held);
     for i in 0..held {
-        let node = json::__souther_json_parse(copied_at + start(i) - first, end(i) - start(i));
+        let node = json::parse_own(copied_at + start(i) - first, end(i) - start(i));
         order::keyed(node);
         core::ptr::write_unaligned((read + 4 * i) as usize as *mut u32, node);
     }

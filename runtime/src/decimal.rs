@@ -298,6 +298,10 @@ unsafe fn copy(from: u32, length: u32) -> u32 {
 /// one of these bytes read back, so a zero there is this compiler's own bug and not the language's)
 /// — so the choice of what "could not be read" becomes belongs to whichever of those three is
 /// calling, and this stays total instead of making that choice on their behalf.
+/// An exponent further from nought than any scale an exponent and a run of digits can come to,
+/// which an exponent is held to while it is read so that reading more digits cannot overflow.
+const BEYOND_EVERY_SCALE: i64 = 1 << 40;
+
 pub unsafe fn parse(at: u32, length: u32) -> u32 {
     let mut i = 0;
     let negative = length > 0 && core::ptr::read(at as *const u8) == b'-';
@@ -355,11 +359,11 @@ pub unsafe fn parse(at: u32, length: u32) -> u32 {
             if !byte.is_ascii_digit() {
                 break;
             }
-            power = power * 10 + (byte - b'0') as i64;
-            if power > i32::MAX as i64 {
-                // Not this function's call to make — see the doc comment above.
-                return 0;
-            }
+            // Held short of overflowing, at a power no scale is near, and not refused here: what
+            // has a place is the scale the exponent comes to beside the digits after the point,
+            // which is decided below. `1E+2147483648` is the scale `i32::MIN`, a `Decimal` a JVM
+            // reads and this one writes, though its exponent alone is past `i32::MAX`.
+            power = (power * 10 + (byte - b'0') as i64).min(BEYOND_EVERY_SCALE);
             i += 1;
         }
         if i == start {

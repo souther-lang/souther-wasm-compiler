@@ -62,6 +62,31 @@ class AnAmountCrossesInTheOneFormItHasTest {
                 .contains("\"expected\":\"number\"", "\"actual\":\"string\"");
     }
 
+    /**
+     * A scale is an {@code Int}, and an amount at either end of the range one holds is an amount:
+     * {@code 1E+2147483648} is the lowest scale, though its exponent alone is past what an
+     * {@code Int} holds, which is the scale the digits after the point and the exponent come to
+     * together and not the exponent on its own. One past either end is no amount, and reading it
+     * is an issue about the value and not the end of the call.
+     */
+    @Test
+    void readsAnAmountAtEitherEndOfTheScalesADecimalHas() {
+        Running module = compiled();
+
+        for (String written : List.of("1E+2147483648", "1E-2147483647", "1.5E+2147483649")) {
+            assertThat(answerOf(module, "pricing.same", "[" + written + "]"))
+                    .describedAs(written)
+                    .isEqualTo("{\"value\":" + canonical(written) + "}");
+        }
+        // A number, so not a mismatch of type: a number that names no Decimal is its format wrong.
+        for (String written : List.of("1E+2147483649", "1E-2147483648")) {
+            assertThat(answerOf(module, "pricing.same", "[" + written + "]"))
+                    .describedAs(written)
+                    .isEqualTo("{\"issues\":[{\"path\":\"/0\",\"code\":\"invalid_format\","
+                            + "\"messageKey\":\"invalid_format\",\"meta\":{}}]}");
+        }
+    }
+
     @Test
     void ordersAmountsBySizeAndThenByTheWayTheyAreWritten() {
         Running module = compiled();

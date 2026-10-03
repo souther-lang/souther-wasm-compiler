@@ -531,46 +531,128 @@ unsafe fn alloc_pairs(held: u32) -> *mut u32 {
     crate::alloc(8 * held.max(1)) as usize as *mut u32
 }
 
-/// Two numbers as written, by the amount: two whole numbers by their digits, which is the amount
-/// read without reading it, and any other by the amount it is.
+/// Two numbers as written, by the amount each writes.
+///
+/// Read off the text and never made into a value: a number this runtime wrote is any number it
+/// can hold, and making one again is a reader with a reader's bounds, which the writer's are not
+/// — `1E+2147483648` is a `Decimal` held at the lowest scale, and a reader adding up its exponent
+/// would refuse it. So the amount is its sign, how far from the point its first digit stands, and
+/// its digits from there with no zero after the last, compared in that order.
 unsafe fn amounts(x: u32, x_length: u32, y: u32, y_length: u32) -> i32 {
-    if let (Some(a), Some(b)) = (whole(x, x_length), whole(y, y_length)) {
-        // Sign first; then, of two the same sign, the one with more digits is further from nought.
-        if a.0 != b.0 {
-            return if a.0 { -1 } else { 1 };
+    let (a, b) = (Amount::of(x, x_length), Amount::of(y, y_length));
+    let (a_sign, b_sign) = (a.sign(), b.sign());
+    if a_sign != b_sign {
+        return if a_sign < b_sign { -1 } else { 1 };
+    }
+    if a_sign == 0 {
+        return 0;
+    }
+    let further = if a.point != b.point {
+        if a.point < b.point { -1 } else { 1 }
+    } else {
+        let (m, n) = (a.last - a.first, b.last - b.first);
+        let mut by_digits = 0;
+        for k in 0..m.min(n) {
+            let (p, q) = (a.digit(a.first + k), b.digit(b.first + k));
+            if p != q {
+                by_digits = if p < q { -1 } else { 1 };
+                break;
+            }
         }
-        let further = if a.1 != b.1 {
-            if a.1 < b.1 { -1 } else { 1 }
-        } else {
-            bytewise(a.2, a.1, b.2, b.1)
-        };
-        return if a.0 { -further } else { further };
-    }
-    let (p, q) = (decimal::parse(x, x_length), decimal::parse(y, y_length));
-    if p == 0 || q == 0 {
-        // Written by this runtime, so a number it cannot read back is its own writer and reader
-        // disagreeing.
-        abort(REASON_BACKEND_INVARIANT_BROKEN, 0, x as u64, y as u64);
-    }
-    decimal::compare(p, q)
+        if by_digits == 0 { sign_of_difference(m, n) } else { by_digits }
+    };
+    if a_sign < 0 { -further } else { further }
 }
 
-/// A whole number's sign and digits, as the writer writes one — a minus where it is below nought
-/// and no leading zero — or nothing for a number written otherwise.
-unsafe fn whole(at: u32, length: u32) -> Option<(bool, u32, u32)> {
-    let bytes = core::slice::from_raw_parts(at as usize as *const u8, length as usize);
-    let (negative, digits) = match bytes.split_first() {
-        Some((b'-', rest)) => (true, rest),
-        _ => (false, bytes),
-    };
-    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-        return None;
+/// A number as JSON writes one, read for its amount: `[-]digits[.digits][e[+|-]digits]`.
+struct Amount {
+    negative: bool,
+    whole: *const u8,
+    whole_length: u32,
+    fraction: *const u8,
+    /// The digits that are not zeros at either end, as places in the whole and the fraction read
+    /// as one run.
+    first: u32,
+    last: u32,
+    /// Where the point stands, counted from before the first digit that is not a zero.
+    point: i64,
+}
+
+impl Amount {
+    unsafe fn of(at: u32, length: u32) -> Amount {
+        let bytes = core::slice::from_raw_parts(at as usize as *const u8, length as usize);
+        let mut i = 0;
+        let negative = bytes.first() == Some(&b'-');
+        if negative {
+            i += 1;
+        }
+        let whole_at = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let whole_length = (i - whole_at) as u32;
+        let mut fraction_at = i;
+        if i < bytes.len() && bytes[i] == b'.' {
+            i += 1;
+            fraction_at = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        let fraction_length = (i - fraction_at) as u32;
+        let mut exponent: i64 = 0;
+        if i < bytes.len() && (bytes[i] | 0x20) == b'e' {
+            i += 1;
+            let down = bytes.get(i) == Some(&b'-');
+            if matches!(bytes.get(i), Some(b'-' | b'+')) {
+                i += 1;
+            }
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                // Held short of overflowing: no exponent the writer writes is near this.
+                exponent = (exponent * 10 + i64::from(bytes[i] - b'0')).min(1 << 50);
+                i += 1;
+            }
+            if down {
+                exponent = -exponent;
+            }
+        }
+        let mut amount = Amount {
+            negative,
+            whole: bytes.as_ptr().add(whole_at),
+            whole_length,
+            fraction: bytes.as_ptr().add(fraction_at),
+            first: 0,
+            last: whole_length + fraction_length,
+            point: 0,
+        };
+        while amount.first < amount.last && amount.digit(amount.first) == b'0' {
+            amount.first += 1;
+        }
+        while amount.last > amount.first && amount.digit(amount.last - 1) == b'0' {
+            amount.last -= 1;
+        }
+        amount.point = i64::from(whole_length) - i64::from(amount.first) + exponent;
+        amount
     }
-    if digits.len() > 1 && digits[0] == b'0' {
-        return None;
+
+    unsafe fn digit(&self, at: u32) -> u8 {
+        if at < self.whole_length {
+            *self.whole.add(at as usize)
+        } else {
+            *self.fraction.add((at - self.whole_length) as usize)
+        }
     }
-    let skipped = u32::from(negative);
-    Some((negative, length - skipped, at + skipped))
+
+    /// Below nought, nought, or above it.
+    fn sign(&self) -> i32 {
+        if self.first == self.last {
+            0
+        } else if self.negative {
+            -1
+        } else {
+            1
+        }
+    }
 }
 
 /// Puts places in the order `against` says, merged in runs that double.

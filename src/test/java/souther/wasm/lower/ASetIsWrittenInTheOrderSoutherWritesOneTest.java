@@ -172,6 +172,60 @@ class ASetIsWrittenInTheOrderSoutherWritesOneTest {
         assertWrittenInTheJvmsOrder(module, "shaping.echoRuns", "[[2],[1,5],[1],[]]");
     }
 
+    private static final String OWN = """
+            module own
+
+            data Prices = { all: Set<Decimal> }
+
+            behavior edge : (a: Decimal, b: Decimal) -> Prices
+            let edge (a, b) = {
+                let x = a * b
+                Prices { all = Set.fromList([x, x * 2m]) }
+            }
+
+            data Node = { below: List<Node> }
+
+            data Nodes = { all: Set<Node> }
+
+            behavior deep : (n: Int) -> Nodes
+            let deep (n) = {
+                let tall = List.fold((acc, i) -> Node { below = [acc] }, Node { below = [] },
+                    List.rangeInclusive(1, n))
+                Nodes { all = Set.fromList([tall, Node { below = [] }]) }
+            }
+
+            data Words = { all: Set<String> }
+
+            behavior echoWords : (w: Words) -> Words
+            let echoWords (w) = w
+            """;
+
+    /**
+     * Whatever this writes of a set it reads back to put in order, and it writes more than a
+     * stranger's document may hold: an amount at the lowest scale a {@code Decimal} has, whose
+     * exponent alone is past what an {@code Int} holds, and a value nested further than the
+     * boundary lets a document from outside be. Each is in a set of two, since a set of one is
+     * written without being read back.
+     */
+    @Test
+    void readsBackEverythingItWritesToPutASetInOrder() {
+        Running module = compiled(OWN);
+
+        // Each a scale of -1073741824, so the product's is -2147483648, the lowest an Int holds.
+        String least = Representations.canonicalNumber(new java.math.BigDecimal("1E+2147483648"))
+                .toString();
+        String twice = Representations.canonicalNumber(new java.math.BigDecimal("2E+2147483648"))
+                .toString();
+        assertThat(answerOf(module, "own.edge", "[1E+1073741824, 1E+1073741824]"))
+                .isEqualTo("{\"value\":{\"all\":[" + least + "," + twice + "]}}");
+
+        String tall = answerOf(module, "own.deep", "[300]");
+        assertThat(tall).startsWith("{\"value\":{\"all\":[{\"below\":[]},{\"below\":[{");
+
+        assertWrittenInTheJvmsOrder(module, "own.echoWords",
+                "[\"say \\\"q\\\"\",\"back\\\\slash\",\"\\u0001\",\"é\",\"tab\\t\"]");
+    }
+
     /** That the members come back in the order the JVM's own comparison puts what was written. */
     private static void assertWrittenInTheJvmsOrder(Running module, String export, String members) {
         String answer = answerOf(module, export, "[{\"all\":" + members + "}]");
