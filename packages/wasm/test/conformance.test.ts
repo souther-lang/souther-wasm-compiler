@@ -7,15 +7,12 @@
 // wrote from Raoh's catalog.
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { amount, load, messageOf, type Issue, type Program } from "../src/index.ts";
+import { compiled, ROOT } from "./compiled.ts";
 
-const ROOT = join(import.meta.dirname, "..", "..", "..");
 const FIXTURES = join(ROOT, "conformance", "issues");
 
 interface Case {
@@ -37,20 +34,14 @@ function expected(file: string): { cases: Case[] } {
   return JSON.parse(readFileSync(file, "utf-8"));
 }
 
-async function compiled(model: string): Promise<Program> {
-  const at = mkdtempSync(join(tmpdir(), "conformance-"));
-  writeFileSync(join(at, "model.sou"), model);
-  const jar = readdirSync(join(ROOT, "target")).find((name) => name.endsWith("-cli.jar"));
-  assert.ok(jar, "the compiler is built: mvn package at the repository's root");
-  await promisify(execFile)("java", ["-jar", join(ROOT, "target", jar), at, "-o",
-    join(at, "model.wasm")]);
-  return load(readFileSync(join(at, "model.wasm")));
+async function loaded(model: string): Promise<Program> {
+  return load((await compiled(model)).bytes);
 }
 
 // Every fixture's module is compiled at once, side by side, before any is read: what compiling costs
 // is a compiler started, and starting three one after another is waiting three times.
 const names = readdirSync(FIXTURES).filter((each) => each.endsWith(".json")).sort();
-const programs = new Map(names.map((name) => [name, compiled(fixture(join(FIXTURES, name)).model)]));
+const programs = new Map(names.map((name) => [name, loaded(fixture(join(FIXTURES, name)).model)]));
 
 for (const name of names) {
   const file = join(FIXTURES, name);

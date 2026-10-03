@@ -3,7 +3,6 @@ package souther.wasm.conformance;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import net.unit8.raoh.Err;
 import net.unit8.raoh.Issue;
 import net.unit8.raoh.Ok;
@@ -11,10 +10,7 @@ import net.unit8.raoh.Path;
 import net.unit8.raoh.ResourceBundleMessageResolver;
 import net.unit8.raoh.Result;
 import net.unit8.raoh.decode.Decoder;
-import souther.compiler.Compiler;
-import souther.compiler.jvm.ClassFileImage;
 import souther.wasm.Compiled;
-import souther.wasm.Recent;
 import souther.wasm.Running;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.DeserializationFeature;
@@ -49,17 +45,9 @@ final class Boundaries {
     private static final ResourceBundleMessageResolver CATALOG =
             new ResourceBundleMessageResolver("net.unit8.raoh.messages");
 
-    /**
-     * The classes the JVM wrote for each model, written once for every case of the model: a
-     * fixture's cases are read one after another against one model, and a decoder holds nothing
-     * one reading leaves for the next.
-     */
-    private static final Recent<String, ClassLoader> LOADERS = new Recent<>(4);
-
     /** The JVM's reading: the generated class's {@code jsonDecoder()}. */
     static JsonNode jvm(String model, String type, JsonNode input) {
-        ClassLoader loader = LOADERS.of(model, kept -> kept, written -> new Defined(
-                Compiler.compileModules(List.of(written)), Boundaries.class.getClassLoader()));
+        ClassLoader loader = Compiled.jvm(List.of(model));
         Result<?> result;
         try {
             Decoder<JsonNode, ?> decoder = (Decoder<JsonNode, ?>) loader.loadClass(type)
@@ -124,29 +112,5 @@ final class Boundaries {
             return decoded;
         }
         return read;
-    }
-
-    /** Classes the JVM wrote, defined as they are asked for. */
-    private static final class Defined extends ClassLoader {
-
-        private final Map<String, ClassFileImage> classes;
-
-        Defined(Map<String, ClassFileImage> classes, ClassLoader parent) {
-            super(parent);
-            this.classes = classes;
-        }
-
-        @Override
-        protected Class<?> findClass(String name) throws ClassNotFoundException {
-            ClassFileImage image = classes.get(name);
-            if (image == null) {
-                image = classes.get(name.replace('.', '/'));
-            }
-            if (image == null) {
-                throw new ClassNotFoundException(name);
-            }
-            byte[] bytes = image.bytes();
-            return defineClass(name, bytes, 0, bytes.length);
-        }
     }
 }

@@ -1,6 +1,9 @@
 package souther.wasm;
 
 import java.util.List;
+import java.util.Map;
+import souther.compiler.Compiler;
+import souther.compiler.jvm.ClassFileImage;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.lower.WasmCompiler;
 
@@ -21,6 +24,10 @@ import souther.wasm.lower.WasmCompiler;
  *
  * <p>Bytes are handed out as a copy: a test that wrote into what it was handed would otherwise be
  * writing into every other test's module.
+ *
+ * <p>The one way the tests compile, which {@code EveryTestCompilesThroughCompiledTest} holds them
+ * to: a test that compiles for itself compiles again for every case that asks, and that is how the
+ * suite came to spend most of its time doing so twice over.
  */
 public final class Compiled {
 
@@ -33,6 +40,18 @@ public final class Compiled {
     private static final Recent<CheckedProgram, byte[]> COMPONENTS = new Recent<>(KEPT);
 
     private Compiled() {
+    }
+
+    private static final Recent<List<String>, ClassLoader> JVM = new Recent<>(KEPT);
+
+    /**
+     * The classes the JVM backend writes for {@code sources}, defined in a loader of their own,
+     * written once for every test that asks: what a generated class is asked holds nothing one
+     * asking leaves for the next.
+     */
+    public static ClassLoader jvm(List<String> sources) {
+        return JVM.of(List.copyOf(sources), kept -> kept, written -> new Defined(
+                Compiler.compileModules(written), Compiled.class.getClassLoader()));
     }
 
     /** {@code CheckedProgram.of(sources)}, checked once. A program refused is refused every time. */
@@ -48,5 +67,29 @@ public final class Compiled {
     /** {@code WasmCompiler.compileAsComponent(program)}, written once for each program. */
     public static byte[] component(CheckedProgram program) {
         return COMPONENTS.of(program, kept -> kept, WasmCompiler::compileAsComponent).clone();
+    }
+
+    /** Classes the JVM wrote, defined as they are asked for. */
+    private static final class Defined extends ClassLoader {
+
+        private final Map<String, ClassFileImage> classes;
+
+        Defined(Map<String, ClassFileImage> classes, ClassLoader parent) {
+            super(parent);
+            this.classes = classes;
+        }
+
+        @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            ClassFileImage image = classes.get(name);
+            if (image == null) {
+                image = classes.get(name.replace('.', '/'));
+            }
+            if (image == null) {
+                throw new ClassNotFoundException(name);
+            }
+            byte[] bytes = image.bytes();
+            return defineClass(name, bytes, 0, bytes.length);
+        }
     }
 }

@@ -5,14 +5,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { bindingFor } from "../src/generate.ts";
 import { fingerprintOf, surfaceOf } from "../src/index.ts";
+import { compiled } from "./compiled.ts";
 
-const ROOT = join(import.meta.dirname, "..", "..", "..");
 const RUNTIME = join(import.meta.dirname, "..", "src", "index.ts");
 const TSC = join(import.meta.dirname, "..", "node_modules", ".bin", "tsc");
 
@@ -58,27 +57,22 @@ export async function priced(bytes: Uint8Array): Promise<string> {
 const run = promisify(execFile);
 
 /**
- * The module compiled from `model`, and the binding generated from it, at a directory of their own:
- * once for every test that asks for the same model, since what is asked of it only reads it.
+ * The module compiled from `model`, with the binding generated from it and the page beside it: once
+ * for every test that asks for the same model, since what is asked of them only reads them.
  */
-const compiled = new Map<string, Promise<{ at: string; bytes: Uint8Array }>>();
+const generatedFor = new Map<string, Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }>>();
 
-function generated(model: string): Promise<{ at: string; bytes: Uint8Array }> {
-  let held = compiled.get(model);
+function generated(model: string): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
+  let held = generatedFor.get(model);
   if (held === undefined) {
     held = generating(model);
-    compiled.set(model, held);
+    generatedFor.set(model, held);
   }
   return held;
 }
 
-async function generating(model: string): Promise<{ at: string; bytes: Uint8Array }> {
-  const at = mkdtempSync(join(tmpdir(), "binding-"));
-  writeFileSync(join(at, "model.sou"), model);
-  const jar = readdirSync(join(ROOT, "target")).find((name) => name.endsWith("-cli.jar"));
-  assert.ok(jar, "the compiler is built: mvn package at the repository's root");
-  await run("java", ["-jar", join(ROOT, "target", jar), at, "-o", join(at, "model.wasm")]);
-  const bytes = readFileSync(join(at, "model.wasm"));
+async function generating(model: string): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
+  const { at, bytes } = await compiled(model);
   const [surface, held] = surfaceOf(await WebAssembly.compile(bytes));
   writeFileSync(join(at, "binding.ts"), bindingFor(surface, await fingerprintOf(held), RUNTIME));
   writeFileSync(join(at, "page.ts"), PAGE);
