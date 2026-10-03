@@ -200,7 +200,7 @@ interface Exports {
 export class Program {
   #exports: Exports | undefined;
   readonly #supplied: Supplied;
-  readonly #crossings: readonly { ordinal: number; behavior: string }[];
+  readonly #crossings: ReadonlyMap<number, string>;
   readonly #surface: Surface;
   readonly #decodable: ReadonlyMap<string, number>;
 
@@ -209,13 +209,10 @@ export class Program {
     // A call out carries a number and not a name, and the surface says which behavior each is: by
     // its module and its name, since one its module keeps is reached out for all the same and is
     // exported as nothing.
-    this.#crossings = surface.modules
+    this.#crossings = new Map(surface.modules
       .flatMap((module) => module.behaviors
         .filter((behavior) => behavior.reachOut !== undefined)
-        .map((behavior) => ({
-          ordinal: behavior.reachOut as number,
-          behavior: `${module.name}.${behavior.name}`,
-        })));
+        .map((behavior) => [behavior.reachOut as number, `${module.name}.${behavior.name}`])));
     this.#surface = surface;
     // Resolved once, by name: the numbers are this module's, and only its own surface says which
     // type each one is.
@@ -241,7 +238,7 @@ export class Program {
 
   /** What this program reaches out for, which is what has to be supplied to load it. */
   get reachesOutFor(): string[] {
-    return this.#crossings.map((crossing) => crossing.behavior);
+    return [...this.#crossings.values()];
   }
 
   /**
@@ -310,12 +307,12 @@ export class Program {
    * up again, so what a model reaches out for has to be something the page already has.
    */
   reachOut(ordinal: number, at: number, length: number, into: number, room: number): number {
-    const crossing = this.#crossings.find((held) => held.ordinal === ordinal);
-    const supplied = crossing === undefined ? undefined : this.#supplied[crossing.behavior];
+    const crossing = this.#crossings.get(ordinal);
+    const supplied = crossing === undefined ? undefined : this.#supplied[crossing];
     if (supplied === undefined) {
       throw new Error(crossing === undefined
         ? `this program reached out under a number it does not name: ${ordinal}`
-        : `${crossing.behavior} is reached out for and nothing was supplied for it`);
+        : `${crossing} is reached out for and nothing was supplied for it`);
     }
     const asked = read(decoder.decode(this.#bytes().subarray(at, at + length))) as never[];
     const written = encoder.encode(JSON.stringify(supplied(...asked)));
@@ -358,7 +355,9 @@ export class Program {
  */
 function read(text: string): unknown {
   return JSON.parse(text, function (_key, value, context?: { source?: string }) {
-    if (typeof value !== "number" || context?.source === undefined) {
+    // Most numbers are written as a JavaScript number writes them, and those it holds exactly.
+    if (typeof value !== "number" || context?.source === undefined
+      || context.source === String(value)) {
       return value;
     }
     return sameAmount(String(value), context.source) ? value : raw(context.source);
