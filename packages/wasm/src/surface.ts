@@ -1,4 +1,4 @@
-// What `souther:surface` says, version 3, as types.
+// What `souther:surface` says, version 4, as types.
 //
 // The compiler's `TheSurfaceChangesOnlyWithItsVersionTest` holds what a surface of a version says
 // to a file named for it; these are what that file says, for a reader written in TypeScript.
@@ -28,7 +28,8 @@ export type Form =
 
 export interface Behavior {
   readonly name: string;
-  readonly export: string;
+  /** What a caller calls it through, which only a behavior its module publishes has. */
+  readonly export?: string;
   readonly published: boolean;
   readonly implementation: "here" | "injected" | "unwritten" | "elsewhere";
   readonly reachOut?: number;

@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { bindingFor } from "../src/generate.ts";
@@ -62,20 +63,23 @@ const run = promisify(execFile);
  */
 const generatedFor = new Map<string, Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }>>();
 
-function generated(model: string): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
-  let held = generatedFor.get(model);
+function generated(model: string, page = PAGE): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
+  const asked = JSON.stringify([model, page]);
+  let held = generatedFor.get(asked);
   if (held === undefined) {
-    held = generating(model);
-    generatedFor.set(model, held);
+    held = generating(model, page);
+    generatedFor.set(asked, held);
   }
   return held;
 }
 
-async function generating(model: string): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
-  const { at, bytes } = await compiled(model);
+async function generating(model: string, page: string): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
+  const { bytes } = await compiled(model);
+  // A directory of its own for each page, since two pages may be written against one model.
+  const at = mkdtempSync(join(tmpdir(), "souther-binding-"));
   const [surface, held] = surfaceOf(await WebAssembly.compile(bytes));
   writeFileSync(join(at, "binding.ts"), bindingFor(surface, await fingerprintOf(held), RUNTIME));
-  writeFileSync(join(at, "page.ts"), PAGE);
+  writeFileSync(join(at, "page.ts"), page);
   return { at, bytes };
 }
 
@@ -115,6 +119,46 @@ describe("a binding", { concurrency: true }, () => {
     const { at, bytes } = await generated(MODEL);
     const page = await import(join(at, "page.ts"));
     assert.equal(await page.priced(bytes), "1");
+  });
+
+  // What a module keeps is not the caller's to call, whoever answers it; one kept and answered
+  // outside is still the host's to supply, since the program cannot run without it.
+  const KEEPING = `module rates exposing ( spread )
+
+behavior today : (pair: String) -> Int
+
+behavior lowered : (n: Int) -> Int
+
+let lowered (n) = n - 1
+
+behavior spread : (pair: String) -> Int
+    depends on today
+
+let spread (pair, today) = lowered(today(pair))
+`;
+
+  it("offers what a module publishes and asks for what it keeps and reaches out for", async () => {
+    const { at, bytes } = await generated(KEEPING, `import { load } from "./binding.ts";
+
+export async function spread(bytes: Uint8Array): Promise<unknown> {
+  const rates = await load(bytes, { "rates.today": (pair: string) => (pair === "USDJPY" ? 150 : 0) });
+  return rates.rates.spread("USDJPY").value;
+}
+`);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.equal(await page.spread(bytes), 149);
+  });
+
+  it("stops a page compiling where it calls what a module keeps", async () => {
+    const { at } = await generated(KEEPING, `import { load } from "./binding.ts";
+
+export async function lowered(bytes: Uint8Array): Promise<unknown> {
+  const rates = await load(bytes, { "rates.today": () => 0 });
+  return rates.rates.lowered(1);
+}
+`);
+    assert.match(await checked(at), /lowered/);
   });
 
   it("refuses a module it was not generated from", async () => {

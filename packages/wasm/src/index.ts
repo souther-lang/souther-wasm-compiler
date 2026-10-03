@@ -25,7 +25,7 @@ const decoder = new TextDecoder();
  * misread without a word. Held to what the compiler writes by
  * `TheGlueReadsWhatThisBuildWritesTest`.
  */
-export const READS = { surface: 3, abi: 8 } as const;
+export const READS = { surface: 4, abi: 8 } as const;
 
 /** Where the module says what it offers a caller, and what it reaches out for under which numbers. */
 const SURFACE = "souther:surface";
@@ -186,11 +186,16 @@ export class Program {
 
   constructor(supplied: Supplied, surface: Surface) {
     this.#supplied = supplied;
-    // A call out carries a number and not a name, and the surface says which behavior each is.
+    // A call out carries a number and not a name, and the surface says which behavior each is: by
+    // its module and its name, since one its module keeps is reached out for all the same and is
+    // exported as nothing.
     this.#crossings = surface.modules
-      .flatMap((module) => module.behaviors)
-      .filter((behavior) => behavior.reachOut !== undefined)
-      .map((behavior) => ({ ordinal: behavior.reachOut as number, behavior: behavior.export }));
+      .flatMap((module) => module.behaviors
+        .filter((behavior) => behavior.reachOut !== undefined)
+        .map((behavior) => ({
+          ordinal: behavior.reachOut as number,
+          behavior: `${module.name}.${behavior.name}`,
+        })));
     this.#surface = surface;
     // Resolved once, by name: the numbers are this module's, and only its own surface says which
     // type each one is.

@@ -2,6 +2,8 @@ package souther.wasm.link;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.dylibso.chicory.wasm.Parser;
+import com.dylibso.chicory.wasm.WasmModule;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -116,6 +118,49 @@ class AModuleSaysWhatItOffersACallerTest {
         // A member is named onto the surface as a case is, so a reader writing the answer's type
         // has the sum it names.
         assertThat(declaration(said, "signals", "Signal").get("is").asString()).isEqualTo("sum");
+    }
+
+    /**
+     * A behavior its module keeps is no export, whoever answers it: a caller reads what it may call
+     * from the module's exports and the surface alike, and finds there only what the module
+     * publishes. One kept and reached out for is still on the surface with its number, since the
+     * host has to answer it all the same.
+     */
+    @Test
+    void offersACallerOnlyWhatItsModulePublishes() {
+        byte[] module = Compiled.module(Compiled.program(List.of("""
+                module rates exposing ( spread )
+
+                behavior today : (pair: String) -> Int
+
+                behavior lowered : (n: Int) -> Int
+
+                let lowered (n) = n - 1
+
+                behavior spread : (pair: String) -> Int
+                    depends on today
+
+                let spread (pair, today) = lowered(today(pair))
+                """)));
+        JsonNode said = surfaceOf(module);
+
+        List<String> exported = new ArrayList<>();
+        WasmModule parsed = Parser.parse(module);
+        for (int i = 0; i < parsed.exportSection().exportCount(); i++) {
+            exported.add(parsed.exportSection().getExport(i).name());
+        }
+        assertThat(exported).contains("rates.spread")
+                .doesNotContain("rates.lowered", "rates.today");
+
+        assertThat(behavior(said, "rates", "spread").get("export").asString())
+                .isEqualTo("rates.spread");
+        for (String kept : List.of("lowered", "today")) {
+            JsonNode behavior = behavior(said, "rates", kept);
+            assertThat(behavior.get("published").asBoolean()).describedAs(kept).isFalse();
+            assertThat(behavior.has("export")).describedAs(kept).isFalse();
+        }
+        assertThat(behavior(said, "rates", "today").has("reachOut")).isTrue();
+        assertThat(behavior(said, "rates", "lowered").has("reachOut")).isFalse();
     }
 
     /** A shape's fields, an optional among them, and its rules by name and nothing more. */

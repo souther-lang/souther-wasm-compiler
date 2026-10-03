@@ -41,12 +41,15 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
     out.push("");
   }
 
-  const reaching = surface.modules.flatMap((module) => module.behaviors)
-    .filter((behavior) => behavior.reachOut !== undefined);
+  // What the host has to supply is every behavior the program reaches out for, whether its module
+  // publishes it or keeps it: a kept one is reached for all the same.
+  const reaching = surface.modules.flatMap((module) => module.behaviors
+    .filter((behavior) => behavior.reachOut !== undefined)
+    .map((behavior) => ({ behavior, named: `${module.name}.${behavior.name}` })));
   out.push("/** What answers each behavior the program reaches out for. */");
   out.push("export interface Supplied {");
-  for (const behavior of reaching) {
-    out.push(`  readonly ${JSON.stringify(behavior.export)}: (${parameters(behavior.parameters, typeOf)}) => ${typeOf(behavior.answers)};`);
+  for (const { behavior, named } of reaching) {
+    out.push(`  readonly ${JSON.stringify(named)}: (${parameters(behavior.parameters, typeOf)}) => ${typeOf(behavior.answers)};`);
   }
   out.push("}");
   out.push("");
@@ -55,7 +58,7 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
   out.push("export interface Bound {");
   out.push("  readonly program: Program;");
   for (const module of surface.modules) {
-    const offered = module.behaviors.filter((behavior) => behavior.reachOut === undefined);
+    const offered = module.behaviors.filter((behavior) => behavior.export !== undefined && behavior.reachOut === undefined);
     out.push(`  readonly ${property(module.name)}: {`);
     for (const behavior of offered) {
       out.push(`    ${property(behavior.name)}(${parameters(behavior.parameters, typeOf)}): Reading<${typeOf(behavior.answers)}>;`);
@@ -77,11 +80,11 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
   out.push("  const bound: Bound = {");
   out.push("    program,");
   for (const module of surface.modules) {
-    const offered = module.behaviors.filter((behavior) => behavior.reachOut === undefined);
+    const offered = module.behaviors.filter((behavior) => behavior.export !== undefined && behavior.reachOut === undefined);
     out.push(`    ${property(module.name)}: {`);
     for (const behavior of offered) {
       const names = behavior.parameters.map((each, at) => each.name ?? `argument${at}`);
-      out.push(`      ${property(behavior.name)}: (${names.join(", ")}) => program.call(${JSON.stringify(behavior.export)}, [${names.join(", ")}]),`);
+      out.push(`      ${property(behavior.name)}: (${names.join(", ")}) => program.call(${JSON.stringify(behavior.export as string)}, [${names.join(", ")}]),`);
     }
     out.push("    },");
   }

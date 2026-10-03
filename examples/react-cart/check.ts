@@ -183,24 +183,24 @@ let spread (pair, today, yesterday) = today(pair) - yesterday(pair)
 }
 
 // A module whose surface is of another version is refused when it is loaded, rather than read as
-// this one: a version 2 surface carries no numbers for what it reaches out for, and taken for a
-// version 3 one its first call out would fail.
+// this one: a version 3 surface names an export for every behavior, published or kept, and taken
+// for a version 4 one a kept behavior would be offered to the caller.
 {
   const bytes = readFileSync("public/cart.wasm");
   const text = bytes.toString("latin1");
-  const at = text.indexOf('{"version":3,');
-  same("where the surface says its version", at >= 0 && text.indexOf('{"version":3,', at + 1) < 0,
+  const at = text.indexOf('{"version":4,');
+  same("where the surface says its version", at >= 0 && text.indexOf('{"version":4,', at + 1) < 0,
     true);
   const older = Buffer.from(bytes);
-  older.write('{"version":2,', at, "latin1");
+  older.write('{"version":3,', at, "latin1");
   let refused: string | null = null;
   try {
     await loadModule(older);
   } catch (said) {
     refused = said instanceof Error ? said.message : String(said);
   }
-  same("what loading a version 2 surface says", refused,
-    "this module's surface is version 2, and this glue reads version 3");
+  same("what loading a version 3 surface says", refused,
+    "this module's surface is version 3, and this glue reads version 4");
 }
 
 console.log(wrong === 0 ? "the glue calls a compiled program" : `${wrong} did not hold`);

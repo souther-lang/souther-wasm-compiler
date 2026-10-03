@@ -148,6 +148,19 @@ public final class WasmCompiler {
         return List.copyOf(reaching);
     }
 
+    /**
+     * Whether a caller outside the program may call a behavior: whether its module publishes it.
+     *
+     * <p>The one answer to what the module offers, read by everything that offers: a core export, a
+     * component's interface, the lift a component calls through. A behavior its module keeps is
+     * no other module's to name (spec §a-module-publishes-what-it-declares), and a module that
+     * exported it anyway would be offering a caller outside Souther what Souther does not offer one
+     * inside — as the native backend does not, which links a kept behavior locally.
+     */
+    static boolean publishes(CheckedModule module, CheckedBehavior behavior) {
+        return module.publicationOf(behavior.name()) == Publication.PUBLISHED;
+    }
+
     /** Whether what stands for a behavior is a call out of the program rather than a body. */
     private static boolean isReachedOutFor(CheckedBehavior behavior) {
         return behavior.implementation() instanceof CheckedImplementation.Injected
@@ -159,7 +172,8 @@ public final class WasmCompiler {
      *
      * <p>A behavior the program does not implement is not among them. Nothing in the module
      * answers it, so what it crosses as is asked for rather than offered, and that is
-     * {@link #reachedOutFor} rather than this.
+     * {@link #reachedOutFor} rather than this. Nor is one its module keeps, which is no module's
+     * to call from outside ({@link #publishes}).
      *
      * @param program what a Souther compile checked
      * @return every behavior's core export name, by the module that declares it
@@ -169,7 +183,7 @@ public final class WasmCompiler {
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
             for (CheckedBehavior behavior : module.behaviors()) {
-                if (!isReachedOutFor(behavior)) {
+                if (publishes(module, behavior) && !isReachedOutFor(behavior)) {
                     named.put(behavior.name().name(), exportName(behavior.name()));
                 }
             }
@@ -261,6 +275,9 @@ public final class WasmCompiler {
                 List.of(Type.I32, Type.I32), List.of(Type.I32, Type.I32));
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
+                if (!publishes(module, behavior)) {
+                    continue;
+                }
                 byte[] wrapper = emitter.crossing(behavior, reached.get(behavior.name()));
                 fragment.export(exportName(behavior.name()), fragment.define(stringToString, wrapper));
             }
@@ -310,6 +327,9 @@ public final class WasmCompiler {
                 List.of(Type.I32, Type.I32), List.of(Type.I32));
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
+                if (!publishes(module, behavior)) {
+                    continue;
+                }
                 String crossing = exportName(behavior.name());
                 byte[] body = new BodyWriter(2, 0)
                         .localGet(0)
