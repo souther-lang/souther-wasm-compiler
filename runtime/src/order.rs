@@ -156,7 +156,7 @@ pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
         KIND_BOOL => mixed(HASH_START, value::__souther_bool_value(cell)),
         KIND_INT => wide(HASH_START, value::__souther_int_value(cell)),
         KIND_DECIMAL => {
-            let (at, length) = decimal::written(decimal::canonical(cell));
+            let (at, length) = decimal::external(cell);
             bytes(HASH_START, at, length)
         }
         // Its parts, which are one value's own, so two cells holding one value hash alike. Read

@@ -11,11 +11,11 @@ publish = false
 # everywhere and the carried copy can be compared with it. The Java side takes the same library's
 # Java implementation.
 notation199x = { git = "https://github.com/raoh-project/199x-notation", rev = "46b73e9bc219acbb7f6f89f710d53dc122cb4f1a" }
-# Exact arithmetic: what a `Rational` is and what each operation on one answers, the native
-# runtime's answers from the same source, with neither backend depending on the other. Where one
-# is kept and what a failure ends the call as are this runtime's (`rational`). A commit, for the
-# reason 199x-notation is one.
-souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "c595095d9d577bb5cc29f88bb9261185ed984006" }
+# Exact arithmetic: what a `Decimal` and a `Rational` are and what each operation on one answers,
+# the native runtime's answers from the same source, with neither backend depending on the other.
+# Where one is kept and what a failure ends the call as are this runtime's (`decimal`,
+# `rational`). A commit, for the reason 199x-notation is one.
+souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "cdd000b446a23a80812a47f34c9f3e44f01b97aa" }
 
 [lib]
 crate-type = ["cdylib"]

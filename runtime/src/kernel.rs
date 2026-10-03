@@ -203,8 +203,8 @@ pub unsafe extern "C" fn __souther_string_from_decimal(amount: u32) -> u32 {
 /// amount — the same way `String.toInt` answers one.
 ///
 /// Which text is an amount is decimal text (spec §string-decimal-text) and nothing wider:
-/// `decimal::parse` also reads an exponent and a point with no digit on one side, because a JSON
-/// number and a literal are written that way, so the text is asked first.
+/// `decimal::parse` also reads an exponent, because a JSON number is written with one, so the text
+/// is asked first.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_to_decimal(text: u32, absent: u32) -> u32 {
     let at = __souther_string_bytes(text);
@@ -859,7 +859,7 @@ pub unsafe extern "C" fn __souther_list_sum(list: u32, descriptor: u32) -> u32 {
     // question: the list's own element. A whole-number zero added to an amount reads the amount's
     // bytes as a whole number's, and answers.
     if descriptor::kind(descriptor) == descriptor::KIND_DECIMAL {
-        let mut total = crate::decimal::of_digits(crate::next_free(), 0, 0, false);
+        let mut total = crate::decimal::cell_of(&souther_exact::Amount::of_int(0));
         for i in 0..__souther_list_length(list) {
             total = crate::decimal::__souther_decimal_add(total, __souther_list_get(list, i));
         }
@@ -877,10 +877,7 @@ pub unsafe extern "C" fn __souther_list_sum(list: u32, descriptor: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_product(list: u32, descriptor: u32) -> u32 {
     if descriptor::kind(descriptor) == descriptor::KIND_DECIMAL {
-        let one = crate::next_free();
-        let _ = crate::alloc(1);
-        core::ptr::write(one as *mut u8, b'1');
-        let mut total = crate::decimal::of_digits(one, 1, 0, false);
+        let mut total = crate::decimal::cell_of(&souther_exact::Amount::of_int(1));
         for i in 0..__souther_list_length(list) {
             total = crate::decimal::__souther_decimal_multiply(total, __souther_list_get(list, i));
         }
