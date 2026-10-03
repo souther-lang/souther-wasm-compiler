@@ -24,8 +24,13 @@ if (answer.issues === undefined && answer.value.type === "Priced") {
 So a case or a field renamed in the model is a type renamed in the binding, and a page still
 reading the old one stops compiling. A product is an object type, a newtype the type it is written
 as, a sum the union of its cases discriminated by `type`, an enumeration the union of its names, an
-`Int` or a `Decimal` a `Numeric` — a number where a JavaScript number holds it and the digits where
+`Int` or a `Decimal` a `Numeric` — a number where a JavaScript number holds it and an `Amount` where
 one does not — and a temporal its text.
+
+An `Amount` is the digits crossing as the number they are (`JSON.rawJSON`): `amount("1.10")` makes
+one to hand over, an answer too wide for a number comes back as one, and either is handed over
+again as a number. `numeral(held)` is its digits, for showing. A string is never a number here, so
+a page handing one where the model takes an `Int` does not compile.
 
 A binding knows which module it was generated from: the SHA-256 of that module's surface. Loading
 any other module through it is refused, rather than calling it with the first one's numbers and

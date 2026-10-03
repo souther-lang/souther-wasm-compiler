@@ -97,8 +97,10 @@ amount put through one is rounded before the model ever sees it and rounded agai
     cart.cart.price({ lines: [{ sku, quantity: 1, unitPrice: amount("12345678901234567890.12345") }], member });
 
 `amount` carries the digits. Coming back, a number is a number wherever one holds what the model
-answered and the digits as a string wherever one does not — so reading a total means being ready
-for either, and being handed a string is the model saying this is wider than you can hold.
+answered and an amount wherever one does not, so a total is a `Numeric`, one or the other.
+`numeral(total)` is its digits for showing. Handed over again, an amount is the number it is and not
+a string: the binding takes a number or an amount where the model takes an `Int` or a `Decimal`, and
+a page handing over a string does not compile.
 
 An amount that crosses out carries no scale: the model answers `1.1` where it was handed `1.10`,
 because how much it is and how it was written are two things and only the first is the amount. A
@@ -133,6 +135,11 @@ Where it will not read what it was given, the model says which part it will not 
 `path` is a JSON Pointer into the arguments: `/0/lines/0/sku` is the first argument's first line's
 product code. So the form does not work out which input a complaint belongs under. It arrives
 knowing.
+
+The page hands over what was typed, which is not a basket until the model has read it as one: a
+quantity typed as `two` is no `Int`. So it reads it first, with `bound.decode.Cart(typed)`, and
+prices what that answers. A complaint about what was typed is then said of the basket, at
+`/lines/0/sku`, and what is priced is a `Cart` the binding types.
 
 An issue is Raoh's, as it is on the JVM: the code and the message key say which rule it was, and the
 metadata what the rule says. A product code's pattern is reported as the format it is, with the

@@ -35,6 +35,15 @@ behavior price : (lines: List<Line>, member: Membership) -> Priced | EmptyCart
 let price (lines, member) = if List.length(lines) >= 1 then Priced { total = 1.00m } else EmptyCart
 
 behavior rate : (pair: String) -> Decimal
+
+behavior doubled : (n: Decimal) -> Decimal
+
+let doubled (n) = n + n
+
+behavior converted : (n: Decimal) -> Decimal
+    depends on rate
+
+let converted (n, rate) = n * rate("USD")
 `;
 
 /** A page reading what the model offers. */
@@ -159,6 +168,43 @@ export async function lowered(bytes: Uint8Array): Promise<unknown> {
 }
 `);
     assert.match(await checked(at), /lowered/);
+  });
+
+  // A number the model answers wider than a JavaScript number holds comes back as the amount it is,
+  // and is handed over again as that number: never as a string, which the model would refuse.
+  it("hands an amount it was handed back over again as the number it is", async () => {
+    const { at, bytes } = await generated(MODEL, `import { amount, numeral } from ${JSON.stringify(RUNTIME)};
+import { load } from "./binding.ts";
+
+export async function twice(bytes: Uint8Array): Promise<string[]> {
+  const shop = await load(bytes, { "shop.rate": () => amount("1.000000000000000000001") });
+  const once = shop.shop.doubled(amount("12345678901234567890.5"));
+  if (once.issues !== undefined) {
+    return once.issues.map((issue) => issue.code);
+  }
+  const again = shop.shop.doubled(once.value);
+  const converted = shop.shop.converted(3);
+  return [again, converted].map((read) =>
+    read.issues === undefined ? numeral(read.value) : read.issues.map((issue) => issue.code).join());
+}
+`);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.deepEqual(await page.twice(bytes),
+      ["49382715604938271562", "3.000000000000000000003"]);
+  });
+
+  it("stops a page compiling where it hands over a number as a string", async () => {
+    const { at } = await generated(MODEL, `import { load } from "./binding.ts";
+
+export async function doubled(bytes: Uint8Array): Promise<unknown> {
+  const shop = await load(bytes, { "shop.rate": () => 1 });
+  return [shop.shop.doubled("123"), shop.shop.doubled({ rawJSON: "123" })];
+}
+`);
+    const said = await checked(at);
+    assert.match(said, /page\.ts\(5,29\).*'string' is not assignable/);
+    assert.match(said, /page\.ts\(5,55\).*'\{ rawJSON: string; \}' is not assignable/);
   });
 
   it("refuses a module it was not generated from", async () => {

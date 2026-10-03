@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { amount, load as loadModule, messageOf } from "@souther/wasm";
+import { amount, load as loadModule, messageOf, numeral, type Numeric } from "@souther/wasm";
 import { load, type Cart } from "./src/cart.ts";
 
 const bound = await load(readFileSync("public/cart.wasm"));
@@ -25,7 +25,7 @@ function same(what: string, held: unknown, wanted: unknown): void {
   }
 }
 
-/** What a basket's subtotal comes to, through the binding: a number, or the digits where one cannot hold it. */
+/** What a basket's subtotal comes to, through the binding: a number, or an amount where one cannot hold it. */
 function subtotal(cart: Cart): unknown {
   const answer = bound.cart.price(cart);
   return answer.value?.type === "Priced" ? answer.value.subtotal : answer;
@@ -115,11 +115,18 @@ same("a call given nothing",
 // carried them — which is the only way a caller reads what the model worked out rather than what
 // survived being read.
 const wide = "12345678901234567890.12345";
-same("an amount wider than a number holds",
+const widely = subtotal({
+  lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount(wide) }], member: "Standard",
+});
+same("an amount wider than a number holds", widely, amount(wide));
+same("an amount wider than a number holds, as its digits", numeral(widely as Numeric), wide);
+// What came back is handed over again as the number it is, and not as a string the model would
+// refuse: an answer is something a caller passes on.
+same("an amount handed back, handed over again",
   subtotal({
-    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount(wide) }], member: "Standard",
+    lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: widely as Numeric }], member: "Standard",
   }),
-  wide);
+  amount("24691357802469135780.2469"));
 same("an amount a number does hold",
   subtotal({
     lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: amount("1500.00") }], member: "Standard",

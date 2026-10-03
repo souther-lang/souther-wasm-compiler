@@ -49,19 +49,27 @@ const REASONS: Readonly<Record<number, string>> = {
   12: "a number the module gives no type under",
 };
 
-/** An amount, as written: the digits, crossing as the number they are (`JSON.rawJSON`). */
+declare const AMOUNT: unique symbol;
+
+/**
+ * A number as it was written, crossing as the number it is: what `JSON.rawJSON` makes, which
+ * `JSON.stringify` writes back as its digits and not as a string. Made only by `amount` and by
+ * reading an answer, so an object that merely has a `rawJSON` field is not one.
+ */
 export interface Amount {
   readonly rawJSON: string;
+  readonly [AMOUNT]: true;
 }
 
 /** `JSON.rawJSON`, which the standard library's types do not name yet. */
 const raw = (JSON as unknown as { rawJSON(text: string): Amount }).rawJSON;
 
 /**
- * A number as the model holds one: a JavaScript number where one holds it, and the digits where
- * one does not. What a caller hands over may be an `amount` too, which carries the digits.
+ * A number as the model holds one, handed over or handed back: a JavaScript number where one holds
+ * it, and an `Amount` where one does not. Never a string — an answer handed back as one would be
+ * handed over again as a string, and a string is not a number to the model.
  */
-export type Numeric = number | string | Amount;
+export type Numeric = number | Amount;
 
 /**
  * An amount, as it was written.
@@ -69,9 +77,20 @@ export type Numeric = number | string | Amount;
  * An amount is held to whatever precision it was written with and a JavaScript number is not, so
  * one written wider than a number holds would be rounded before it ever reached the model and
  * rounded again coming back. Handing this over instead carries the digits.
+ *
+ * @throws RangeError where `written` is not a number as JSON writes one
  */
 export function amount(written: string | number | bigint): Amount {
-  return raw(String(written));
+  const text = String(written);
+  if (partsOf(text) === undefined) {
+    throw new RangeError(`${JSON.stringify(text)} is not a number as JSON writes one`);
+  }
+  return raw(text);
+}
+
+/** The digits a number is written as: what a page shows, whatever a JavaScript number would round. */
+export function numeral(held: Numeric): string {
+  return typeof held === "number" ? String(held) : held.rawJSON;
 }
 
 /** What answers each behavior a program reaches out for, by the name the model declares it under. */
@@ -332,22 +351,23 @@ export class Program {
 }
 
 /**
- * A document, read with every number kept as it was written where a number cannot hold it: the
- * digits, as a string, wherever the nearest JavaScript number is a different amount.
+ * A document, read with every number kept as it was written where a number cannot hold it: an
+ * `Amount` of the digits wherever the nearest JavaScript number is a different amount, which is
+ * handed over again as the number it is.
  */
 function read(text: string): unknown {
   return JSON.parse(text, function (_key, value, context?: { source?: string }) {
     if (typeof value !== "number" || context?.source === undefined) {
       return value;
     }
-    return sameAmount(String(value), context.source) ? value : context.source;
+    return sameAmount(String(value), context.source) ? value : raw(context.source);
   });
 }
 
 /** Whether two texts written as JSON numbers are the same amount, however each is written. */
 function sameAmount(left: string, right: string): boolean {
-  const a = digitsOf(left);
-  const b = digitsOf(right);
+  const a = partsOf(left);
+  const b = partsOf(right);
   if (a === undefined || b === undefined) {
     return left === right;
   }
@@ -356,7 +376,7 @@ function sameAmount(left: string, right: string): boolean {
 }
 
 /** A number as it was written, taken apart into whole digits and how far the point moved. */
-function digitsOf(written: string): { digits: bigint; scale: number } | undefined {
+function partsOf(written: string): { digits: bigint; scale: number } | undefined {
   const held = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([-+]?\d+))?$/.exec(written);
   if (held === null) {
     return undefined;
