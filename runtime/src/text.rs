@@ -25,12 +25,22 @@ pub unsafe fn begin() {
     ROOM = INITIAL_ROOM;
 }
 
+/// Forgets the run, as the arena it lives in is popped. A run pushed to after this starts in room of
+/// its own rather than writing where the last one was.
+pub unsafe fn forget() {
+    AT = 0;
+    WRITTEN = 0;
+    ROOM = 0;
+}
+
 /// Adds bytes to the run.
 pub unsafe fn push(from: u32, length: u32) {
     if WRITTEN + length > ROOM {
         let wanted = (WRITTEN + length) * 2;
         let wider = alloc(wanted);
-        core::ptr::copy_nonoverlapping(AT as *const u8, wider as *mut u8, WRITTEN as usize);
+        if WRITTEN > 0 {
+            core::ptr::copy_nonoverlapping(AT as *const u8, wider as *mut u8, WRITTEN as usize);
+        }
         AT = wider;
         ROOM = wanted;
     }

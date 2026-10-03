@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -48,8 +48,7 @@ class ANameForAValueCrossesAsThatValueTest {
         assertThat(answerOf(module, "naming.reference", "\"1000-000001\""))
                 .isEqualTo("{\"value\":\"1000-000001\"}");
         assertThat(answerOf(module, "naming.reference", "\"nope\""))
-                .contains("invariant_violation")
-                .contains("\"expected\":\"OrderNo\"");
+                .contains("\"code\":\"invalid_format\"");
     }
 
     @Test
@@ -88,7 +87,7 @@ class ANameForAValueCrossesAsThatValueTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        return Running.linked(Compiled.module(Compiled.program(List.of("""
                 module naming
 
                 data Identifier = String

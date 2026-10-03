@@ -4,10 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.temporal.TemporalForms;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -15,8 +15,10 @@ import souther.wasm.abi.RuntimeAbi;
  * A moment on the timeline, against what an outside timestamp says one is.
  *
  * <p>Neither what a moment is written as nor what a written one comes to is this backend's to
- * decide, so the tests run the same question through {@code java.time} — which is what the other
- * backend holds a moment as — and require the two to agree. A moment keeps a sub-second reading,
+ * decide. Which text is a moment is Souther's ({@link TemporalForms#atBoundary}, the grammar it
+ * shares with Raoh), and what a written one comes to is asked of {@code java.time} — which is what
+ * the other backend holds a moment as — and the two backends are required to agree. A moment
+ * keeps a sub-second reading,
  * which is the whole reason it is not a {@code DateTime}: a value quietly rounded reads downstream
  * as the value that was sent.
  */
@@ -42,9 +44,7 @@ class AMomentIsWhatATimestampSaysTest {
         "2026-09-01T00:00:00+09:00",
         "2026-09-04T24:00:00Z",
         "2026-12-31T24:00:00Z",
-        "2026-09-04T09:30:15.Z",
         "2026-09-04T09:30:15.0Z",
-        "2026-09-04t09:30:15z",
         "+12026-09-04T09:30:15Z",
         "-0001-09-04T09:30:15Z",
     };
@@ -61,6 +61,8 @@ class AMomentIsWhatATimestampSaysTest {
         "2026-09-04T24:00:01Z",
         "2026-09-04 09:30:15Z",
         "2026-09-04T09:30:15.1234567890Z",
+        "2026-09-04T09:30:15.Z",
+        "2026-09-04t09:30:15z",
         "2026-9-04T09:30:15Z",
         "not a moment",
     };
@@ -82,11 +84,11 @@ class AMomentIsWhatATimestampSaysTest {
         Running module = compiled();
 
         for (String written : NOT_MOMENTS) {
-            assertThat(readableByTheJvm(written))
-                    .describedAs(written + " is no moment to java.time either").isFalse();
+            assertThat(TemporalForms.atBoundary(TemporalForms.Kind.INSTANT, written))
+                    .describedAs(written + " is no moment to Souther either").isPresent();
             assertThat(answerOf(module, "timeline.same", quoted(written)))
                     .describedAs(written)
-                    .contains("\"expected\":\"Instant\"");
+                    .contains("\"code\":\"invalid_format\"");
         }
         assertThat(answerOf(module, "timeline.same", "7")).contains("\"actual\":\"number\"");
     }
@@ -98,7 +100,7 @@ class AMomentIsWhatATimestampSaysTest {
         // A leap second is the one thing a parse would quietly move: what an outside timestamp
         // said would come back as the second before it, and nothing downstream could tell.
         assertThat(answerOf(module, "timeline.same", quoted("2016-12-31T23:59:60Z")))
-                .contains("\"expected\":\"Instant\"");
+                .contains("\"code\":\"invalid_format\"");
     }
 
     @Test
@@ -124,16 +126,6 @@ class AMomentIsWhatATimestampSaysTest {
                 .isEqualTo(value(quoted(Instant.parse("1969-07-20T20:17:40Z").toString())));
     }
 
-    /** Whether {@code java.time} reads it, which is what this backend has to agree with. */
-    private static boolean readableByTheJvm(String written) {
-        try {
-            Instant.parse(written);
-            return true;
-        } catch (DateTimeParseException ignored) {
-            return false;
-        }
-    }
-
     private static String value(String written) {
         return "{\"value\":" + written + "}";
     }
@@ -143,7 +135,7 @@ class AMomentIsWhatATimestampSaysTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        return Running.linked(Compiled.module(Compiled.program(List.of("""
                 module timeline
 
                 behavior same : (at: Instant) -> Instant

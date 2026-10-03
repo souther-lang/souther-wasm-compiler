@@ -43,11 +43,29 @@ public final class RuntimeAbi {
      * <p>Raised to 4 when the reason vocabulary stopped naming Souther's own abort semantics a
      * second time and started only representing {@code souther.compiler.abort.AbortKind} (issue
      * #23): see {@code runtime/src/lib.rs}'s own note on its {@code ABI_VERSION} for what changed.
-     *
-     * <p>Raised to 5 when {@code ++} was split by its operands' type: the {@code String} join became
-     * {@link #STRING_JOIN} (it was {@code __souther_concat}) and {@link #LIST_JOIN} joins lists.
+     * Raised to 5 when what {@link Kernels#STRING_MATCHES} is told became the image of the
+     * pattern's machine that 199x-notation writes, in place of this compiler's own list of steps.
+     * Raised to 6 when the layout of a cell became something a generated body relies on
+     * ({@link Cell}), and a walk began to grow a map in place. Raised to 7 when a call could end
+     * for a reason it could not before, {@code NO_SUCH_TYPE}: a host naming reasons by the numbers
+     * of 6 would not know it. Raised to 8 when an issue became Raoh's, with a message key and the
+     * metadata its constraint carries, and a descriptor of a type with rules came to point at what
+     * each rule is reported as: a host reading the issues of 7 would find neither.
      */
-    public static final int VERSION = 5;
+    public static final int VERSION = 8;
+
+    /**
+     * What of the runtime a linked module still shows its host: the memory, and what the steps
+     * above and the canonical ABI call.
+     *
+     * <p>Everything else the runtime exports is there for the link to call, and a linked module
+     * keeps only what its own bodies reach of it. A runtime export left showing would be a root the
+     * link could not leave out, and every kernel would be carried by every program.
+     */
+    public static final java.util.List<String> HOST_EXPORTS = java.util.List.of(
+            RuntimeAbi.MEMORY, RuntimeAbi.ALLOC, RuntimeAbi.ALLOC_MARK, RuntimeAbi.ALLOC_RESET,
+            RuntimeAbi.FAILURE_ADDR, RuntimeAbi.FAILURE_GENERATION, RuntimeAbi.ABI_VERSION,
+            RuntimeAbi.CANONICAL_REALLOC);
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";
@@ -225,6 +243,21 @@ public final class RuntimeAbi {
     /** {@code (i32 builder, i32 value) -> i32}: the builder holding one more. */
     public static final String GROW = "__souther_grow";
 
+    /** {@code (i32 builder, i32 value) -> i32}: the builder holding one more value. */
+    public static final String GROW_ONE = "__souther_grow_one";
+
+    /** {@code (i32 descriptor) -> i32}: a map for a walk to grow, holding nothing yet. */
+    public static final String MAP_BUILDER = "__souther_map_builder";
+
+    /**
+     * {@code (i32 key, i32 value, i32 builder) -> i32}: the map a walk is growing, holding one more
+     * entry, put in the map rather than in a copy of it.
+     */
+    public static final String MAP_PUT = "__souther_map_put";
+
+    /** {@code (i32 builder) -> i32}: the map a walk grew, its entries in the order of their keys. */
+    public static final String MAP_SEALED = "__souther_map_sealed";
+
     /** {@code (i32 builder) -> i32}: the list a builder has grown. */
     public static final String SEALED = "__souther_sealed";
 
@@ -254,6 +287,15 @@ public final class RuntimeAbi {
 
     /** {@code (i32 left, i32 right) -> i32}: the {@code -} operator on {@code Int}. */
     public static final String SUBTRACT = "__souther_subtract";
+
+    /** {@code (i64 a, i64 b) -> i64}: the {@code +} operator on two whole numbers held as such. */
+    public static final String INT_SUM = "__souther_int_sum";
+
+    /** {@code (i64 a, i64 b) -> i64}: the {@code -} operator on two whole numbers held as such. */
+    public static final String INT_DIFFERENCE = "__souther_int_difference";
+
+    /** {@code (i64 a, i64 b) -> i64}: the {@code *} operator on two whole numbers held as such. */
+    public static final String INT_PRODUCT = "__souther_int_product";
 
     /** {@code (i32 cell) -> i64}: the whole number a cell holds. */
     public static final String INT_VALUE = "__souther_int_value";
@@ -323,7 +365,8 @@ public final class RuntimeAbi {
         /** {@code (i32 sub, i32 s) -> i32}. */
         public static final String STRING_CONTAINS = "__souther_string_contains";
 
-        /** {@code String.matches(pattern, s)}, told the machine the pattern was compiled into. */
+        /** {@code String.matches(pattern, s)}, told where the image of the pattern's machine is: a
+         *  {@code u32} length and the image's ASCII bytes after it. */
         public static final String STRING_MATCHES = "__souther_string_matches";
 
         /** {@code String.fromDecimal(d)}. */
@@ -507,10 +550,11 @@ public final class RuntimeAbi {
     }
 
     /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
-    public static final String STRING_JOIN = "__souther_string_concat";
+    public static final String CONCAT = "__souther_concat";
 
-    /** {@code (i32 left, i32 right, i32 descriptor) -> i32}: the {@code ++} operator on lists. */
-    public static final String LIST_JOIN = "__souther_list_concat";
+    /** {@code (i32 left, i32 right, i32 descriptor) -> i32}: the {@code ++} operator on
+     *  {@code List}, answering a list of the type the descriptor names. */
+    public static final String LIST_CONCAT = "__souther_list_concat";
 
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
@@ -557,6 +601,49 @@ public final class RuntimeAbi {
      * whether the place it fills was declared as the sum or as the case.
      */
     public static final String WRITE = "__souther_write";
+
+    /**
+     * How a cell is laid out, for a value this compiler writes into static memory or reads without
+     * a call.
+     *
+     * <p>A literal is the same value every time it is reached, so it is written once, as the cell
+     * the runtime would have made, rather than made in the arena each time. And reading the number
+     * an {@code Int} cell holds is one load, which a call does not need to be made for. Both rest on
+     * the layout {@code runtime/src/value.rs} writes, which a test holds these to by asking the
+     * runtime to make each cell and reading what it made.
+     */
+    public static final class Cell {
+
+        private Cell() {
+        }
+
+        /** Where a cell's payload starts: after its tag and the word the tag makes something of. */
+        public static final int PAYLOAD = 8;
+
+        /** Where the word after the tag is: a length, a descriptor, a slot. */
+        public static final int SECOND = 4;
+
+        /** The value of a type with one value. The second word is which type. */
+        public static final int TAG_UNIT = 0;
+
+        /** An {@code Int}: sixty-four bits of payload. */
+        public static final int TAG_INT = 1;
+
+        /** A {@code Bool}: thirty-two bits of payload, one or zero. */
+        public static final int TAG_BOOL = 2;
+
+        /** A {@code String}: the second word is how many bytes, and the payload is the bytes. */
+        public static final int TAG_STRING = 3;
+
+        /** A list: the payload is how many elements, and a pointer per element follows. */
+        public static final int TAG_LIST = 5;
+
+        /** An option holding nothing. */
+        public static final int TAG_NONE = 7;
+
+        /** A block as a value: the second word is its slot, and the payload what it captured. */
+        public static final int TAG_CLOSURE = 9;
+    }
 
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */
     public static final String START_THUNK = "__souther_start";

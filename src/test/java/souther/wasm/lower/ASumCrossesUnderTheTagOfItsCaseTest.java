@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 
 /**
@@ -59,7 +59,8 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
 
         assertThat(answerOf(module, "shipping.chosen", "[{\"type\": \"Overnight\"}]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0/type\",\"code\":\"not_allowed\","
-                        + "\"meta\":{\"actual\":\"Overnight\",\"expected\":\"a case\"}}]}");
+                        + "\"messageKey\":\"not_allowed\","
+                        + "\"meta\":{\"allowed\":[\"Standard\",\"Express\"]}}]}");
     }
 
     @Test
@@ -67,7 +68,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
         Running module = compiled(SHIPPING);
 
         assertThat(answerOf(module, "shipping.chosen", "[{\"days\": 3}]"))
-                .contains("\"path\":\"/0/type\"", "\"code\":\"missing_field\"");
+                .contains("\"path\":\"/0/type\"", "\"code\":\"required\"");
     }
 
     @Test
@@ -75,7 +76,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
         Running module = compiled(SHIPPING);
 
         assertThat(answerOf(module, "shipping.chosen", "[{\"type\": \"Standard\", \"days\": \"three\"}]"))
-                .contains("\"path\":\"/0/days\"", "\"code\":\"type_mismatch\"", "\"expected\":\"Int\"");
+                .contains("\"path\":\"/0/days\"", "\"code\":\"type_mismatch\"", "\"expected\":\"long\"");
     }
 
     @Test
@@ -128,7 +129,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
         // A shape is described before the set it is a case of has an address, so a case holding
         // the set describes it again. Nothing here says why that stops, which is the reason this
         // asks: the day it does not, the compile dies with a stack rather than a diagnostic.
-        assertThat(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        assertThat(Compiled.module(Compiled.program(List.of("""
                 module chaining
 
                 data Empty
@@ -144,7 +145,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
     @Test
     void writesAShapeHoldingTheSetOfAlternativesItIsReachedThrough() {
         // The same question from the other end, where the shape is the first thing described.
-        assertThat(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        assertThat(Compiled.module(Compiled.program(List.of("""
                 module chaining
 
                 data Empty
@@ -158,7 +159,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

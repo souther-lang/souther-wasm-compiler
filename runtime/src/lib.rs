@@ -24,16 +24,17 @@
 
 #![no_std]
 
+extern crate alloc as heap;
+
 mod captures;
-mod casing;
-mod casing_data;
+mod clauses;
 mod decimal;
 mod descriptor;
 mod issues;
 mod kernel;
 mod json;
+mod notation;
 mod order;
-mod regex;
 mod temporal;
 mod text;
 mod value;
@@ -52,10 +53,21 @@ const PAGE: usize = 65536;
 /// alone to every `REQUIRED_FORM_HAS_NO_PLACE` case, 7 from a match falling through alone to any
 /// internal invariant breaking, 8 and 9 were renamed to the language's own names), and 11 is new.
 ///
-/// Raised to 5 when `++` stopped being one entry point that served only `String`: the string join
-/// is `__souther_string_concat` (it was `__souther_concat`) and the list join is
-/// `__souther_list_concat`.
-const ABI_VERSION: u32 = 5;
+/// Raised to 5 when what `__souther_string_matches` is told became the image of the pattern's
+/// machine that 199x-notation writes, in place of the compiler's own list of steps: a module
+/// linked by the older compiler would hand this runtime steps it reads as an image.
+///
+/// Raised to 6 when a body began to read a cell's payload itself and to place literals in static
+/// memory as the cells this runtime makes, so the layout of a cell became part of what the two
+/// sides agree on; and when a walk began to grow a map in place, and to add one value to a list
+/// without a list of one around it.
+///
+/// Raised to 7 when a call could end for a reason it could not before, `NO_SUCH_TYPE`, which a host
+/// naming reasons by the numbers of 6 would not know.
+///
+/// Raised to 8 when an issue became Raoh's, with a message key and the metadata its constraint
+/// carries, and a descriptor of a type with rules came to point at what each rule is reported as.
+const ABI_VERSION: u32 = 8;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -98,10 +110,22 @@ pub unsafe extern "C" fn __souther_runtime_init(static_end: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn __ronto_alloc(size: u32) -> u32 {
     let start = ARENA_TOP;
-    let end = start + size as usize;
+    // Past the last address there is, the end wraps round to a small one and would read as room
+    // already mapped: an arena that ran out has to say so rather than hand out what it already has.
+    let Some(end) = start.checked_add(size as usize) else {
+        __souther_abort(REASON_OUT_OF_MEMORY, 0, size as u64, 0);
+    };
     if end > memory_bytes() {
-        let wanted = (end - memory_bytes()).div_ceil(PAGE);
-        if core::arch::wasm32::memory_grow(0, wanted) == usize::MAX {
+        // At least as much again as there is, and not only what this allocation is short of. An
+        // engine may move all of memory to grow it, so growing by what each allocation lacks makes
+        // an arena that climbs a page at a time cost the square of how far it climbs: a call
+        // reading a list of sixteen thousand elements took twenty seconds the first time and a
+        // fifth of a second after, once memory was wide enough.
+        let short = (end - memory_bytes()).div_ceil(PAGE);
+        let wanted = short.max(core::arch::wasm32::memory_size(0));
+        if core::arch::wasm32::memory_grow(0, wanted) == usize::MAX
+            && core::arch::wasm32::memory_grow(0, short) == usize::MAX
+        {
             __souther_abort(REASON_OUT_OF_MEMORY, 0, size as u64, 0);
         }
     }
@@ -131,6 +155,7 @@ pub unsafe extern "C" fn __ronto_alloc_reset(mark: u32) {
         __souther_abort(REASON_BAD_MARK, 0, mark as u64, ARENA_TOP as u64);
     }
     ARENA_TOP = mark;
+    arena_popped();
 }
 
 /// Where a string a call answered with is, in the one place a component reads a result from.
@@ -161,6 +186,21 @@ pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_arena_rewind() {
     ARENA_TOP = ARENA_BASE;
+    arena_popped();
+}
+
+/// Forgets everything this crate keeps between calls that lives in the arena, as the arena is
+/// popped.
+///
+/// The one place such state ends, and the only two ways the arena is popped both come here, so
+/// what is kept is never read after the memory under it has been handed out again. Not left to the
+/// next call to set straight: a caller that pops and then reaches the runtime some other way than
+/// through an export's start would otherwise read, or write through, memory that is something
+/// else's by then.
+unsafe fn arena_popped() {
+    kernel::forget_kept_pattern();
+    issues::forget();
+    text::forget();
 }
 
 /// What the canonical ABI allocates and reallocates with.
@@ -296,8 +336,8 @@ const OFF_AUX1: usize = 20;
 // `souther.wasm.abi.WasmAbortMapping`, and repeated here as the same number under the same name so
 // that raising one and reading it agree; nothing here may raise a Souther program abort under a
 // name `WasmAbortMapping` does not also use for it (`TheTwoSidesOfAReasonAgreeOnItsNumberTest`
-// holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE` and
-// `BACKEND_INVARIANT_BROKEN` are this crate's own — a carrier failing to carry an answer through,
+// holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE`,
+// `BACKEND_INVARIANT_BROKEN` and `NO_SUCH_TYPE` are this crate's own — a carrier failing to carry an answer through,
 // or this backend's own machinery reaching a state the checker settled it never would — and are
 // this crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
@@ -349,6 +389,50 @@ pub const REASON_INVALID_BOUNDS: u32 = 10;
 /// lowered here emits an `ensures` check (see the Java `WasmCompiler`) — reserved here so the
 /// number is fixed before anything does. Represents `AbortKind::ENSURES_NOT_HELD`.
 pub const REASON_ENSURES_NOT_HELD: u32 = 11;
+/// A caller asked to read a value as a type under a number the module gives no type. `aux0` is
+/// the number, `aux1` how many the module gives. Raised by generated code, and an ABI failure by
+/// whoever calls this module, as `BAD_MARK` is: `WasmFault::NO_SUCH_TYPE`.
+pub const REASON_NO_SUCH_TYPE: u32 = 12;
+
+/// The arena, as what `alloc` allocates from: for 199x-notation, and for the text this crate
+/// builds to hand to it.
+///
+/// Nothing is given back one allocation at a time: what a call made goes back with the arena when
+/// the caller pops it, so `dealloc` does nothing. What the library builds lives no longer than the
+/// call that asked for it, and nothing here keeps any of it past that call.
+///
+/// The arena hands out exactly what it is asked for, so that a run written piece by piece stays
+/// one run, and an alignment is taken here by padding first. A caller writing a run therefore asks
+/// the library for nothing between its first piece and its last.
+struct Arena;
+
+unsafe impl core::alloc::GlobalAlloc for Arena {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        let over = ARENA_TOP % layout.align();
+        if over != 0 {
+            let _ = __ronto_alloc((layout.align() - over) as u32);
+        }
+        __ronto_alloc(layout.size() as u32) as *mut u8
+    }
+
+    unsafe fn dealloc(&self, _at: *mut u8, _layout: core::alloc::Layout) {}
+
+    /// Grows in place where the allocation is the last the arena handed out, which is what a
+    /// string being built usually is, and moves it otherwise.
+    unsafe fn realloc(&self, at: *mut u8, layout: core::alloc::Layout, wanted: usize) -> *mut u8 {
+        if at as usize + layout.size() == ARENA_TOP && wanted >= layout.size() {
+            let _ = __ronto_alloc((wanted - layout.size()) as u32);
+            return at;
+        }
+        let moved = self.alloc(core::alloc::Layout::from_size_align_unchecked(wanted, layout.align()));
+        let kept = if layout.size() < wanted { layout.size() } else { wanted };
+        core::ptr::copy_nonoverlapping(at, moved, kept);
+        moved
+    }
+}
+
+#[global_allocator]
+static ARENA: Arena = Arena;
 
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says

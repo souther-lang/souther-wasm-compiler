@@ -8,7 +8,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.ToIntFunction;
 import souther.compiler.core.ValueShape;
+import souther.compiler.program.CheckedAlternativesForm;
+import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedBoundaryOutput;
 import souther.compiler.program.CheckedData;
+import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.Type;
 import souther.compiler.types.TypeKey;
@@ -67,11 +71,70 @@ final class Descriptors {
 
     private final ToIntFunction<TypeSymbol.AtModule> checks;
 
+    /** Where each pattern's machine is placed, for a clause and a body alike. */
+    private final Patterns patterns;
+
+    /** What each type's clauses are reported as. */
+    private final Clauses clauses;
+
+    /**
+     * Every union a behavior answers, as the checker settled it to cross: its leaves and the form
+     * they travel in.
+     */
+    private final Map<Type.Union, CheckedBoundaryOutput.Cases> answered = new HashMap<>();
+
     Descriptors(CheckedProgram program, WasmFragment fragment,
             ToIntFunction<TypeSymbol.AtModule> checks) {
         this.program = program;
         this.fragment = fragment;
         this.checks = checks;
+        this.patterns = new Patterns(fragment);
+        this.clauses = new Clauses(fragment, patterns);
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                settle(behavior.signature().output());
+            }
+        }
+    }
+
+    private void settle(CheckedBoundaryOutput output) {
+        switch (output) {
+            case CheckedBoundaryOutput.Cases cases -> answered.put(cases.type(), cases);
+            case CheckedBoundaryOutput.ListOf list -> settle(list.element());
+            case CheckedBoundaryOutput.SetOf set -> settle(set.element());
+            case CheckedBoundaryOutput.MapOf map -> settle(map.value());
+            case CheckedBoundaryOutput.Scalar ignored -> { }
+            case CheckedBoundaryOutput.Nominal ignored -> { }
+        }
+    }
+
+    private static boolean isBareTag(CheckedAlternativesForm form) {
+        return form instanceof CheckedAlternativesForm.Enumeration;
+    }
+
+    /**
+     * A union no behavior answers, which only a body holds.
+     *
+     * <p>Its leaves are its members with each sum among them descended into, as the checker's are,
+     * because a value of it is told apart by the leaf it is. No boundary writes one, so its form is
+     * never read; it is given the one the checker gives a union, a bare tag where every leaf is a
+     * unit, so that a descriptor never says something about a set the checker would not.
+     */
+    private int unsettled(Type.Union union) {
+        List<TypeSymbol> leaves = new ArrayList<>();
+        for (TypeSymbol member : union.members()) {
+            List<TypeSymbol> under = member instanceof TypeSymbol.AtModule named
+                    && declared(named) instanceof CheckedData.Sum sum ? sum.cases() : List.of(member);
+            for (TypeSymbol leaf : under) {
+                if (!leaves.contains(leaf)) {
+                    leaves.add(leaf);
+                }
+            }
+        }
+        boolean units = !leaves.isEmpty() && leaves.stream().allMatch(
+                each -> each instanceof TypeSymbol.AtModule held
+                        && declared(held) instanceof CheckedData.Unit);
+        return alternatives(null, leaves, units);
     }
 
     /**
@@ -109,7 +172,12 @@ final class Descriptors {
                 }
                 yield written(KIND_TUPLE, null, places);
             }
-            case Type.Union union -> alternatives(null, List.copyOf(union.members()));
+            case Type.Union union -> {
+                CheckedBoundaryOutput.Cases settled = answered.get(union);
+                yield settled != null
+                        ? alternatives(null, settled.cases(), isBareTag(settled.representation()))
+                        : unsettled(union);
+            }
             case Type.MapOf map -> {
                 // A key is written as the name of an object's member, so a type keys a map
                 // exactly when it is written as a bare string — and it is written the same way
@@ -152,15 +220,24 @@ final class Descriptors {
      * <p>An operation that rounds is told which way as a place among these, because what it does
      * with it is pick one of that many ways — and a value of one of the cases is typed as that
      * case, so the set it belongs to is asked of the language rather than of the value.
+     *
+     * <p>Found once. The program answers what the language declares by going through everything
+     * it holds, which is what listing them costs, and every operation that rounds asks this.
      */
     int roundingModes() {
-        for (CheckedData each : program.languageDeclarations()) {
-            if (each instanceof CheckedData.Sum held && isRoundingMode(held.name())) {
-                return ofDeclared(held.name());
-            }
+        if (roundingModes == null) {
+            roundingModes = program.languageDeclarations().stream()
+                    .filter(each -> each instanceof CheckedData.Sum && isRoundingMode(each.name()))
+                    .findFirst()
+                    .map(held -> ofDeclared(held.name()))
+                    .orElseThrow(() -> new NotLowered(
+                            "the language declares no set of ways to round"));
         }
-        throw new NotLowered("the language declares no set of ways to round");
+        return roundingModes;
     }
+
+    /** Where the set of ways to round is described, once something has asked. */
+    private Integer roundingModes;
 
     /**
      * What a declared shape says must hold of its values.
@@ -230,7 +307,8 @@ final class Descriptors {
                     .toList());
             // A sum's cases are its leaves: a case written as another sum is carried here as the
             // cases under it, so nothing nested reaches this and the tag always names a leaf.
-            case CheckedData.Sum choice -> alternatives(name, choice.cases());
+            case CheckedData.Sum choice ->
+                    alternatives(name, choice.cases(), isBareTag(choice.representation()));
         };
     }
 
@@ -239,19 +317,21 @@ final class Descriptors {
      *
      * <p>Where every one of them carries nothing but which it is, the value written is the name
      * itself; where any carries something of its own, the name stands beside it under a key. That
-     * is the language's rule about how a set of alternatives crosses, and both backends have to
-     * read it the same way or one set is two documents.
+     * is the language's rule about how a set of alternatives crosses, and every backend has to
+     * read it the same way or one set is two documents — so the form is the checker's answer, read
+     * here and never worked out again from the members.
      *
      * @param name the type the set is declared as, or null where nobody named the members together
+     * @param members the leaves, a member that is itself a sum already descended into: a value of
+     *     the set carries the descriptor of the leaf it is, and that is what it is told apart by
+     * @param carriesNothing whether the set travels as a bare tag
      */
-    private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members) {
-        boolean carriesNothing = !members.isEmpty() && members.stream().allMatch(
-                each -> each instanceof TypeSymbol.AtModule held
-                        && declared(held) instanceof CheckedData.Unit);
+    private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members,
+            boolean carriesNothing) {
         List<int[]> described = new ArrayList<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
-            described.add(new int[] {fragment.place(utf8), utf8.length, ofMember(member)});
+            described.add(new int[] {fragment.intern(utf8), utf8.length, ofMember(member)});
         }
         return written(carriesNothing ? KIND_ENUMERATION : KIND_SUM, name, described);
     }
@@ -309,7 +389,7 @@ final class Descriptors {
         List<int[]> written = new ArrayList<>();
         for (Member member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
-            written.add(new int[] {fragment.place(utf8), utf8.length, of(member.type())});
+            written.add(new int[] {fragment.intern(utf8), utf8.length, of(member.type())});
         }
         return filled(kind, name, descriptor, written);
     }
@@ -323,7 +403,9 @@ final class Descriptors {
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members) {
         // A form a value is built out of carries its own name and the slot of what checks it,
         // after its fields.
-        int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 12 : 0));
+        // A set of names carries its own name too, for an issue saying a name is not one of them.
+        int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 16 : 0)
+                + (kind == KIND_ENUMERATION ? 8 : 0));
         if (name != null) {
             byName.put(name, descriptor);
         }
@@ -342,9 +424,16 @@ final class Descriptors {
         }
         if (product) {
             byte[] own = name.name().getBytes(StandardCharsets.UTF_8);
-            out.writeLittleEndian4(fragment.place(own))
+            out.writeLittleEndian4(fragment.intern(own))
                     .writeLittleEndian4(own.length)
-                    .writeLittleEndian4(checks.applyAsInt(name));
+                    .writeLittleEndian4(checks.applyAsInt(name))
+                    .writeLittleEndian4(clauses.of(name, invariantsOf(name),
+                            kind == KIND_NEWTYPE));
+        }
+        if (kind == KIND_ENUMERATION) {
+            byte[] own = name == null ? new byte[0] : name.name().getBytes(StandardCharsets.UTF_8);
+            out.writeLittleEndian4(own.length == 0 ? 0 : fragment.intern(own))
+                    .writeLittleEndian4(own.length);
         }
         fragment.fill(descriptor, table.toByteArray());
         return descriptor;
@@ -368,15 +457,12 @@ final class Descriptors {
      * <p>A rounding mode is the language's, and a body that names one is naming a type like any
      * other — so it is found where it is declared rather than only where a module would put it.
      */
+    /** Where each pattern's machine is placed, which a body's {@code String.matches} reads too. */
+    Patterns patterns() {
+        return patterns;
+    }
+
     private CheckedData declared(TypeSymbol.AtModule name) {
-        for (CheckedData each : program.languageDeclarations()) {
-            // By the name every declaration answers, not by asking each form in turn: a form this
-            // does not name would be looked for where a module's declarations are and not found
-            // there, and the day the language declares one that is what would happen.
-            if (each.name().equals(name)) {
-                return each;
-            }
-        }
         return program.declaration(name).data();
     }
 

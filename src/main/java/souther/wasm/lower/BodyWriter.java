@@ -43,6 +43,17 @@ final class BodyWriter {
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
     private static final int OPCODE_I64_EXTEND_I32_S = 0xac;
     private static final int OPCODE_I64_SHR_U = 0x88;
+    private static final int OPCODE_I64_SUB = 0x7d;
+    private static final int OPCODE_I64_EQ = 0x51;
+    private static final int OPCODE_I64_NE = 0x52;
+    private static final int OPCODE_I64_LT_S = 0x53;
+    private static final int OPCODE_I64_GT_S = 0x55;
+    private static final int OPCODE_I64_LE_S = 0x57;
+    private static final int OPCODE_I64_GE_S = 0x59;
+    private static final int OPCODE_I32_LOAD = 0x28;
+    private static final int OPCODE_I64_LOAD = 0x29;
+    private static final int OPCODE_I32_SHL = 0x74;
+    private static final int OPCODE_SELECT = 0x1b;
 
     private static final int TYPE_I32 = 0x7f;
     private static final int TYPE_I64 = 0x7e;
@@ -53,6 +64,8 @@ final class BodyWriter {
     private final int parameters;
     private final int wideLocals;
     private int narrowLocals;
+    /** How many conditions, blocks and loops are open where the next instruction goes. */
+    private int depth;
 
     /**
      * @param parameters how many the function's type declares, which take the first indices
@@ -122,6 +135,53 @@ final class BodyWriter {
         EQUAL, UNEQUAL, LESS, AT_MOST, GREATER, AT_LEAST
     }
 
+    /** The same, for two sixty-four bit numbers. */
+    BodyWriter comparesWide(Comparison how) {
+        writer.write((byte) switch (how) {
+            case EQUAL -> OPCODE_I64_EQ;
+            case UNEQUAL -> OPCODE_I64_NE;
+            case LESS -> OPCODE_I64_LT_S;
+            case AT_MOST -> OPCODE_I64_LE_S;
+            case GREATER -> OPCODE_I64_GT_S;
+            case AT_LEAST -> OPCODE_I64_GE_S;
+        });
+        return this;
+    }
+
+    /** Takes the second sixty-four bit number on the stack from the first. */
+    BodyWriter subtractWide() {
+        writer.write((byte) OPCODE_I64_SUB);
+        return this;
+    }
+
+    /** Reads the thirty-two bits that many bytes past the address on the stack. */
+    BodyWriter load(int offset) {
+        writer.write((byte) OPCODE_I32_LOAD).writeUnsignedLeb128(0).writeUnsignedLeb128(offset);
+        return this;
+    }
+
+    /** Reads the sixty-four bits that many bytes past the address on the stack. */
+    BodyWriter loadWide(int offset) {
+        writer.write((byte) OPCODE_I64_LOAD).writeUnsignedLeb128(0).writeUnsignedLeb128(offset);
+        return this;
+    }
+
+    /** Multiplies the number on the stack by two to the power of {@code places}. */
+    BodyWriter shiftLeft(int places) {
+        constant(places);
+        writer.write((byte) OPCODE_I32_SHL);
+        return this;
+    }
+
+    /**
+     * Of the two values under the number on the stack, the first where the number is not zero and
+     * the second where it is.
+     */
+    BodyWriter select() {
+        writer.write((byte) OPCODE_SELECT);
+        return this;
+    }
+
     /** Turns the two numbers on the stack into whether the first stands that way to the second. */
     BodyWriter compares(Comparison how) {
         writer.write((byte) switch (how) {
@@ -138,12 +198,14 @@ final class BodyWriter {
     /** Runs what follows only when the number on the stack is zero. Closed by {@link #end}. */
     BodyWriter ifZero() {
         writer.write((byte) OPCODE_I32_EQZ).write((byte) OPCODE_IF).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
     }
 
     /** Runs what follows only when the number on the stack is not zero. Closed by {@link #end}. */
     BodyWriter ifNotZero() {
         writer.write((byte) OPCODE_IF).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
     }
 
@@ -166,13 +228,23 @@ final class BodyWriter {
     /** Opens a place to leave from, closed by {@link #end}. */
     BodyWriter block() {
         writer.write((byte) OPCODE_BLOCK).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
     }
 
     /** Opens a place to go back to, closed by {@link #end}. */
     BodyWriter loop() {
         writer.write((byte) OPCODE_LOOP).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
+    }
+
+    /**
+     * How many conditions, blocks and loops are open here, so that a branch to one opened earlier
+     * can say how many out it is: the difference between this and what this answered there.
+     */
+    int depth() {
+        return depth;
     }
 
     /** Goes to the edge of the block that many out, whatever is on the stack. */
@@ -208,6 +280,7 @@ final class BodyWriter {
     /** Closes a condition. */
     BodyWriter end() {
         writer.write((byte) OPCODE_END);
+        depth--;
         return this;
     }
 

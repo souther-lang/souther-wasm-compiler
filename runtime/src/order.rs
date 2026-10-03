@@ -6,16 +6,9 @@
 //! values this runtime holds rather than over the forms a JVM encoder makes of them.
 //!
 //! Null first, then false, true, numbers, strings, arrays and objects. Numbers by the amount and
-//! then by the way it is written; strings by UTF-16 code unit; arrays element by element with the
-//! shorter first; objects as their members read in key order.
-//!
-//! # Why code units
-//!
-//! A JVM string compares by `char`, which is a UTF-16 code unit, and what is held here is UTF-8.
-//! The two disagree: a character past the basic plane is one code point above every code unit and
-//! two surrogates below `U+E000`, so `"\u{10000}"` sorts after `"\u{FFFF}"` by code point and
-//! before it by code unit. Comparing the bytes would put a set in an order the JVM backend does
-//! not write, which is the whole thing this order exists to stop.
+//! then by the way it is written; strings by scalar value, which is the language's order on text and
+//! 199x-notation's; arrays element by element with the shorter first; objects as their members read
+//! in key order.
 
 use crate::decimal;
 use crate::descriptor::{
@@ -24,8 +17,10 @@ use crate::descriptor::{
     KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
     KIND_TUPLE, KIND_UNIT,
 };
+use crate::notation;
 use crate::temporal;
 use crate::value;
+use crate::{abort, REASON_BACKEND_INVARIANT_BROKEN};
 
 const RANK_NULL: i32 = 0;
 const RANK_FALSE: i32 = 1;
@@ -118,6 +113,114 @@ pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
         }
         _ => compare(left, right, descriptor),
     }
+}
+
+/// A hash of a value, the same for any two that `ranked` answers nothing between.
+///
+/// Read off what `ranked` and `compare` compare, part by part, so two values that stand in one place
+/// have one hash whatever cells hold them: an amount by how much it is and not by its scale, a
+/// moment by when it is and not by how it was spelt, a case by which case it is.
+///
+/// And off every part they compare, none left out. A hash that leaves a part out is still never
+/// two hashes for one value, but every value differing only in that part shares one, and a caller
+/// choosing keys can make every key of a map collide: a table looking keys up by hash then walks
+/// every key per key, which is the square of how many there are. So a map is hashed by its entries,
+/// each key with its value, added up so that the order the entries stand in decides nothing, as
+/// the JVM backend's `PersistentHashMap.valueHash` does.
+///
+/// Every kind a descriptor can name has its own arm. One this does not know ends the call rather
+/// than sharing a hash with every other value of its kind.
+pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
+    match descriptor::kind(descriptor) {
+        KIND_NEWTYPE => hash_of(value::__souther_record_get(cell, 0), descriptor::member(descriptor, 0)),
+        KIND_OPTION => match held(cell) {
+            0 => mixed(HASH_START, 0),
+            inner => mixed(mixed(HASH_START, 1), hash_of(inner, descriptor::member(descriptor, 0))),
+        },
+        KIND_BOOL => mixed(HASH_START, value::__souther_bool_value(cell)),
+        KIND_INT => wide(HASH_START, value::__souther_int_value(cell)),
+        KIND_DECIMAL => {
+            let (at, length) = decimal::written(decimal::canonical(cell));
+            bytes(HASH_START, at, length)
+        }
+        KIND_STRING => bytes(
+            HASH_START,
+            value::__souther_string_bytes(cell),
+            value::__souther_string_length(cell),
+        ),
+        KIND_DATE | KIND_TIME | KIND_DATE_TIME => wide(HASH_START, temporal::moment(cell)),
+        KIND_INSTANT => mixed(
+            wide(HASH_START, temporal::moment_second(cell)),
+            temporal::moment_nano(cell) as u32,
+        ),
+        KIND_ENUMERATION => mixed(HASH_START, case_of(cell, descriptor)),
+        KIND_SUM => {
+            let case = case_of(cell, descriptor);
+            mixed(mixed(HASH_START, case), hash_of(cell, descriptor::member(descriptor, case)))
+        }
+        KIND_PRODUCT => {
+            let mut hash = HASH_START;
+            for i in 0..descriptor::arity(descriptor) {
+                hash = mixed(hash, hash_of(value::__souther_record_get(cell, i), descriptor::member(descriptor, i)));
+            }
+            hash
+        }
+        KIND_TUPLE => {
+            let mut hash = HASH_START;
+            for i in 0..descriptor::arity(descriptor) {
+                hash = mixed(hash, hash_of(value::__souther_tuple_get(cell, i), descriptor::member(descriptor, i)));
+            }
+            hash
+        }
+        KIND_LIST | KIND_SET => {
+            let element = descriptor::member(descriptor, 0);
+            let held = value::__souther_list_length(cell);
+            let mut hash = mixed(HASH_START, held);
+            for i in 0..held {
+                hash = mixed(hash, hash_of(value::__souther_list_get(cell, i), element));
+            }
+            hash
+        }
+        KIND_MAP => {
+            let keys = descriptor::member(descriptor, 0);
+            let values = descriptor::member(descriptor, 1);
+            let held = value::__souther_map_length(cell);
+            let mut entries: u32 = 0;
+            for i in 0..held {
+                entries = entries.wrapping_add(mixed(
+                    hash_of(value::__souther_map_key(cell, i), keys),
+                    hash_of(value::__souther_map_value(cell, i), values),
+                ));
+            }
+            mixed(mixed(HASH_START, held), entries)
+        }
+        // A type with one value: every value of it is that one.
+        KIND_UNIT => HASH_START,
+        other => abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, other as u64, cell as u64),
+    }
+}
+
+const HASH_START: u32 = 0x811c_9dc5;
+
+/// One more word into a hash.
+fn mixed(hash: u32, word: u32) -> u32 {
+    let mut out = hash;
+    for byte in word.to_le_bytes() {
+        out = (out ^ u32::from(byte)).wrapping_mul(0x0100_0193);
+    }
+    out
+}
+
+fn wide(hash: u32, word: i64) -> u32 {
+    mixed(mixed(hash, word as u32), (word >> 32) as u32)
+}
+
+unsafe fn bytes(hash: u32, at: u32, length: u32) -> u32 {
+    let mut out = mixed(hash, length);
+    for i in 0..length {
+        out = (out ^ u32::from(core::ptr::read((at + i) as usize as *const u8))).wrapping_mul(0x0100_0193);
+    }
+    out
 }
 
 /// Where a value is written relative to another of the same type.
@@ -244,42 +347,13 @@ unsafe fn held(cell: u32) -> u32 {
     }
 }
 
-/// Two runs of text by UTF-16 code unit, which is what a JVM string compares by.
+/// Two runs of text by scalar value, which is the language's order on text.
 pub unsafe fn compare_runs(at: u32, length: u32, other: u32, other_length: u32) -> i32 {
-    let mut a = Units::over(at, length);
-    let mut b = Units::over(other, other_length);
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return 0,
-            (None, Some(_)) => return -1,
-            (Some(_), None) => return 1,
-            (Some(x), Some(y)) => {
-                if x != y {
-                    return if x < y { -1 } else { 1 };
-                }
-            }
-        }
-    }
+    notation199x::compare(notation::str_at(at, length), notation::str_at(other, other_length)) as i32
 }
 
 unsafe fn text(left: u32, right: u32) -> i32 {
-    let mut a = Units::over(
-        value::__souther_string_bytes(left),
-        value::__souther_string_length(left),
-    );
-    let mut b = Units::over(
-        value::__souther_string_bytes(right),
-        value::__souther_string_length(right),
-    );
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return 0,
-            (None, Some(_)) => return -1,
-            (Some(_), None) => return 1,
-            (Some(x), Some(y)) if x != y => return if x < y { -1 } else { 1 },
-            _ => {}
-        }
-    }
+    notation199x::compare(notation::str_of(left), notation::str_of(right)) as i32
 }
 
 unsafe fn elements(left: u32, right: u32, descriptor: u32) -> i32 {
@@ -324,7 +398,7 @@ unsafe fn members(left: u32, right: u32, descriptor: u32) -> i32 {
         if a != b {
             let (first, first_length) = descriptor::name(descriptor, a);
             let (second, second_length) = descriptor::name(descriptor, b);
-            return bytes_as_units(first, first_length, second, second_length);
+            return compare_runs(first, first_length, second, second_length);
         }
         return members(left, right, descriptor::member(descriptor, a));
     }
@@ -351,11 +425,13 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
     let b = value::__souther_map_length(right);
     let shorter = if a < b { a } else { b };
     for i in 0..shorter {
-        // What a key is written as, which is the same question a map's own order asks of it and
-        // is answered in the same place. A key is a string only where its type is one.
-        let (a_key, a_length) = value::key_text(value::__souther_map_key(left, i), keys);
-        let (b_key, b_length) = value::key_text(value::__souther_map_key(right, i), keys);
-        let by_key = compare_runs(a_key, a_length, b_key, b_length);
+        // Where a key stands among a map's keys, which is the same question a map's own order asks
+        // of it and is answered in the same place.
+        let by_key = value::key_order(
+            value::__souther_map_key(left, i),
+            value::__souther_map_key(right, i),
+            keys,
+        );
         if by_key != 0 {
             return by_key;
         }
@@ -381,7 +457,7 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
 unsafe fn tags(left: u32, right: u32, descriptor: u32) -> i32 {
     let (a, a_length) = descriptor::name(descriptor, case_of(left, descriptor));
     let (b, b_length) = descriptor::name(descriptor, case_of(right, descriptor));
-    bytes_as_units(a, a_length, b, b_length)
+    compare_runs(a, a_length, b, b_length)
 }
 
 unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {
@@ -392,70 +468,4 @@ unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {
         }
     }
     0
-}
-
-unsafe fn bytes_as_units(left: u32, left_length: u32, right: u32, right_length: u32) -> i32 {
-    let mut a = Units::over(left, left_length);
-    let mut b = Units::over(right, right_length);
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return 0,
-            (None, Some(_)) => return -1,
-            (Some(_), None) => return 1,
-            (Some(x), Some(y)) if x != y => return if x < y { -1 } else { 1 },
-            _ => {}
-        }
-    }
-}
-
-/// UTF-8 bytes, read out as the UTF-16 code units they stand for.
-struct Units {
-    at: usize,
-    end: usize,
-    pending: u32,
-}
-
-impl Units {
-    fn over(pointer: u32, length: u32) -> Units {
-        Units { at: pointer as usize, end: (pointer + length) as usize, pending: 0 }
-    }
-
-    unsafe fn next(&mut self) -> Option<u32> {
-        if self.pending != 0 {
-            let low = self.pending;
-            self.pending = 0;
-            return Some(low);
-        }
-        if self.at >= self.end {
-            return None;
-        }
-        let first = core::ptr::read(self.at as *const u8) as u32;
-        let (point, width) = if first < 0x80 {
-            (first, 1)
-        } else if first < 0xe0 {
-            (((first & 0x1f) << 6) | self.trailing(1), 2)
-        } else if first < 0xf0 {
-            (((first & 0x0f) << 12) | (self.trailing(1) << 6) | self.trailing(2), 3)
-        } else {
-            (
-                ((first & 0x07) << 18)
-                    | (self.trailing(1) << 12)
-                    | (self.trailing(2) << 6)
-                    | self.trailing(3),
-                4,
-            )
-        };
-        self.at += width;
-        if point > 0xffff {
-            let rest = point - 0x10000;
-            self.pending = 0xdc00 + (rest & 0x3ff);
-            Some(0xd800 + (rest >> 10))
-        } else {
-            Some(point)
-        }
-    }
-
-    unsafe fn trailing(&self, offset: usize) -> u32 {
-        (core::ptr::read((self.at + offset) as *const u8) as u32) & 0x3f
-    }
 }

@@ -51,6 +51,26 @@ class TheRuntimeReadsJsonAsTheDocumentWroteItTest {
     }
 
     @Test
+    void takesRoomForAStringByWhatTheStringIsAndNotByTheRestOfTheDocument() {
+        Running runtime = Running.bareRuntime();
+        StringBuilder written = new StringBuilder("[");
+        for (int i = 0; i < 4000; i++) {
+            written.append(i == 0 ? "" : ",").append("\"item-").append(i).append('"');
+        }
+        String document = written.append(']').toString();
+        int length = document.getBytes(StandardCharsets.UTF_8).length;
+
+        int before = runtime.call(RuntimeAbi.ALLOC_MARK);
+        int array = parsed(runtime, document);
+        int taken = runtime.call(RuntimeAbi.ALLOC_MARK) - before;
+
+        assertThat(runtime.call(RuntimeAbi.JSON_LENGTH, array)).isEqualTo(4000);
+        // The document, and a cell and the bytes of each string: a few times its length, where
+        // room for the rest of the document per string was several thousand times it.
+        assertThat(taken).isLessThan(16 * length);
+    }
+
+    @Test
     void keepsAnArraysElementsInTheOrderTheyWereWritten() {
         Running runtime = Running.bareRuntime();
         int array = parsed(runtime, "[1, \"two\", true]");
@@ -123,6 +143,32 @@ class TheRuntimeReadsJsonAsTheDocumentWroteItTest {
         FailureRecord record = runtime.failureRecord();
         assertThat(record.describesTrapAfter(snapshot)).isTrue();
         assertThat(record.cause()).contains(new FailureCause.Wasm(WasmFault.MALFORMED_JSON));
+    }
+
+    @Test
+    void refusesOneContainerPastTheBoundAndNotOneBefore() {
+        Running runtime = Running.bareRuntime();
+        String deepest = "[".repeat(200) + "]".repeat(200);
+        assertThat(parsed(runtime, deepest)).isNotZero();
+
+        String past = "[".repeat(201) + "]".repeat(201);
+        int snapshot = runtime.call(RuntimeAbi.FAILURE_GENERATION);
+        int address = runtime.staged(past);
+        assertThatThrownBy(() -> runtime.call(RuntimeAbi.JSON_PARSE, address,
+                        past.getBytes(StandardCharsets.UTF_8).length))
+                .isInstanceOf(ChicoryException.class);
+        assertThat(runtime.failureRecord().describesTrapAfter(snapshot)).isTrue();
+    }
+
+    @Test
+    void readsAsManyContainersSideBySideAsADocumentHolds() {
+        // How deep a value stands is what is bounded, not how many containers a document holds.
+        // A list of a thousand records each holding a list is two containers deep.
+        String written = "[" + "{\"tags\":[\"a\"]},".repeat(999) + "{\"tags\":[\"a\"]}]";
+        Running runtime = Running.bareRuntime();
+
+        int array = parsed(runtime, written);
+        assertThat(runtime.call(RuntimeAbi.JSON_LENGTH, array)).isEqualTo(1000);
     }
 
     @Test

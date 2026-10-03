@@ -1,12 +1,12 @@
 package souther.wasm.link;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import souther.wasm.emit.Type;
 import souther.wasm.emit.WasmWriter;
 
@@ -32,7 +32,8 @@ public final class WasmFragment {
     private final List<byte[]> bodies = new ArrayList<>();
     private final Map<String, Integer> exports = new LinkedHashMap<>();
     private final List<Segment> data = new ArrayList<>();
-    private final Set<Integer> reserved = new LinkedHashSet<>();
+    /** Each reservation not filled yet, by its address, and where among the segments it is. */
+    private final Map<Integer, Integer> reserved = new LinkedHashMap<>();
     private final Map<Integer, Integer> slots = new LinkedHashMap<>();
     private int staticTop;
 
@@ -135,31 +136,22 @@ public final class WasmFragment {
     }
 
     /**
-     * Says that the module reaches out for a behavior, and under which number.
+     * Says what the program offers a caller: its behaviors, what they take and answer, and what a
+     * value of each type it names looks like as it crosses. Carried in the module for the reason
+     * the crossings are.
      *
-     * <p>A call out carries a number rather than a name — a name would travel as bytes on every
-     * call for something a caller looks up once — so the module has to say what the numbers are.
-     * It says it in itself rather than beside itself: a caller holding the module holds this, and
-     * there is no second file to be given the wrong one of.
-     *
-     * @param ordinal the number a call out carries
-     * @param behavior the name the model declares it under
-     * @param elsewhere whether another build has an implementation, rather than the caller
+     * @param written the surface, as the JSON a caller reads it as
      */
-    public void reachesOutFor(int ordinal, String behavior, boolean elsewhere) {
-        crossings.add(new Crossing(ordinal, behavior, elsewhere));
+    public void offers(String written) {
+        surface = written;
     }
 
-    /** What the module reaches out for, in the order the numbers run. */
-    List<Crossing> crossings() {
-        return crossings;
+    /** What the program offers a caller, or null where nothing said. */
+    String surface() {
+        return surface;
     }
 
-    /** One behavior the module reaches out for. */
-    record Crossing(int ordinal, String behavior, boolean elsewhere) {
-    }
-
-    private final List<Crossing> crossings = new ArrayList<>();
+    private String surface;
 
     /**
      * Which function a name reaches, for a body that means to call what a caller would.
@@ -207,6 +199,21 @@ public final class WasmFragment {
     }
 
     /**
+     * Places bytes that are read only by what they hold, answering where an earlier placement of the
+     * same bytes went where there was one.
+     *
+     * <p>For text — a literal, a name, a path, a reason — which is read by its contents, so one copy
+     * serves every place that wrote it. Not for what is told apart by where it is: a descriptor is
+     * one type because it is at one address, and two types described alike are still two.
+     */
+    public int intern(byte[] bytes) {
+        return interned.computeIfAbsent(ByteBuffer.wrap(bytes.clone()), held -> place(bytes));
+    }
+
+    /** Where each run of bytes placed through {@link #intern} went. */
+    private final Map<ByteBuffer, Integer> interned = new HashMap<>();
+
+    /**
      * Takes an address for bytes that are not settled yet, and answers where they will go.
      *
      * <p>For a value that has to know its own address before it can be written — a descriptor of a
@@ -214,9 +221,15 @@ public final class WasmFragment {
      * it there, and a link refuses to finish while anything reserved is still empty.
      */
     public int reserve(int length) {
+        // Something occupying no bytes moves nothing after it, so it would begin where the next
+        // thing reserved does, and an address would no longer say which of the two was meant.
+        if (length <= 0) {
+            throw new IllegalArgumentException("a reservation holds something, and " + length
+                    + " bytes hold nothing");
+        }
         int address = staticTop;
+        reserved.put(address, data.size());
         data.add(new Segment(address, new byte[length]));
-        reserved.add(address);
         staticTop = align(address + length);
         return address;
     }
@@ -228,25 +241,18 @@ public final class WasmFragment {
      * @param bytes exactly as many as were reserved
      */
     public void fill(int address, byte[] bytes) {
-        if (!reserved.contains(address)) {
+        // The segment that was reserved, by where it was put, and not one found by its address: a
+        // name with nothing in it begins where the thing reserved after it does.
+        Integer at = reserved.get(address);
+        if (at == null) {
             throw new IllegalArgumentException("nothing was reserved at " + address);
         }
-        for (int i = 0; i < data.size(); i++) {
-            Segment segment = data.get(i);
-            // The one that was reserved, and not merely one that begins there. Nothing occupying no
-            // bytes moves what comes after it, so a name with nothing in it and the thing reserved
-            // next both begin at the same address — and only one of them is what this was promised.
-            if (segment.address() == address && segment.bytes().length == bytes.length) {
-                if (segment.bytes().length != bytes.length) {
-                    throw new IllegalArgumentException(
-                            "what was reserved at " + address + " is not as long as what was written for it");
-                }
-                data.set(i, new Segment(address, bytes.clone()));
-                reserved.remove(address);
-                return;
-            }
+        if (data.get(at).bytes().length != bytes.length) {
+            throw new IllegalArgumentException(
+                    "what was reserved at " + address + " is not as long as what was written for it");
         }
-        throw new IllegalArgumentException("nothing was reserved at " + address);
+        data.set(at, new Segment(address, bytes.clone()));
+        reserved.remove(address);
     }
 
     /** The first byte no generated data occupies, which is where the arena will start. */
@@ -289,7 +295,8 @@ public final class WasmFragment {
     List<Segment> dataSegments() {
         if (!reserved.isEmpty()) {
             throw new IllegalStateException(
-                    "a link would place empty bytes where something was reserved: " + reserved);
+                    "a link would place empty bytes where something was reserved: "
+                            + reserved.keySet());
         }
         return List.copyOf(data);
     }

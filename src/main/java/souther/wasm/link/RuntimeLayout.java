@@ -79,6 +79,21 @@ public record RuntimeLayout(
     }
 
     /**
+     * Which ABI the runtime is, as its own {@code __souther_abi_version} answers it: read off the
+     * function's body rather than by running it, as everything else here is read.
+     *
+     * @param module the runtime module, whose layout this is
+     */
+    public int abiVersion(byte[] module) {
+        Export answering = export(RuntimeAbi.ABI_VERSION).orElseThrow(() -> new IllegalArgumentException(
+                "the runtime exports no " + RuntimeAbi.ABI_VERSION + ", so which ABI it is is unknown"));
+        if (answering.kind() != ExportKind.FUNCTION) {
+            throw new IllegalArgumentException(RuntimeAbi.ABI_VERSION + " is exported, but not as a function");
+        }
+        return new LayoutReader(module).constantAnswer(answering.index() - importedFunctionCount);
+    }
+
+    /**
      * Where the runtime's own static data ends, hence where the link's own data may begin.
      *
      * <p>Taken from the {@code __heap_base} global the runtime's link exports. Reading it is the

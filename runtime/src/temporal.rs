@@ -14,6 +14,7 @@
 //! A `Date` leaves the second at nothing and a `Time` leaves the day at nothing, so the three are
 //! one shape and only what is read off it differs.
 
+use crate::notation;
 use crate::{abort, alloc, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 const OFF_DAY: usize = 4;
@@ -35,6 +36,16 @@ pub unsafe fn made(tag: u32, day: i32, second: i32) -> u32 {
 /// Which day it is, counted from the first of January nineteen seventy.
 pub unsafe fn day(cell: u32) -> i32 {
     core::ptr::read_unaligned((cell as usize + OFF_DAY) as *const i32)
+}
+
+/// The first of January of the year zero, counted from the first of January nineteen seventy.
+const FIRST_FOUR_DIGIT_DAY: i32 = -719_528;
+/// The last of December of the year nine thousand nine hundred and ninety-nine.
+const LAST_FOUR_DIGIT_DAY: i32 = 2_932_896;
+
+/// Whether a day falls in a year written with four digits and no sign.
+pub unsafe fn in_four_digit_years(cell: u32) -> bool {
+    (FIRST_FOUR_DIGIT_DAY..=LAST_FOUR_DIGIT_DAY).contains(&day(cell))
 }
 
 /// How many seconds past midnight.
@@ -230,80 +241,44 @@ unsafe fn byte(held: u8) -> u32 {
 }
 
 /// Reads a day as a calendar writes one, or answers nothing.
+///
+/// Which text is a day is the grammar Souther shares with Raoh, and 199x-notation reads it. What
+/// is this runtime's is what it holds: a day is counted in an `i32`, so a day the grammar admits
+/// and that count does not reach is refused here too.
 pub unsafe fn read_day(at: u32, length: u32) -> Option<i32> {
-    let mut i = 0;
-    let mut year: i64 = 0;
-    let signed = length > 0 && (byte_at(at, 0) == b'-' || byte_at(at, 0) == b'+');
-    let negative = signed && byte_at(at, 0) == b'-';
-    if signed {
-        i = 1;
+    let date = notation199x::read_date(notation::str_at(at, length)).ok()?;
+    day_held(date)
+}
+
+unsafe fn day_held(date: notation199x::TemporalDate) -> Option<i32> {
+    let held = day_count(date.year as i64, date.month as u32, date.day as u32);
+    if holds_a_day(held) {
+        Some(held as i32)
+    } else {
+        None
     }
-    let start = i;
-    while i < length && byte_at(at, i).is_ascii_digit() {
-        year = year * 10 + (byte_at(at, i) - b'0') as i64;
-        if year > 999_999_999 {
-            return None;
-        }
-        i += 1;
-    }
-    let places = i - start;
-    if (!signed && places != 4) || (signed && places < 4) {
-        return None;
-    }
-    if negative {
-        year = -year;
-    }
-    if i + 6 != length || byte_at(at, i) != b'-' || byte_at(at, i + 3) != b'-' {
-        return None;
-    }
-    let month = two_at(at, i + 1)?;
-    let day = two_at(at, i + 4)?;
-    if !is_a_day(year, month, day) {
-        return None;
-    }
-    Some(day_count(year, month, day) as i32)
 }
 
 /// Reads a time of day as a clock writes one, or answers nothing.
+///
+/// A `Time` holds no fraction of a second, so one written with a fraction, even a zero one, is
+/// refused though the shared grammar admits it (`souther.temporal.TemporalForms`).
 pub unsafe fn read_time(at: u32, length: u32) -> Option<i32> {
-    if length != 5 && length != 8 {
+    let time = notation199x::read_time(notation::str_at(at, length)).ok()?;
+    second_of_day(time)
+}
+
+fn second_of_day(time: notation199x::TemporalTime) -> Option<i32> {
+    if time.nanosecond.is_some() {
         return None;
     }
-    if byte_at(at, 2) != b':' || (length == 8 && byte_at(at, 5) != b':') {
-        return None;
-    }
-    let hour = two_at(at, 0)?;
-    let minute = two_at(at, 3)?;
-    let second = if length == 8 { two_at(at, 6)? } else { 0 };
-    if hour > 23 || minute > 59 || second > 59 {
-        return None;
-    }
-    Some((hour * 3600 + minute * 60 + second) as i32)
+    Some(time.hour as i32 * 3600 + time.minute as i32 * 60 + time.second as i32)
 }
 
 /// Reads a day and a time of day together, or answers nothing.
 pub unsafe fn read_both(at: u32, length: u32) -> Option<(i32, i32)> {
-    for i in 0..length {
-        if byte_at(at, i) == b'T' {
-            let day = read_day(at, i)?;
-            let second = read_time(at + i + 1, length - i - 1)?;
-            return Some((day, second));
-        }
-    }
-    None
-}
-
-unsafe fn byte_at(at: u32, index: u32) -> u8 {
-    core::ptr::read((at + index) as *const u8)
-}
-
-unsafe fn two_at(at: u32, index: u32) -> Option<u32> {
-    let first = byte_at(at, index);
-    let held = byte_at(at, index + 1);
-    if !first.is_ascii_digit() || !held.is_ascii_digit() {
-        return None;
-    }
-    Some(((first - b'0') * 10 + (held - b'0')) as u32)
+    let both = notation199x::read_date_time(notation::str_at(at, length)).ok()?;
+    Some((day_held(both.date)?, second_of_day(both.time)?))
 }
 
 /// A moment on the timeline: how many seconds it is from the start of nineteen seventy, and how
@@ -385,107 +360,11 @@ pub unsafe fn written_moment(cell: u32) -> (u32, u32) {
 
 /// Reads a moment as a timestamp writes one, or answers nothing.
 ///
-/// An offset is a different spelling of the same moment and is taken; what it names is moved to the
-/// one this counts from. A leap second is not a moment the timeline has, and taking it would put a
-/// value here that says a different second than the text did, so it is refused.
+/// An offset is a different spelling of the same moment, and 199x-notation reads it as the moment
+/// it names. A leap second is not a moment the timeline has, and the grammar refuses it.
 pub unsafe fn read_moment(at: u32, length: u32) -> Option<(i64, i32)> {
-    let mut i = 0;
-    while i < length && byte_at(at, i) | 0x20 != b't' {
-        i += 1;
-    }
-    if i >= length {
-        return None;
-    }
-    let day = read_day(at, i)?;
-    let mut rest = i + 1;
-    // The zone comes off the end first: what is left in front of it is a reading of a clock.
-    let (offset, ends) = zone(at, length, rest)?;
-    if ends < rest + 5 {
-        return None;
-    }
-    if byte_at(at, rest + 2) != b':' {
-        return None;
-    }
-    let hour = two_at(at, rest)?;
-    let minute = two_at(at, rest + 2 + 1)?;
-    rest += 5;
-    let mut second = 0;
-    let mut nano = 0;
-    if rest < ends {
-        if byte_at(at, rest) != b':' {
-            return None;
-        }
-        second = two_at(at, rest + 1)?;
-        rest += 3;
-        if rest < ends {
-            if byte_at(at, rest) != b'.' {
-                return None;
-            }
-            rest += 1;
-            let mut places = 0;
-            while rest < ends && byte_at(at, rest).is_ascii_digit() {
-                nano = nano * 10 + (byte_at(at, rest) - b'0') as i32;
-                places += 1;
-                rest += 1;
-            }
-            // A point with nothing after it says no fraction rather than a broken one, and a
-            // tenth place past the nanosecond says something a moment cannot hold.
-            if places > 9 || rest != ends {
-                return None;
-            }
-            for _ in places..9 {
-                nano *= 10;
-            }
-            if places == 0 {
-                nano = 0;
-            }
-        }
-    }
-    // A clock reading of twenty-four is the end of the day rather than an hour of it, and only
-    // where nothing has happened past it — that is what the form this reads says, and a moment
-    // named that way is the first of the next day.
-    let midnight = hour == 24 && minute == 0 && second == 0 && nano == 0;
-    if (hour > 23 && !midnight) || minute > 59 || second > 59 {
-        return None;
-    }
-    let held = day as i64 * A_DAY + (hour * 3600 + minute * 60 + second) as i64 - offset;
-    Some((held, nano))
-}
-
-/// What the end of a moment's text says about where it was read, and where that text ends.
-///
-/// Answers how many seconds the reading is ahead of what the timeline counts from, so taking it
-/// off leaves the moment itself.
-unsafe fn zone(at: u32, length: u32, from: u32) -> Option<(i64, u32)> {
-    if length == 0 {
-        return None;
-    }
-    let last = byte_at(at, length - 1);
-    if last | 0x20 == b'z' {
-        return Some((0, length - 1));
-    }
-    // An offset is five or six bytes: a sign, two digits, and the minutes with or without a colon.
-    for width in [6u32, 5] {
-        if length < from + width {
-            continue;
-        }
-        let start = length - width;
-        let sign = byte_at(at, start);
-        if sign != b'+' && sign != b'-' {
-            continue;
-        }
-        if width == 6 && byte_at(at, start + 3) != b':' {
-            continue;
-        }
-        let hours = two_at(at, start + 1)?;
-        let minutes = two_at(at, start + width - 2)?;
-        if hours > 18 || minutes > 59 {
-            return None;
-        }
-        let held = (hours * 3600 + minutes * 60) as i64;
-        return Some((if sign == b'-' { -held } else { held }, start));
-    }
-    None
+    let moment = notation199x::read_instant(notation::str_at(at, length)).ok()?;
+    Some((moment.epoch_second, moment.nanosecond as i32))
 }
 
 /// A day so many days later, or an end to the call where that is not a day a calendar reaches.

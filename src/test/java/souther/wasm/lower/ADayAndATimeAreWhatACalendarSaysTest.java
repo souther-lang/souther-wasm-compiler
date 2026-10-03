@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import souther.compiler.abort.AbortKind;
 import souther.compiler.core.Kernel;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.FailureRecord;
@@ -150,7 +151,7 @@ class ADayAndATimeAreWhatACalendarSaysTest {
             assertThat(readableByTheJvm(written))
                     .describedAs(written + " is a day to java.time").isTrue();
             assertThat(answerOf(module, "diary.same", quoted(written)))
-                    .describedAs(written).contains("\"expected\":\"Date\"");
+                    .describedAs(written).contains("\"code\":\"invalid_format\"");
         }
     }
 
@@ -185,7 +186,7 @@ class ADayAndATimeAreWhatACalendarSaysTest {
     @Test
     void endsTheCallWhereTheShiftItselfLeavesWhatAnIntHolds() {
         CheckedProgram program = program();
-        Running module = Running.linked(WasmCompiler.compile(program));
+        Running module = Running.linked(Compiled.module(program));
 
         for (Object[] far : new Object[][] {
             {"diary.later", "2026-09-04", Kernel.DATE_ADD_DAYS},
@@ -219,7 +220,7 @@ class ADayAndATimeAreWhatACalendarSaysTest {
     @Test
     void endsTheCallWhereTheIntermediateYearItselfOverflowsRatherThanJustTheEndpoints() {
         CheckedProgram program = program();
-        Running module = Running.linked(WasmCompiler.compile(program));
+        Running module = Running.linked(Compiled.module(program));
 
         for (Object[] far : new Object[][] {
             {"diary.monthsOn", "606065638325558100", Kernel.DATE_ADD_MONTHS},
@@ -249,9 +250,9 @@ class ADayAndATimeAreWhatACalendarSaysTest {
         Running module = compiled();
 
         assertThat(answerOf(module, "diary.same", quoted("2026-02-30")))
-                .contains("\"expected\":\"Date\"");
+                .contains("\"code\":\"invalid_format\"");
         assertThat(answerOf(module, "diary.same", quoted("26-01-01")))
-                .contains("\"expected\":\"Date\"");
+                .contains("\"code\":\"invalid_format\"");
         assertThat(answerOf(module, "diary.same", "7")).contains("\"actual\":\"number\"");
     }
 
@@ -264,11 +265,11 @@ class ADayAndATimeAreWhatACalendarSaysTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(program()));
+        return Running.linked(Compiled.module(program()));
     }
 
     private static CheckedProgram program() {
-        return CheckedProgram.of(List.of("""
+        return Compiled.program(List.of("""
                 module diary
 
                 behavior same : (d: Date) -> Date

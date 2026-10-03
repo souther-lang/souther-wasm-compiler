@@ -11,6 +11,7 @@ import souther.compiler.core.Kernel;
 import souther.compiler.program.CheckedProgram;
 import souther.runtime.IntMath;
 import souther.runtime.Strings;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.FailureRecord;
@@ -35,6 +36,9 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
         // run through souther-runtime, not merely through whichever the WASM backend implements.
         " padded ", "　ごきげんよう　", "a 　b", "\u0085  ",
         "a​b", "a﻿b", "a\u001cb",
+        // Each already canonical, and each one that an operation can leave canonical only by
+        // composing: turned around, repeated or joined, the combining acute lands after the e.
+        "\u0301e", "\u0301", "e", "\u00c5\u0327",
     };
 
     @Test
@@ -245,7 +249,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
      */
     @Test
     void padsAtTheWidthsMostLikelyToWrap() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Compiled.program(List.of("""
                 module wording
 
                 behavior widened : (n: Int, p: String, s: String) -> String
@@ -256,7 +260,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
 
                 let lengthened (n, p, s) = String.padRight(n, p, s)
                 """));
-        Running module = Running.linked(WasmCompiler.compile(program));
+        Running module = Running.linked(Compiled.module(program));
         AbortKind expectedLeft = onlyAbortOf(program, Kernel.STRING_PAD_LEFT);
         AbortKind expectedRight = onlyAbortOf(program, Kernel.STRING_PAD_RIGHT);
 
@@ -348,7 +352,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
      */
     @Test
     void everyIntOperationAgreesWithSouthersRuntimeAtTheEdgesOfWhatAnIntHolds() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Compiled.program(List.of("""
                 module edges
 
                 behavior negated : (a: Int) -> Int
@@ -379,7 +383,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
                     | Int as q -> q
                     | DivisionByZero -> 0
                 """));
-        Running module = Running.linked(WasmCompiler.compile(program));
+        Running module = Running.linked(Compiled.module(program));
         AbortKind expectedSum = onlyAbortOf(program, Kernel.INT_ADD);
         AbortKind expectedDifference = onlyAbortOf(program, Kernel.INT_SUBTRACT);
         AbortKind expectedProduct = onlyAbortOf(program, Kernel.INT_MULTIPLY);
@@ -608,7 +612,7 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

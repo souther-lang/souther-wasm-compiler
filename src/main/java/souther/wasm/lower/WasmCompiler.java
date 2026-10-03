@@ -1,5 +1,6 @@
 package souther.wasm.lower;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -20,10 +21,12 @@ import souther.compiler.core.Core;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedHelper;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.Refinement;
@@ -31,9 +34,11 @@ import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.RuntimeAbi.Cell;
 import souther.wasm.abi.WasmAbortMapping;
 import souther.wasm.abi.WasmFault;
 import souther.wasm.emit.Type;
+import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
@@ -112,23 +117,48 @@ public final class WasmCompiler {
     /**
      * What a program reaches out for, in the order it numbers them.
      *
-     * <p>The same order the module's own crossings are numbered in, because it is read from the
-     * same walk: a component asks for each of these as an interface, and which one a call is for
-     * is the number the program was compiled with.
+     * <p>The order the module numbers them in, because it is the same list: a component asks for
+     * each of these as an interface, and which one a call is for is the number the program was
+     * compiled with.
      *
      * @param program what a Souther compile checked
      * @return each behavior the program declares and does not implement
      */
     public static List<Component.Reach> reachedOutFor(CheckedProgram program) {
-        List<Component.Reach> reaches = new ArrayList<>();
+        return reachingOut(program).stream()
+                .map(behavior -> new Component.Reach(
+                        behavior.name().module(), behavior.name().name()))
+                .toList();
+    }
+
+    /**
+     * Each behavior the program declares and does not implement, in the order of the numbers a
+     * call out carries for them: a call out names what it reaches by its place here, and
+     * {@code souther:surface} says each one's place as its {@code reachOut}.
+     */
+    private static List<CheckedBehavior> reachingOut(CheckedProgram program) {
+        List<CheckedBehavior> reaching = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
                 if (isReachedOutFor(behavior)) {
-                    reaches.add(new Component.Reach(module.name(), behavior.name().name()));
+                    reaching.add(behavior);
                 }
             }
         }
-        return reaches;
+        return List.copyOf(reaching);
+    }
+
+    /**
+     * Whether a caller outside the program may call a behavior: whether its module publishes it.
+     *
+     * <p>The one answer to what the module offers, read by everything that offers: a core export, a
+     * component's interface, the lift a component calls through. A behavior its module keeps is
+     * no other module's to name (spec §a-module-publishes-what-it-declares), and a module that
+     * exported it anyway would be offering a caller outside Souther what Souther does not offer one
+     * inside — as the native backend does not, which links a kept behavior locally.
+     */
+    static boolean publishes(CheckedModule module, CheckedBehavior behavior) {
+        return module.publicationOf(behavior.name()) == Publication.PUBLISHED;
     }
 
     /** Whether what stands for a behavior is a call out of the program rather than a body. */
@@ -142,7 +172,8 @@ public final class WasmCompiler {
      *
      * <p>A behavior the program does not implement is not among them. Nothing in the module
      * answers it, so what it crosses as is asked for rather than offered, and that is
-     * {@link #reachedOutFor} rather than this.
+     * {@link #reachedOutFor} rather than this. Nor is one its module keeps, which is no module's
+     * to call from outside ({@link #publishes}).
      *
      * @param program what a Souther compile checked
      * @return every behavior's core export name, by the module that declares it
@@ -152,7 +183,7 @@ public final class WasmCompiler {
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
             for (CheckedBehavior behavior : module.behaviors()) {
-                if (!isReachedOutFor(behavior)) {
+                if (publishes(module, behavior) && !isReachedOutFor(behavior)) {
                     named.put(behavior.name().name(), exportName(behavior.name()));
                 }
             }
@@ -186,6 +217,12 @@ public final class WasmCompiler {
         // written, so most are gone by now — but not one that reaches itself, which cannot be.
         List<Written> written = new ArrayList<>();
         List<Crossing> injected = new ArrayList<>();
+        // The number a call out carries for each behavior reached out for, worked out once for the
+        // calls and for what the module says of them.
+        Map<ValueName.Behavior, Integer> reachOut = new LinkedHashMap<>();
+        for (CheckedBehavior each : reachingOut(program)) {
+            reachOut.put(each.name(), reachOut.size());
+        }
         List<Composed> composed = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedHelper helper : module.helpers()) {
@@ -202,13 +239,8 @@ public final class WasmCompiler {
                 // Reached out for, and the two reasons are one call. What a module holds for a
                 // behavior nobody in this program wrote is the same either way; which of them it
                 // is is what the module says about itself, not how the call is made.
-                if (behavior.implementation() instanceof CheckedImplementation.Injected
-                        || behavior.implementation()
-                                instanceof CheckedImplementation.ImplementedElsewhere) {
-                    boolean elsewhere = behavior.implementation()
-                            instanceof CheckedImplementation.ImplementedElsewhere;
-                    fragment.reachesOutFor(injected.size(), exportName(behavior.name()), elsewhere);
-                    injected.add(new Crossing(index, behavior, injected.size()));
+                if (isReachedOutFor(behavior)) {
+                    injected.add(new Crossing(index, behavior, reachOut.get(behavior.name())));
                     continue;
                 }
                 if (behavior.implementation() instanceof CheckedImplementation.Composed held) {
@@ -221,7 +253,15 @@ public final class WasmCompiler {
             }
         }
 
-        Emitter emitter = new Emitter(program, fragment, calls, shapes, reached);
+        Emitter emitter = new Emitter(program, fragment, calls, shapes, reached, name -> {
+            // Asking for the descriptor is what declares the check, so it is asked first.
+            shapes.ofDeclared(name);
+            Integer check = checks.get(name);
+            if (check == null) {
+                throw new IllegalStateException(name + " is checked, and no check was declared for it");
+            }
+            return check;
+        });
         for (Written each : written) {
             fragment.write(each.index(), emitter.overValues(each));
         }
@@ -235,10 +275,26 @@ public final class WasmCompiler {
                 List.of(Type.I32, Type.I32), List.of(Type.I32, Type.I32));
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
+                if (!publishes(module, behavior)) {
+                    continue;
+                }
                 byte[] wrapper = emitter.crossing(behavior, reached.get(behavior.name()));
                 fragment.export(exportName(behavior.name()), fragment.define(stringToString, wrapper));
             }
         }
+        // Asking for each one's descriptor is what declares its check, so these are asked before
+        // the checks below are written, whether or not anything else here reaches the type.
+        List<TypeSymbol.AtModule> decodable = decodable(program);
+        ByteArrayOutputStream descriptors = new ByteArrayOutputStream();
+        WasmWriter writing = new WasmWriter(descriptors);
+        for (TypeSymbol.AtModule each : decodable) {
+            writing.writeLittleEndian4(shapes.ofDeclared(each));
+        }
+        int table = decodable.isEmpty() ? 0 : fragment.place(descriptors.toByteArray());
+        fragment.export(DECODE, fragment.define(
+                fragment.functionType(List.of(Type.I32, Type.I32, Type.I32),
+                        List.of(Type.I32, Type.I32)),
+                emitter.decoding(table, decodable.size())));
 
         // Last, because everything before it asks for descriptors and asking for one is what
         // declares a check. Writing a check asks for them too, so this goes round until a round
@@ -254,6 +310,7 @@ public final class WasmCompiler {
         if (lifted) {
             liftable(fragment, calls, program);
         }
+        fragment.offers(Surface.of(program, decodable, reachOut));
         return Linker.link(fragment);
     }
 
@@ -270,6 +327,9 @@ public final class WasmCompiler {
                 List.of(Type.I32, Type.I32), List.of(Type.I32));
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
+                if (!publishes(module, behavior)) {
+                    continue;
+                }
                 String crossing = exportName(behavior.name());
                 byte[] body = new BodyWriter(2, 0)
                         .localGet(0)
@@ -303,7 +363,7 @@ public final class WasmCompiler {
      *
      * <p>The number is what the caller is told: an ordinal of this build. Not a name — a name would
      * travel as bytes on every call for something a caller looks up once — so the module says what
-     * the numbers are, in a section of itself.
+     * the numbers are, as each behavior's {@code reachOut} in {@code souther:surface}.
      */
     private record Crossing(int index, CheckedBehavior behavior, int ordinal) {
     }
@@ -343,6 +403,33 @@ public final class WasmCompiler {
     /** The name a caller reaches a behavior by. */
     public static String exportName(ValueName.Behavior behavior) {
         return behavior.module() + "." + behavior.name();
+    }
+
+    /**
+     * The export a caller reads a value of one type through, on its own and outside any behavior:
+     * {@code (number, pointer, length) -> (pointer, length)}, answering what a behavior's export
+     * answers, {@code {"value": ...}} or {@code {"issues": [...]}}.
+     */
+    public static final String DECODE = "__souther_decode";
+
+    /**
+     * The types a caller may read a value of on its own, in the order their numbers run.
+     *
+     * <p>What a module of this program declares and publishes, and nothing else. A type a module
+     * keeps is one no caller may make a value of, and one a module on the path declares is that
+     * build's to offer. The number is this module's own: a caller looks it up in
+     * {@code souther:surface} when it loads the module, and never carries it to another.
+     */
+    static List<TypeSymbol.AtModule> decodable(CheckedProgram program) {
+        List<TypeSymbol.AtModule> offered = new ArrayList<>();
+        for (CheckedModule module : program.modules()) {
+            for (CheckedData data : module.data()) {
+                if (module.publicationOf(data.name()) == Publication.PUBLISHED) {
+                    offered.add(data.name());
+                }
+            }
+        }
+        return List.copyOf(offered);
     }
 
     /** The runtime module this build carries. */
@@ -490,9 +577,13 @@ public final class WasmCompiler {
 
         private final CheckedProgram program;
         private final WasmFragment fragment;
+        private final Patterns patterns;
         private final Runtime calls;
         private final Descriptors shapes;
         private final Map<ValueName, Integer> reached;
+        private final Cells cells;
+        /** The function checking what must hold of a type, by the type. */
+        private final java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf;
 
         private BodyWriter out;
         private Map<BindingId, Integer> locals;
@@ -500,25 +591,92 @@ public final class WasmCompiler {
         private Set<ValueName.Behavior> requirementsInScope = Set.of();
 
         Emitter(CheckedProgram program, WasmFragment fragment, Runtime calls, Descriptors shapes,
-                Map<ValueName, Integer> reached) {
+                Map<ValueName, Integer> reached,
+                java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf) {
             this.program = program;
             this.fragment = fragment;
+            this.patterns = shapes.patterns();
+            this.cells = new Cells(fragment);
             this.calls = calls;
             this.shapes = shapes;
             this.reached = reached;
+            this.checkOf = checkOf;
         }
 
-        /** A declaration's own function: its parameters as cells, its answer as one. */
+        /**
+         * A declaration's own function: its parameters as cells, its answer as one.
+         *
+         * <p>A call of the declaration to itself where its answer is the declaration's answer is not
+         * a call: the arguments are put where the parameters are and the body runs again from the
+         * top. So a walk written as a recursion, which is how {@code List.fold} is written, runs in
+         * one frame however long the list is, where a call per element would run out of stack a few
+         * thousand elements in.
+         */
         byte[] overValues(Written written) {
-            out = new BodyWriter(written.parameters().size(), 0);
+            int arity = written.parameters().size();
+            out = new BodyWriter(arity, 0);
             locals = new HashMap<>();
             writing = written.declares();
             requirementsInScope = written.requirements();
-            for (int i = 0; i < written.parameters().size(); i++) {
+            for (int i = 0; i < arity; i++) {
                 locals.put(written.parameters().get(i).binding(), i);
             }
-            value(out, written.body());
+            int answer = scratch();
+            out.block().loop();
+            again = new Again(written.declares(), arity, out.depth());
+            answer(out, written.body());
+            again = null;
+            out.localSet(answer).leave(1).end().end().localGet(answer);
             return out.body();
+        }
+
+        /**
+         * Where a call of the declaration being written to itself goes back to instead: the loop
+         * opened at that depth around its body, whose parameters are its first locals.
+         */
+        private record Again(Object declaration, int arity, int depth) {}
+
+        /** The declaration being written and its loop, or null where nothing goes back. */
+        private Again again;
+
+        /** How a part of an expression is written: as a value, or as the function's answer. */
+        private interface Writing {
+            void write(BodyWriter out, Core expression);
+        }
+
+        /**
+         * An expression that is the answer of the function being written.
+         *
+         * <p>Where it chooses or binds on the way to its answer, each part its answer is is the
+         * function's answer too, and is written here again; a call of the declaration to itself
+         * there goes back to the top of the body. Everything else is written as a value.
+         *
+         * <p>Every construct is named and none falls through, so a construct added to the language
+         * is a question this compiler has to answer, not one it answers by not asking: a construct
+         * whose answer is one of its parts that fell to the value side would leave a recursion
+         * through it a call per step, which is the stack running out for a long enough walk.
+         */
+        private void answer(BodyWriter out, Core expression) {
+            switch (expression) {
+                case Core.If chosen -> chosen(out, chosen, this::answer);
+                case Core.IfConstructed attempted -> attempt(out, attempted, this::answer);
+                case Core.LetIn bound -> bound(out, bound, this::answer);
+                case Core.Match chosen -> match(out, chosen, this::answer);
+                case Core.Widen widened -> answer(out, widened.value());
+                case Core.Call call -> {
+                    if (goesBack(call)) {
+                        goBack(out, call);
+                    } else {
+                        call(out, call);
+                    }
+                }
+                case Core.Int _, Core.Decimal _, Core.Str _, Core.Bool _, Core.Temporal _,
+                        Core.Read _, Core.UnitValue _, Core.MaterialisedValue _, Core.Neg _,
+                        Core.FieldAccess _, Core.FieldProjection _, Core.Binary _,
+                        Core.PreservedCall _, Core.Apply _, Core.Block _, Core.ListLit _,
+                        Core.OptionSome _, Core.OptionNone _, Core.Tuple _, Core.TupleGet _,
+                        Core.Construct _, Core.Unreachable _ -> value(out, expression);
+            }
         }
 
         /**
@@ -640,8 +798,8 @@ public final class WasmCompiler {
 
             List<ValueShape.Invariant> invariants = shapes.invariantsOf(name);
             for (int i = invariants.size() - 1; i >= 0; i--) {
-                value(out, invariants.get(i).condition());
-                out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifZero().constant(i).localSet(answer).end();
+                truth(out, invariants.get(i).condition());
+                out.ifZero().constant(i).localSet(answer).end();
             }
             return out.localGet(answer).body();
         }
@@ -683,7 +841,7 @@ public final class WasmCompiler {
                         .constant(i)
                         .call(calls.of(RuntimeAbi.ARGUMENT))
                         .constant(shapes.of(takes.get(i)))
-                        .constant(fragment.place(path))
+                        .constant(fragment.intern(path))
                         .constant(path.length)
                         .call(calls.of(RuntimeAbi.READ))
                         .localSet(read[i]);
@@ -713,6 +871,79 @@ public final class WasmCompiler {
                     .body();
         }
 
+        /**
+         * What reads a value of one of the types a caller may read on its own, by its number.
+         *
+         * <p>The reading is the one a behavior's argument is read with, the rules a value is held
+         * to included, from the root of the document rather than from a place among the
+         * arguments; and what it answers is what a behavior's export answers, the value written
+         * back as the type writes it, or the issues found. A number naming no type is the caller
+         * misusing the module rather than writing a bad document, so it ends the call.
+         *
+         * @param table where the descriptors are, one four-byte address to a number
+         * @param count how many numbers there are
+         */
+        byte[] decoding(int table, int count) {
+            out = new BodyWriter(3, 1);
+            locals = new HashMap<>();
+            int packed = out.wide(0);
+            int document = out.narrow();
+            int descriptor = out.narrow();
+            int read = out.narrow();
+
+            out.localGet(DECODE_NUMBER).constant(0).compares(BodyWriter.Comparison.LESS)
+                    .localGet(DECODE_NUMBER).constant(count)
+                    .compares(BodyWriter.Comparison.AT_LEAST)
+                    .or()
+                    .ifNotZero()
+                    .constant(WasmFault.NO_SUCH_TYPE.code())
+                    .constant(0)
+                    .localGet(DECODE_NUMBER).extendToWide()
+                    .constant((long) count)
+                    .call(calls.of(RuntimeAbi.ABORT))
+                    .unreachable()
+                    .end();
+
+            out.localGet(DECODE_NUMBER).shiftLeft(2).constant(table).add().load(0)
+                    .localSet(descriptor)
+                    .call(calls.of(RuntimeAbi.ISSUES_BEGIN))
+                    .localGet(DECODE_POINTER)
+                    .localGet(DECODE_LENGTH)
+                    .call(calls.of(RuntimeAbi.JSON_PARSE))
+                    .localSet(document)
+                    .localGet(document)
+                    .localGet(descriptor)
+                    // The root, which a JSON pointer writes as nothing at all.
+                    .constant(0)
+                    .constant(0)
+                    .call(calls.of(RuntimeAbi.READ))
+                    .localSet(read);
+
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifNotZero()
+                    .call(calls.of(RuntimeAbi.ISSUES_WRITTEN))
+                    .localSet(packed)
+                    .otherwise()
+                    .localGet(read)
+                    .localGet(descriptor)
+                    .call(calls.of(RuntimeAbi.WRITE))
+                    .localSet(packed)
+                    .end();
+
+            return out.localGet(packed)
+                    .wrap()
+                    .localGet(packed)
+                    .shiftRight(32)
+                    .wrap()
+                    .body();
+        }
+
+        /** Which type a caller asks a value to be read as. */
+        private static final int DECODE_NUMBER = 0;
+        /** The pointer the caller's JSON is at, beside the number. */
+        private static final int DECODE_POINTER = 1;
+        /** How long the caller's JSON is, beside the number. */
+        private static final int DECODE_LENGTH = 2;
+
         /** The pointer the caller's JSON is at. */
         private static final int LOCAL_INPUT_POINTER = 0;
         /** How long the caller's JSON is. */
@@ -721,27 +952,24 @@ public final class WasmCompiler {
         /** Leaves the value of an expression on the stack, as the cell it is. */
         private void value(BodyWriter out, Core expression) {
             switch (expression) {
-                case Core.Int number -> out.constant(number.value()).call(calls.of(RuntimeAbi.INT));
-                case Core.Bool bool -> out.constant(bool.value() ? 1 : 0).call(calls.of(RuntimeAbi.BOOL));
-                case Core.Str text -> {
-                    byte[] utf8 = text.value().getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(utf8))
-                            .constant(utf8.length)
-                            .call(calls.of(RuntimeAbi.STRING));
-                }
+                // A literal is a cell in static memory, made once, rather than one made per reach.
+                case Core.Int number -> out.constant(cells.ofInt(number.value()));
+                case Core.Bool bool -> out.constant(cells.ofBool(bool.value()));
+                case Core.Str text ->
+                        out.constant(cells.ofString(text.value().getBytes(StandardCharsets.UTF_8)));
                 case Core.Decimal amount -> {
                     // The text rather than the digits and the scale, because that is the one form
                     // both sides already agree on how to read, and what was written is what a
                     // scale is: a thousand written to two places carries two.
                     byte[] written = amount.value().toPlainString()
                             .getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(written))
+                    out.constant(fragment.intern(written))
                             .constant(written.length)
                             .call(calls.of(RuntimeAbi.DECIMAL_WRITTEN));
                 }
                 case Core.Temporal written -> {
                     byte[] utf8 = written.text().getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.place(utf8))
+                    out.constant(fragment.intern(utf8))
                             .constant(utf8.length)
                             .call(calls.of(switch (written.kind()) {
                                 case DATE -> RuntimeAbi.DATE_WRITTEN;
@@ -769,9 +997,8 @@ public final class WasmCompiler {
                     value(out, some.value());
                     out.call(calls.of(RuntimeAbi.SOME));
                 }
-                case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
-                case Core.UnitValue only -> out.constant(shapes.ofMember(only.data()))
-                        .call(calls.of(RuntimeAbi.UNIT));
+                case Core.OptionNone ignored -> out.constant(cells.none());
+                case Core.UnitValue only -> out.constant(cells.unit(shapes.ofMember(only.data())));
                 case Core.Construct made -> {
                     int record = constructed(out, made);
                     // Construction re-checks what must hold. Here the value is the body's own, so
@@ -780,8 +1007,7 @@ public final class WasmCompiler {
                     if (!shapes.invariantsOf(made.typeName()).isEmpty()) {
                         int broken = scratch();
                         out.localGet(record)
-                                .constant(shapes.ofDeclared(made.typeName()))
-                                .call(calls.of(RuntimeAbi.CHECK_INVARIANTS))
+                                .call(checkOf.applyAsInt(made.typeName()))
                                 .localSet(broken)
                                 .localGet(broken)
                                 .constant(-1)
@@ -804,12 +1030,12 @@ public final class WasmCompiler {
                     byte[] why = nothing.reason().getBytes(StandardCharsets.UTF_8);
                     out.constant(WasmAbortMapping.representationOf(onlyKindOf(nothing)))
                             .constant(0)
-                            .constant((long) fragment.place(why))
+                            .constant((long) fragment.intern(why))
                             .constant((long) why.length)
                             .call(calls.of(RuntimeAbi.ABORT))
                             .unreachable();
                 }
-                case Core.IfConstructed attempted -> attempt(out, attempted);
+                case Core.IfConstructed attempted -> attempt(out, attempted, this::value);
                 case Core.FieldAccess read -> {
                     value(out, read.target());
                     TypeSymbol.AtModule shape = shapeOf(read.target());
@@ -819,7 +1045,7 @@ public final class WasmCompiler {
                     } else {
                         // Read off a set of alternatives, so the value says where the field is.
                         byte[] named = read.field().getBytes(StandardCharsets.UTF_8);
-                        out.constant(fragment.place(named))
+                        out.constant(fragment.intern(named))
                                 .constant(named.length)
                                 .call(calls.of(RuntimeAbi.RECORD_NAMED));
                     }
@@ -827,27 +1053,18 @@ public final class WasmCompiler {
                 case Core.Neg opposite -> {
                     boolean amount = amountsAreWorkedOut(
                             opposite.operand().type(), opposite.type());
-                    value(out, opposite.operand());
-                    out.call(calls.of(amount
-                            ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
+                    if (worksOutAWholeNumber(opposite)) {
+                        wide(out, opposite);
+                        out.call(calls.of(RuntimeAbi.INT));
+                    } else {
+                        value(out, opposite.operand());
+                        out.call(calls.of(amount
+                                ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
+                    }
                 }
                 case Core.Binary binary -> binary(out, binary);
-                case Core.If chosen -> {
-                    int answer = scratch();
-                    value(out, chosen.cond());
-                    out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifNotZero();
-                    value(out, chosen.then());
-                    out.localSet(answer).otherwise();
-                    value(out, chosen.els());
-                    out.localSet(answer).end().localGet(answer);
-                }
-                case Core.LetIn bound -> {
-                    int local = scratch();
-                    value(out, bound.value());
-                    out.localSet(local);
-                    locals.put(bound.binder().binding(), local);
-                    value(out, bound.body());
-                }
+                case Core.If chosen -> chosen(out, chosen, this::value);
+                case Core.LetIn bound -> bound(out, bound, this::value);
                 case Core.Tuple together -> {
                     int pair = scratch();
                     out.constant(together.elements().size())
@@ -864,10 +1081,13 @@ public final class WasmCompiler {
                     value(out, place.tuple());
                     out.constant(place.index()).call(calls.of(RuntimeAbi.TUPLE_GET));
                 }
-                case Core.Match chosen -> match(out, chosen);
+                case Core.Match chosen -> match(out, chosen, this::value);
                 case Core.Block block -> closure(out, block);
                 case Core.Apply applied -> apply(out, applied);
                 case Core.Call call -> call(out, call);
+                // Every value here is a cell that says what it is, so a value standing as a wider
+                // type is the same cell, and nothing is written for the widening.
+                case Core.Widen widened -> value(out, widened.value());
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {
@@ -890,6 +1110,21 @@ public final class WasmCompiler {
          * so the block answers the same afterwards however the body it left goes on.
          */
         private void closure(BodyWriter out, Core.Block block) {
+            List<Core.Read> captured = capturedBy(block);
+            int slot = fragment.slot(blockFunction(block, captured));
+            // A block reading nothing from around it is the same value wherever it is made, so it
+            // is one cell in static memory.
+            if (captured.isEmpty()) {
+                out.constant(cells.closure(slot));
+                return;
+            }
+            out.constant(slot);
+            room(out, captured);
+            out.call(calls.of(RuntimeAbi.CLOSURE));
+        }
+
+        /** What a block reads from around it, each of which the frame it is written in holds. */
+        private List<Core.Read> capturedBy(Core.Block block) {
             List<Core.Read> captured = BlockReaches.of(block, requirementsInScope).bindings();
             for (Core.Read read : captured) {
                 if (!locals.containsKey(read.binding())) {
@@ -897,7 +1132,18 @@ public final class WasmCompiler {
                             + " but the Wasm frame around it does not hold it");
                 }
             }
-            int slot = fragment.slot(blockFunction(block, captured));
+            return captured;
+        }
+
+        /**
+         * Leaves on the stack the room holding what a block reads from around it, copied now; or
+         * nothing at all where it reads nothing, which its body then never asks for.
+         */
+        private void room(BodyWriter out, List<Core.Read> captured) {
+            if (captured.isEmpty()) {
+                out.constant(0);
+                return;
+            }
             int room = scratch();
             out.constant(captured.size())
                     .call(calls.of(RuntimeAbi.CAPTURES))
@@ -908,7 +1154,7 @@ public final class WasmCompiler {
                         .localGet(locals.get(captured.get(i).binding()))
                         .call(calls.of(RuntimeAbi.CAPTURE_SET));
             }
-            out.constant(slot).localGet(room).call(calls.of(RuntimeAbi.CLOSURE));
+            out.localGet(room);
         }
 
         /**
@@ -923,6 +1169,10 @@ public final class WasmCompiler {
             BodyWriter around = out;
             Map<BindingId, Integer> outer = locals;
             Object was = writing;
+            // The block is a function of its own, so a call in it is never the declaration around
+            // it going back to its top.
+            Again goingBack = again;
+            again = null;
 
             out = new BodyWriter(1 + block.params().size(), 0);
             locals = new HashMap<>();
@@ -937,6 +1187,7 @@ public final class WasmCompiler {
             value(out, block.body());
             byte[] body = out.body();
 
+            again = goingBack;
             out = around;
             locals = outer;
             writing = was;
@@ -950,10 +1201,10 @@ public final class WasmCompiler {
             value(out, applied.fn());
             out.localSet(closure)
                     .localGet(closure)
-                    .call(calls.of(RuntimeAbi.CLOSURE_CAPTURED));
+                    .load(Cell.PAYLOAD);
             applied.args().forEach(argument -> value(out, argument));
             out.localGet(closure)
-                    .call(calls.of(RuntimeAbi.CLOSURE_SLOT))
+                    .load(Cell.SECOND)
                     .callSlot(overCells(fragment, 1 + applied.args().size()));
         }
 
@@ -977,11 +1228,9 @@ public final class WasmCompiler {
                 throw new NotLowered(writing + " reaches " + call.fn()
                         + ", and this backend reaches a helper and a behavior");
             }
-            ValueName name = switch (declaration.reaches()) {
-                case Core.Reaches.AHelper helper -> helper.declaration();
-                case Core.Reaches.APublishedValue published -> published.declaration();
-                case Core.Reaches.ABehavior reaches -> reaches.behavior();
-            };
+            // A helper, a value and a behavior are each a body this program reaches by the name it
+            // was declared under, so which of them it is decides nothing here.
+            ValueName name = declaration.reaches().declaration();
             Integer index = reached.get(name);
             if (index == null) {
                 throw new NotLowered(writing + " reaches " + name
@@ -991,6 +1240,30 @@ public final class WasmCompiler {
                 value(out, argument);
             }
             out.call(index);
+        }
+
+        /** Whether a call is the declaration being written calling itself. */
+        private boolean goesBack(Core.Call call) {
+            return again != null
+                    && call.fn() instanceof Core.Reached.OfDeclaration declaration
+                    && declaration.reaches().declaration().equals(again.declaration())
+                    && call.args().size() == again.arity();
+        }
+
+        /**
+         * A call of the declaration to itself, as its answer: every argument is worked out before
+         * any parameter is put back, since an argument may read the parameter it replaces, and then
+         * the body runs again. Nothing follows that is reached, so what the arm it is in goes on to
+         * write is not run.
+         */
+        private void goBack(BodyWriter out, Core.Call call) {
+            for (Core argument : call.args()) {
+                value(out, argument);
+            }
+            for (int i = again.arity() - 1; i >= 0; i--) {
+                out.localSet(i);
+            }
+            out.leave(out.depth() - again.depth());
         }
 
         /**
@@ -1005,19 +1278,29 @@ public final class WasmCompiler {
             switch (operation) {
                 case GROW_LIST -> {
                     value(out, call.args().get(0));
-                    value(out, call.args().get(1));
-                    out.call(calls.of(RuntimeAbi.GROW));
+                    // What a step adds is written `acc ++ [x]`, and where it is written out like
+                    // that, each value is added as it is rather than in a list of one made for it.
+                    if (unwidened(call.args().get(1)) instanceof Core.ListLit added) {
+                        for (Core element : added.elements()) {
+                            value(out, element);
+                            out.call(calls.of(RuntimeAbi.GROW_ONE));
+                        }
+                    } else {
+                        value(out, call.args().get(1));
+                        out.call(calls.of(RuntimeAbi.GROW));
+                    }
                 }
                 case BUILD_LIST -> walk(out, call, RuntimeAbi.BUILDER, RuntimeAbi.SEALED);
                 case PUT_MAP -> {
                     // The walk carries the map it is growing first; the operation that grows one
-                    // takes it last, after what is being put in it.
+                    // takes it last, after what is being put in it. Nothing else holds that map,
+                    // so the entry is put in it where it goes rather than in a copy.
                     value(out, call.args().get(1));
                     value(out, call.args().get(2));
                     value(out, call.args().get(0));
-                    out.constant(shapes.of(call.type())).call(calls.of(RuntimeAbi.Kernels.MAP_INSERT));
+                    out.call(calls.of(RuntimeAbi.MAP_PUT));
                 }
-                case BUILD_MAP -> walk(out, call, RuntimeAbi.Kernels.MAP_EMPTY, null);
+                case BUILD_MAP -> walk(out, call, RuntimeAbi.MAP_BUILDER, RuntimeAbi.MAP_SEALED);
                 default -> throw new NotLowered(writing + " reaches " + operation
                         + ", which this backend does not write yet");
             }
@@ -1027,8 +1310,8 @@ public final class WasmCompiler {
          * {@code $build(step, xs, from)}: the walk that grows a collection out of a list.
          *
          * @param start what makes the empty one the walk begins with
-         * @param finish what turns what the walk grew into what it answers, or null where the walk
-         *     grew the answer itself
+         * @param finish what turns what the walk grew into what it answers: what grows is never
+         *     the collection itself, since it has room past what it holds
          */
         private void walk(BodyWriter out, Core.Call call, String start, String finish) {
             int step = scratch();
@@ -1037,30 +1320,45 @@ public final class WasmCompiler {
             int held = scratch();
             int builder = scratch();
 
-            value(out, call.args().get(0));
+            // A step written where the walk is, which is what `List.map(f, xs)` leaves once `f` is
+            // written in, is a function this compiler knows: it is called as itself, with what it
+            // reads from around it, rather than made a value and reached through the table.
+            int direct = -1;
+            if (unwidened(call.args().get(0)) instanceof Core.Block block) {
+                List<Core.Read> captured = capturedBy(block);
+                direct = blockFunction(block, captured);
+                room(out, captured);
+            } else {
+                value(out, call.args().get(0));
+            }
             out.localSet(step);
             value(out, call.args().get(1));
             out.localSet(over);
-            value(out, call.args().get(2));
-            out.call(calls.of(RuntimeAbi.INT_VALUE)).wrap().localSet(at);
+            wide(out, call.args().get(2));
+            out.wrap().localSet(at);
             out.localGet(over).call(calls.of(RuntimeAbi.LIST_LENGTH_OF)).localSet(held);
             out.constant(shapes.of(call.type())).call(calls.of(start)).localSet(builder);
 
             out.block().loop()
                     .localGet(at).localGet(held).compares(BodyWriter.Comparison.AT_LEAST).leaveIf(1);
-            out.localGet(step).call(calls.of(RuntimeAbi.CLOSURE_CAPTURED))
-                    .localGet(builder)
-                    .localGet(over).localGet(at).call(calls.of(RuntimeAbi.LIST_GET))
-                    .localGet(step).call(calls.of(RuntimeAbi.CLOSURE_SLOT))
-                    .callSlot(overCells(fragment, 3))
-                    .localSet(builder);
+            out.localGet(step);
+            if (direct < 0) {
+                out.load(Cell.PAYLOAD);
+            }
+            out.localGet(builder);
+            // The element is read where the list holds it, past how many there are.
+            out.localGet(over).localGet(at).shiftLeft(2).add().load(Cell.PAYLOAD + 4);
+            if (direct < 0) {
+                out.localGet(step).load(Cell.SECOND).callSlot(overCells(fragment, 3));
+            } else {
+                out.call(direct);
+            }
+            out.localSet(builder);
             out.localGet(at).constant(1).add().localSet(at).leave(0);
             out.end().end();
 
             out.localGet(builder);
-            if (finish != null) {
-                out.call(calls.of(finish));
-            }
+            out.call(calls.of(finish));
         }
 
         /**
@@ -1122,23 +1420,28 @@ public final class WasmCompiler {
         private void recognised(BodyWriter out, Core.Call call) {
             // The call cannot be built without this settlement, so a different one is the
             // checker's contract broken and not something this backend lacks.
-            Core.CallSettlement.StringMatches settled =
-                    (Core.CallSettlement.StringMatches) call.settlement();
+            Core.KernelFact.StringMatches settled = (Core.KernelFact.StringMatches) factOf(call);
             value(out, call.args().get(1));
-            out.constant(Patterns.place(fragment, settled.pattern()))
+            out.constant(patterns.of(settled))
                     .call(calls.of(abiNameOf(Kernel.STRING_MATCHES)));
         }
 
+        /** What the checker settled about a kernel's application, beside what it takes. A call
+         *  reaching a kernel is one the checker built as such, so any other settlement is its
+         *  contract broken. */
+        private Core.KernelFact factOf(Core.Call call) {
+            return ((Core.CallSettlement.AtKernel) call.settlement()).fact();
+        }
+
         /** The Type a {@code sortBy} call's ordering requirement was checked against — the key
-         *  block's result, not the list's element. Read off {@link Core.CallSettlement.OrderingSubject}
+         *  block's result, not the list's element. Read off {@link Core.KernelFact.OrderingSubject}
          *  rather than re-derived from the block's declared type, so this backend never disagrees with
          *  what the checker settled. */
         private souther.compiler.types.Type orderingSubject(Core.Call call) {
             // CallElaborator cannot produce a sortBy application without this settlement, so a
             // different one here is the checker's contract broken and not a capability this backend
             // lacks — the same distinction `recognised` draws for String.matches's settled pattern.
-            Core.CallSettlement.OrderingSubject settled =
-                    (Core.CallSettlement.OrderingSubject) call.settlement();
+            Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
             return settled.type();
         }
 
@@ -1201,6 +1504,28 @@ public final class WasmCompiler {
             return record;
         }
 
+        /** An {@code if}: the condition as a value, and each branch written the way {@code ways}
+         *  writes what the whole is. */
+        private void chosen(BodyWriter out, Core.If chosen, Writing ways) {
+            int answer = scratch();
+            truth(out, chosen.cond());
+            out.ifNotZero();
+            ways.write(out, chosen.then());
+            out.localSet(answer).otherwise();
+            ways.write(out, chosen.els());
+            out.localSet(answer).end().localGet(answer);
+        }
+
+        /** A {@code let}: what is bound as a value, and the body the way {@code body} writes what
+         *  the whole is. */
+        private void bound(BodyWriter out, Core.LetIn bound, Writing body) {
+            int local = scratch();
+            value(out, bound.value());
+            out.localSet(local);
+            locals.put(bound.binder().binding(), local);
+            body.write(out, bound.body());
+        }
+
         /**
          * An attempted construction: what must hold of the value decides which way the body goes.
          *
@@ -1209,20 +1534,23 @@ public final class WasmCompiler {
          * departure naming no clause takes any — the checker has established that one always
          * matches, so what follows every arm is the end of a call nothing written reaches.
          */
-        private void attempt(BodyWriter out, Core.IfConstructed attempted) {
+        private void attempt(BodyWriter out, Core.IfConstructed attempted, Writing ways) {
             Core.Construct made = attempted.construct();
             TypeSymbol.AtModule name = made.typeName();
             int record = constructed(out, made);
             int broken = scratch();
             int answer = scratch();
-            out.localGet(record)
-                    .constant(shapes.ofDeclared(name))
-                    .call(calls.of(RuntimeAbi.CHECK_INVARIANTS))
-                    .localSet(broken);
+            // A shape with nothing that must hold of it breaks nothing, and has no check to call.
+            if (shapes.invariantsOf(name).isEmpty()) {
+                out.constant(-1);
+            } else {
+                out.localGet(record).call(checkOf.applyAsInt(name));
+            }
+            out.localSet(broken);
 
             out.localGet(broken).constant(-1).compares(BodyWriter.Comparison.EQUAL).ifNotZero();
             locals.put(attempted.binder().binding(), record);
-            value(out, attempted.then());
+            ways.write(out, attempted.then());
             out.localSet(answer).otherwise();
 
             List<ValueShape.Invariant> clauses = shapes.invariantsOf(name);
@@ -1236,7 +1564,7 @@ public final class WasmCompiler {
                         .compares(BodyWriter.Comparison.EQUAL)
                         .ifNotZero();
                 opened++;
-                value(out, arm.body());
+                ways.write(out, arm.body());
                 out.localSet(answer).otherwise();
             }
             // What is left is the departure naming no clause, which any failure takes. Where there
@@ -1246,7 +1574,7 @@ public final class WasmCompiler {
                     .filter(arm -> arm.clause().isEmpty())
                     .findFirst();
             if (any.isPresent()) {
-                value(out, any.get().body());
+                ways.write(out, any.get().body());
                 out.localSet(answer);
             } else {
                 out.constant(WasmFault.BACKEND_INVARIANT_BROKEN.code())
@@ -1281,31 +1609,30 @@ public final class WasmCompiler {
          *
          * <p>Where an arm selects on an option, what it tests is whether the option holds
          * something, and what it binds is what the option holds — not the option.
+         *
+         * <p>The last arm is not tested. The checker settles that one arm answers for every value,
+         * so a value no arm before the last answered for is one the last answers for.
          */
-        private void match(BodyWriter out, Core.Match chosen) {
+        private void match(BodyWriter out, Core.Match chosen, Writing arms) {
             int subject = scratch();
             int answer = scratch();
             value(out, chosen.scrutinee());
             out.localSet(subject);
 
-            int opened = 0;
-            for (Core.Case arm : chosen.cases()) {
+            List<Core.Case> cases = chosen.cases();
+            for (int i = 0; i < cases.size() - 1; i++) {
+                Core.Case arm = cases.get(i);
                 condition(out, arm, subject);
                 out.ifNotZero();
                 bind(out, arm, subject);
-                value(out, arm.body());
+                arms.write(out, arm.body());
                 out.localSet(answer).otherwise();
-                opened++;
             }
-            // The checker settles that one arm answers, so nothing written reaches this. What it
-            // stands for is this backend having tested for the wrong thing.
-            out.constant(WasmFault.BACKEND_INVARIANT_BROKEN.code())
-                    .constant(0)
-                    .constant(0L)
-                    .constant(0L)
-                    .call(calls.of(RuntimeAbi.ABORT))
-                    .unreachable();
-            for (int i = 0; i < opened; i++) {
+            Core.Case last = cases.get(cases.size() - 1);
+            bind(out, last, subject);
+            arms.write(out, last.body());
+            out.localSet(answer);
+            for (int i = 0; i < cases.size() - 1; i++) {
                 out.end();
             }
             out.localGet(answer);
@@ -1379,62 +1706,154 @@ public final class WasmCompiler {
                 case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE,
                         RuntimeAbi.Kernels.DECIMAL_DIVIDE_BY);
                 case CONCAT -> concatenation(out, binary);
-                case EQ -> comparison(out, binary, BodyWriter.Comparison.EQUAL);
-                case NE -> comparison(out, binary, BodyWriter.Comparison.UNEQUAL);
-                case LT -> comparison(out, binary, BodyWriter.Comparison.LESS);
-                case LE -> comparison(out, binary, BodyWriter.Comparison.AT_MOST);
-                case GT -> comparison(out, binary, BodyWriter.Comparison.GREATER);
-                case GE -> comparison(out, binary, BodyWriter.Comparison.AT_LEAST);
-                case AND, OR -> {
-                    int answer = scratch();
-                    value(out, binary.left());
-                    out.localSet(answer)
-                            .localGet(answer)
-                            .call(calls.of(RuntimeAbi.BOOL_VALUE));
-                    if (binary.op() == BinOp.AND) {
-                        out.ifNotZero();
-                    } else {
-                        out.ifZero();
-                    }
-                    value(out, binary.right());
-                    out.localSet(answer).end().localGet(answer);
+                // Decided as one or zero, and answered as whichever of the two cells that is.
+                case EQ, NE, LT, LE, GT, GE, AND, OR -> {
+                    out.constant(cells.ofBool(true)).constant(cells.ofBool(false));
+                    truth(out, binary);
+                    out.select();
                 }
             }
         }
 
         /**
-         * {@code ++}, joined by what its left operand is: a {@code String} is joined as text and a
-         * list as elements, and they are two runtime operations because the cells they join do not
-         * share a layout. The type is the checker's, so an operand that is neither is not one this
-         * backend chooses a join for.
+         * Leaves whether a {@code Bool} holds on the stack, as one or zero.
+         *
+         * <p>A condition is asked of what it decides and not of a cell: a comparison is the number
+         * its operands stand in, and {@code &&} and {@code ||} are conditions of conditions, so a
+         * condition made of them makes no cell. Anything else is a value, and the {@code Bool} it
+         * holds is read off its cell.
          */
-        private void concatenation(BodyWriter out, Core.Binary binary) {
-            souther.compiler.types.Type operand = binary.left().type();
-            if (operand == souther.compiler.types.Type.Prim.STRING) {
-                value(out, binary.left());
-                value(out, binary.right());
-                out.call(calls.of(RuntimeAbi.STRING_JOIN));
-            } else if (operand instanceof souther.compiler.types.Type.ListOf) {
-                value(out, binary.left());
-                value(out, binary.right());
-                out.constant(shapes.of(binary.type())).call(calls.of(RuntimeAbi.LIST_JOIN));
-            } else {
-                throw new NotLowered(writing + " joins a " + operand + " with ++");
+        private void truth(BodyWriter out, Core expression) {
+            switch (expression) {
+                case Core.Bool bool -> out.constant(bool.value() ? 1 : 0);
+                case Core.Binary binary when comparisonOf(binary.op()) != null ->
+                        compared(out, binary, comparisonOf(binary.op()));
+                case Core.Binary binary when binary.op() == BinOp.AND || binary.op() == BinOp.OR -> {
+                    // The second is asked only where the first has not decided the whole.
+                    int answer = scratch();
+                    truth(out, binary.left());
+                    out.localSet(answer).localGet(answer);
+                    if (binary.op() == BinOp.AND) {
+                        out.ifNotZero();
+                    } else {
+                        out.ifZero();
+                    }
+                    truth(out, binary.right());
+                    out.localSet(answer).end().localGet(answer);
+                }
+                default -> {
+                    value(out, expression);
+                    out.load(Cell.PAYLOAD);
+                }
             }
         }
 
-        private void comparison(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
+        /** How a comparison operator stands one operand to the other, or null for any other. */
+        private static BodyWriter.Comparison comparisonOf(BinOp op) {
+            return switch (op) {
+                case EQ -> BodyWriter.Comparison.EQUAL;
+                case NE -> BodyWriter.Comparison.UNEQUAL;
+                case LT -> BodyWriter.Comparison.LESS;
+                case LE -> BodyWriter.Comparison.AT_MOST;
+                case GT -> BodyWriter.Comparison.GREATER;
+                case GE -> BodyWriter.Comparison.AT_LEAST;
+                default -> null;
+            };
+        }
+
+        /**
+         * Leaves an {@code Int}'s number on the stack, as sixty-four bits.
+         *
+         * <p>Arithmetic over whole numbers is worked out on the numbers, so what it makes in the
+         * middle of an expression is never a cell; anything else is a value, whose number is read
+         * off its cell.
+         */
+        private void wide(BodyWriter out, Core expression) {
+            switch (expression) {
+                case Core.Int number -> out.constant(number.value());
+                case Core.Binary binary when worksOutAWholeNumber(binary) -> {
+                    wide(out, binary.left());
+                    wide(out, binary.right());
+                    out.call(calls.of(switch (binary.op()) {
+                        case ADD -> RuntimeAbi.INT_SUM;
+                        case SUB -> RuntimeAbi.INT_DIFFERENCE;
+                        case MUL -> RuntimeAbi.INT_PRODUCT;
+                        default -> throw new IllegalStateException(
+                                binary.op() + " is not worked out on whole numbers");
+                    }));
+                }
+                // Negating wraps at the one number whose opposite is not one, as the JVM's does.
+                case Core.Neg opposite when worksOutAWholeNumber(opposite) -> {
+                    out.constant(0L);
+                    wide(out, opposite.operand());
+                    out.subtractWide();
+                }
+                default -> {
+                    value(out, expression);
+                    out.loadWide(Cell.PAYLOAD);
+                }
+            }
+        }
+
+        /** Whether an expression is arithmetic over whole numbers, answering one. */
+        private boolean worksOutAWholeNumber(Core expression) {
+            return switch (expression) {
+                case Core.Binary binary -> switch (binary.op()) {
+                    case ADD, SUB, MUL -> isWhole(binary.left()) && isWhole(binary.right())
+                            && isWhole(binary);
+                    default -> false;
+                };
+                case Core.Neg opposite -> isWhole(opposite.operand()) && isWhole(opposite);
+                default -> false;
+            };
+        }
+
+        private static boolean isWhole(Core expression) {
+            return expression.type() == souther.compiler.types.Type.Prim.INT;
+        }
+
+        /** An expression as what it evaluates, with any widening of it set aside. */
+        private static Core unwidened(Core expression) {
+            Core held = expression;
+            while (held instanceof Core.Widen widened) {
+                held = widened.value();
+            }
+            return held;
+        }
+
+        /**
+         * {@code ++}, which joins two strings or two lists: the checker settles both sides to the
+         * one type the answer is, so the answer's type says which.
+         */
+        private void concatenation(BodyWriter out, Core.Binary binary) {
+            value(out, binary.left());
+            value(out, binary.right());
+            if (binary.type() instanceof souther.compiler.types.Type.ListOf) {
+                out.constant(shapes.of(binary.type())).call(calls.of(RuntimeAbi.LIST_CONCAT));
+            } else {
+                out.call(calls.of(RuntimeAbi.CONCAT));
+            }
+        }
+
+        /** Leaves whether the two operands of a comparison stand that way, as one or zero. */
+        private void compared(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
             // Both sides, because a comparison across Int and Rational is one the language allows
             // and the descriptor below is only the left one's.
             refuseWhatIsNotWritten("compares", binary.left().type());
             refuseWhatIsNotWritten("compares", binary.right().type());
+            // Two whole numbers stand as their numbers do, which is one instruction.
+            if (isWhole(binary.left()) && isWhole(binary.right())) {
+                wide(out, binary.left());
+                wide(out, binary.right());
+                out.comparesWide(how);
+                return;
+            }
             value(out, binary.left());
             value(out, binary.right());
             out.constant(shapes.of(binary.left().type()))
                     .call(calls.of(RuntimeAbi.COMPARE))
                     .constant(0)
-                    .compares(how)
-                    .call(calls.of(RuntimeAbi.BOOL));
+                    .compares(how);
         }
 
         /**
@@ -1466,6 +1885,11 @@ public final class WasmCompiler {
             boolean amounts = amountsAreWorkedOut(binary.left().type(), binary.type());
             if (amounts && amount == null) {
                 throw new NotLowered(writing + " works out an amount with " + binary.op());
+            }
+            if (worksOutAWholeNumber(binary)) {
+                wide(out, binary);
+                out.call(calls.of(RuntimeAbi.INT));
+                return;
             }
             value(out, binary.left());
             value(out, binary.right());

@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
-import souther.wasm.lower.WasmCompiler;
+import souther.wasm.Compiled;
 
 /**
  * The component a program is wrapped as, read back out of what was written.
@@ -23,7 +23,7 @@ class AComponentSaysWhatEachModuleOffersTest {
 
     @Test
     void offersOneInterfacePerModuleAndOneFunctionPerBehavior() {
-        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of("""
+        byte[] component = Compiled.component(Compiled.program(List.of("""
                 module counting
 
                 behavior doubled : (n: Int) -> Int
@@ -51,7 +51,7 @@ class AComponentSaysWhatEachModuleOffersTest {
 
     @Test
     void beginsAsAComponentAndCarriesTheProgramAsACoreModule() {
-        byte[] component = WasmCompiler.compileAsComponent(oneBehavior());
+        byte[] component = Compiled.component(oneBehavior());
 
         assertThat(component[0]).isEqualTo((byte) 0x00);
         assertThat(new String(component, 1, 3, StandardCharsets.UTF_8)).isEqualTo("asm");
@@ -64,7 +64,7 @@ class AComponentSaysWhatEachModuleOffersTest {
 
     @Test
     void asksForABehaviorSuppliedFromOutsideRatherThanOfferingIt() {
-        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of("""
+        byte[] component = Compiled.component(Compiled.program(List.of("""
                 module rates
 
                 behavior today : (pair: String) -> Decimal
@@ -83,8 +83,31 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     @Test
+    void offersNothingItsModuleKeeps() {
+        byte[] component = Compiled.component(Compiled.program(List.of("""
+                module rates exposing ( spread )
+
+                behavior today : (pair: String) -> Int
+
+                behavior lowered : (n: Int) -> Int
+
+                let lowered (n) = n - 1
+
+                behavior spread : (pair: String) -> Int
+                    depends on today
+
+                let spread (pair, today) = lowered(today(pair))
+                """)));
+
+        // What the module keeps is no function of its interface, whoever answers it; one kept and
+        // answered outside is still asked for, since the program cannot run without it.
+        assertThat(offered(component).get("souther:program/rates")).containsExactly("spread");
+        assertThat(askedFor(component)).containsExactly("souther:reached/rates");
+    }
+
+    @Test
     void liftsTheWrapperRatherThanTheCrossingItself() {
-        byte[] component = WasmCompiler.compileAsComponent(oneBehavior());
+        byte[] component = Compiled.component(oneBehavior());
 
         // The crossing answers where its answer is and how long it is, and a component reads a
         // string result out of memory, so what a lift names is never the crossing.
@@ -114,7 +137,7 @@ class AComponentSaysWhatEachModuleOffersTest {
 
     @Test
     void offersAModuleNamedInPartsUnderOneNameAnInterfaceCanCarry() {
-        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of("""
+        byte[] component = Compiled.component(Compiled.program(List.of("""
                 module shared.money
 
                 behavior doubled : (n: Int) -> Int
@@ -130,7 +153,7 @@ class AComponentSaysWhatEachModuleOffersTest {
 
     @Test
     void namesEveryExportSomethingAComponentMayBeExportedUnder() {
-        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of("""
+        byte[] component = Compiled.component(Compiled.program(List.of("""
                 module a.b.c
 
                 behavior doubled : (n: Int) -> Int
@@ -146,7 +169,7 @@ class AComponentSaysWhatEachModuleOffersTest {
 
     @Test
     void refusesTwoBehaviorsOneInterfaceWouldCallByOneName() {
-        byte[] core = WasmCompiler.compile(oneBehavior());
+        byte[] core = Compiled.module(oneBehavior());
 
         for (String[] pair : new String[][] {{"doubled", "Doubled"}, {"withVat", "with_vat"}}) {
             Map<String, String> both = new LinkedHashMap<>();
@@ -166,7 +189,7 @@ class AComponentSaysWhatEachModuleOffersTest {
         named.put("_hidden", "demo._hidden");
 
         assertThatThrownBy(() -> Component.around(
-                        WasmCompiler.compile(oneBehavior()), Map.of("demo", named)))
+                        Compiled.module(oneBehavior()), Map.of("demo", named)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not a name an interface writes");
     }
@@ -182,7 +205,7 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     private static CheckedProgram oneBehavior() {
-        return CheckedProgram.of(List.of("""
+        return Compiled.program(List.of("""
                 module counting
 
                 behavior doubled : (n: Int) -> Int

@@ -23,10 +23,28 @@ Rust toolchain. Changing the runtime does: rebuild it with
     cp target/wasm32-unknown-unknown/release/souther_wasm_runtime.wasm \
        ../src/main/resources/souther/wasm/runtime.wasm
 
-The Java half emits the program's own functions and links them onto that module. It never reads a
-runtime code body — only the section framing, the exports, and the constants a global or a segment
-offset is written with — so what the Rust toolchain emits inside a function is not something this
-project has to model.
+What a string means is not written here. Its order, its length, its case, its canonical form,
+which characters are white space, which text is a day or a moment, and which strings a pattern
+accepts are rules Souther shares with Raoh, and
+[199x-notation](https://github.com/raoh-project/199x-notation) implements them once per language.
+The runtime takes the Rust crate, pinned to a commit in `runtime/Cargo.toml`, and Souther's own
+runtime takes the Java artifact, so the two backends answer from one account. A pattern is the one
+rule that crosses between them: the checker settles what it means, the Java half writes the machine
+that meaning is run as as an image with the Java artifact, and the runtime reads the image back with
+the crate.
+
+The crate allocates, and this runtime has no allocator of its own beyond the arena, so the arena is
+what it allocates from. Nothing is given back one allocation at a time; what a call made goes back
+with the arena.
+
+The Java half emits the program's own functions and links them onto that module. Placing them reads
+no runtime code body — only the section framing, the exports, and the constants a global or a
+segment offset is written with. Once they are placed, the link leaves out every function nothing
+reaches: the runtime carries every kernel and a program calls a few. That walk reads which function
+each call in a body names and copies everything else as it is, so what the Rust toolchain emits
+inside a function is still not something this project has to model beyond how an instruction is
+encoded. What is left is mostly the data the text rules read, which a fold over a list links to in
+about 150 KB.
 
 ## The host contract
 
@@ -34,14 +52,55 @@ Taken from [rontolisp](https://github.com/making/rontolisp), so a host that alre
 rontolisp module drives this one the same way: strings cross as a pointer and a length into the
 exported memory, buffers come from `__ronto_alloc`, and a caller brackets a call with
 `__ronto_alloc_mark` and `__ronto_alloc_reset`. An export that answers a string answers a live
-pointer into the arena, so the reset comes after the bytes have been read out.
+pointer into the arena, so the reset comes after the bytes have been read out. Of the runtime, a
+linked module exports what a host calls and nothing else; the rest is the link's to call.
 
 A behavior this program holds no implementation for is reached the same way whichever of the two
 reasons it is — the caller supplies it, or another build already did — because to a caller reaching
-in they are the same call, and only one of them has an artifact to be found somewhere. Which it is
-is in the module: `souther:crossings` says what each number a call out carries is the name of, and
-which of them another build implements. In the module rather than beside it, so a caller holding
-one cannot be handed the wrong other.
+in they are the same call, and only one of them has an artifact to be found somewhere. A call out
+carries a number rather than a name, and which behavior each number is, is in the module — on the
+surface below, as the behavior's `reachOut`, beside its `implementation`, which says which of the two
+reasons it is. In the module rather than beside it, so a caller holding one cannot be handed the
+wrong other.
+
+What a caller writes code against is in the module too. `souther:surface` is one JSON object: each
+module's behaviors, with the export each is called through, who answers it (`here`, `injected`,
+`unwritten` or `elsewhere`), the number a call out carries for one the program reaches out for, the
+names and types of what it takes and the type it answers — an
+answer nobody named as both its `members`, the union as it was written, and its `crossing`, the
+leaves those descend to and the form they travel in, because the leaves alone are a union nobody
+wrote; and every
+declaration those name, with every one the program's modules declare whether or not a behavior names
+it. A product says its fields, a newtype the type it is written as, a sum its cases and the form they
+travel in (a bare tag, or the tag under one key and a wrapped case under another), and the first two
+the rules a value is held to, by name and in the order a failure is decided in. What a rule says is
+not there: a caller is told a value broke one, and checking it again in the caller's language would
+be the rule written twice. An `option` is where absence is written, and where it stands says how — a
+field leaves its key out, and an element or a map's value writes `null`. The object carries a
+`version`, which moves when what it says is read differently, and a reader refuses a version it
+does not read rather than reading it as one it does: the JavaScript glue refuses a module whose
+surface or runtime ABI is not the one it was written for, and a link refuses a runtime of another
+ABI.
+
+A value of a type can also be read on its own, outside any behavior — what a form checks one field
+against before there is a whole call to make. `__souther_decode(number, pointer, length)` reads the
+JSON at the pointer as the type the number names, its rules included, and answers what a behavior's
+export answers: `{"value": ...}` or `{"issues": [...]}`, the paths starting at the root. Which types
+it reads, and under which number, is a declaration's `decode` on the surface, and only a type a
+module of the program declares and publishes has one; one a module keeps is on the surface and is not
+offered. The numbers are the module's own. A caller looks a type up by its module and name when it
+loads the module and does not carry the number to another, so a module built later that numbers its
+types differently is never read under an old one. A number the module gives no type ends the call,
+as `NO_SUCH_TYPE`, because it is the caller misusing the module and not a document written wrong.
+
+What the boundary will not read is answered with Raoh's issues, as the language says it is (spec
+§decoder-error): each a `path`, a `code`, the `messageKey` that says which of the code's
+constraints it was, and the `meta` that constraint carries. A newtype's clause that is a standard
+constraint is reported as that constraint — `String.matches` as `invalid_format` with its
+`pattern`, a bound as `out_of_range` under `out_of_range.minimum` — and any other clause as
+`invariant_violation` naming its `module`, its `type` and, where it has one, its `clause`. Which
+issue a value comes to is the language's and not a backend's, so it is written down once, in
+[`conformance/issues`](conformance/issues), and this backend and the JVM's are each held to it.
 
 What Souther adds is a way to say why a call ended without a value. An abort writes a fixed-width
 record outside the arena and traps; the record carries a generation, so a caller that snapshots it
@@ -108,21 +167,8 @@ call reaches and what it does with a buffer too short to hold the answer.
 
 ## What is not written yet
 
-- What a pattern says by looking back or ahead. The checker settles the text of a `String.matches`
-  pattern, and this compiles that text into a machine before the program runs rather than at run
-  time. What it is compiled into holds every step the walk could be at rather than trying one way
-  and coming back — so a backreference, a lookaround and a lazy or possessive count
-  are refused, because each of them is a question about a way already taken. A named group and a
-  count above a thousand are refused too. Each is refused when the pattern is compiled, which is
-  the only place a pattern that would have been recognised differently can still be declined rather
-  than quietly answered.
-
-  A character written down as a number (`\x{1F600}`) is refused as well.
-
-  What a class names is not refused, and is not written down here either: a name like
-  `\p{IsHiragana}` is a fact about a version of Unicode, so it is asked of the reader whose flavour
-  the language declares the pattern in, one character at a time, and what comes out is placed in the
-  module. A table of this compiler's own would be right on the day it was written.
+- `Rational`. A quotient of two `Int`s is one, and a program that divides two of them is refused
+  as one this backend does not write yet.
 
 ## Running it
 

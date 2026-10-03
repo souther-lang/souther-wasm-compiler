@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.emit.WasmTreeShaker;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.LayoutReader.RawSection;
 import souther.wasm.link.WasmFragment.Segment;
@@ -80,7 +81,8 @@ public final class Linker {
 
         sections.put(SEC_TYPE, appendEntries(sections.get(SEC_TYPE), fragment.typeEntries()));
         sections.put(SEC_FUNCTION, appendEntries(sections.get(SEC_FUNCTION), functionEntries(fragment)));
-        sections.put(SEC_EXPORT, appendEntries(sections.get(SEC_EXPORT), exportEntries(fragment)));
+        sections.put(SEC_EXPORT, appendEntries(
+                shownToTheHost(sections.get(SEC_EXPORT)), exportEntries(fragment)));
         sections.put(SEC_CODE, appendEntries(sections.get(SEC_CODE), codeEntries(fragment)));
         sections.put(SEC_DATA, appendEntries(sections.get(SEC_DATA), dataEntries(fragment)));
         sections.put(SEC_MEMORY, memoryHolding(sections.get(SEC_MEMORY), fragment.staticEnd()));
@@ -96,7 +98,33 @@ public final class Linker {
                     layout.dataSegmentCount() + fragment.dataSegments().size()));
         }
 
-        return assemble(sections, crossings(fragment));
+        // What no export, no start and no table reaches is left out: the runtime carries every
+        // kernel, and a program calls a few of them. Equal bodies are not folded: a linked module
+        // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
+        return WasmTreeShaker.withoutWhatNothingReaches(
+                assemble(sections, surface(fragment)));
+    }
+
+    /**
+     * The runtime's exports a host calls, and none of the rest.
+     *
+     * <p>Read entry by entry and kept by name, so an export the runtime adds is left out of a
+     * linked module until {@link RuntimeAbi#HOST_EXPORTS} says a host calls it.
+     */
+    private static byte[] shownToTheHost(byte[] section) {
+        Reading reading = new Reading(section);
+        int count = reading.unsigned();
+        List<byte[]> kept = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            int start = reading.position;
+            byte[] name = reading.bytes(reading.unsigned());
+            reading.next();
+            reading.unsigned();
+            if (RuntimeAbi.HOST_EXPORTS.contains(new String(name, StandardCharsets.UTF_8))) {
+                kept.add(Arrays.copyOfRange(section, start, reading.position));
+            }
+        }
+        return appendEntries(new byte[] {0}, kept);
     }
 
     /**
@@ -279,7 +307,7 @@ public final class Linker {
         return out.toByteArray();
     }
 
-    private static byte[] assemble(Map<Integer, byte[]> sections, byte[] crossings) {
+    private static byte[] assemble(Map<Integer, byte[]> sections, byte[] surface) {
         ByteArrayOutputStream module = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(module);
         writer.write(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
@@ -290,8 +318,8 @@ public final class Linker {
             }
             writer.write((byte) id).writeUnsignedLeb128(payload.length).write(payload);
         }
-        if (crossings.length > 0) {
-            writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(crossings.length).write(crossings);
+        if (surface.length > 0) {
+            writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(surface.length).write(surface);
         }
         return module.toByteArray();
     }
@@ -299,35 +327,22 @@ public final class Linker {
     /** A section carrying no code, whose meaning is its name. */
     private static final int SEC_CUSTOM = 0;
 
-    /** What the module reaches out for, under the name a reader looks for it by. */
-    private static final String CROSSINGS = "souther:crossings";
+    /** What the program offers a caller, under the name a reader looks for it by. */
+    private static final String SURFACE = "souther:surface";
 
-    /**
-     * What the module reaches out for, written as a section of the module.
-     *
-     * <p>A number is what a call out carries, so what the numbers are has to be said somewhere, and
-     * the module is the only place a reader cannot be given the wrong one of. Written as one JSON
-     * array, because a caller reading it is reading JSON already — a call's arguments and its
-     * answer are both JSON, and this is the same reader.
-     */
-    private static byte[] crossings(WasmFragment fragment) {
-        List<WasmFragment.Crossing> held = fragment.crossings();
-        if (held.isEmpty()) {
-            return new byte[0];
-        }
-        StringBuilder written = new StringBuilder("[");
-        for (WasmFragment.Crossing crossing : held) {
-            written.append(written.length() > 1 ? "," : "")
-                    .append("{\"ordinal\":").append(crossing.ordinal())
-                    .append(",\"behavior\":\"").append(crossing.behavior())
-                    .append("\",\"implementedElsewhere\":").append(crossing.elsewhere())
-                    .append("}");
-        }
-        byte[] payload = written.append("]").toString().getBytes(StandardCharsets.UTF_8);
+    /** What the program offers a caller, written as a section of the module, where it said. */
+    private static byte[] surface(WasmFragment fragment) {
+        String held = fragment.surface();
+        return held == null ? new byte[0] : custom(SURFACE, held);
+    }
+
+    /** A custom section: its name, then what it says. */
+    private static byte[] custom(String named, String written) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(out);
-        byte[] name = CROSSINGS.getBytes(StandardCharsets.UTF_8);
-        writer.writeUnsignedLeb128(name.length).write(name).write(payload);
+        byte[] name = named.getBytes(StandardCharsets.UTF_8);
+        writer.writeUnsignedLeb128(name.length).write(name)
+                .write(written.getBytes(StandardCharsets.UTF_8));
         return out.toByteArray();
     }
 
@@ -362,6 +377,12 @@ public final class Linker {
                 }
                 shift += 7;
             }
+        }
+
+        byte[] bytes(int length) {
+            byte[] held = Arrays.copyOfRange(payload, position, position + length);
+            position += length;
+            return held;
         }
 
         byte[] remaining() {

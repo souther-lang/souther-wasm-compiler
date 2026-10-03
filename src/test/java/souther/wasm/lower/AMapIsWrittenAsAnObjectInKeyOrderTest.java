@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 
 /**
@@ -83,14 +83,14 @@ class AMapIsWrittenAsAnObjectInKeyOrderTest {
         Running module = compiled(TALLY);
 
         assertThat(answerOf(module, "counting.same", "[{\"by\": 7}]"))
-                .contains("\"expected\":\"an object\"", "\"actual\":\"number\"");
+                .contains("\"expected\":\"object\"", "\"actual\":\"number\"");
     }
 
     @Test
     void takesAMapKeyedByAnythingWrittenAsAStringWhereverOneStands() {
         // Inside a shape as well as at the boundary: a map's key carries its own descriptor, so
         // nothing here decides a second time what a key of that type looks like.
-        assertThat(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        assertThat(Compiled.module(Compiled.program(List.of("""
                 module counting
 
                 data Tally = { by: Map<Date, Int> }
@@ -109,7 +109,7 @@ class AMapIsWrittenAsAnObjectInKeyOrderTest {
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

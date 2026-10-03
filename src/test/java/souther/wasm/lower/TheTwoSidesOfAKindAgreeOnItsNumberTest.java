@@ -38,6 +38,23 @@ class TheTwoSidesOfAKindAgreeOnItsNumberTest {
         assertThat(here).containsAllEntriesOf(runtime);
     }
 
+    /**
+     * And the rules a clause is reported as, which this compiler writes into a clause's table and
+     * the runtime reads to say which constraint a value broke. Every one has a number here and the
+     * same number there, and neither side names one the other does not.
+     */
+    @Test
+    void everyRuleAClauseIsReportedAsHasTheSameNumberOnBothSides() {
+        Map<String, Integer> runtime = numbersIn(
+                Path.of("runtime/src/clauses.rs"), "pub const (RULE_\\w+): u32 = (\\d+);");
+        Map<String, Integer> here = numbersIn(
+                Path.of("src/main/java/souther/wasm/lower/Clauses.java"),
+                "int (RULE_\\w+) = (\\d+);");
+
+        assertThat(runtime).describedAs("the runtime declares rules").isNotEmpty();
+        assertThat(here).isEqualTo(runtime);
+    }
+
     @Test
     void whatNothingIsAValueOfIsANumberTheRuntimeGivesNoKind() {
         Map<String, Integer> runtime = numbersIn(
