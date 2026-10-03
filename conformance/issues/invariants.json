@@ -14,7 +14,15 @@
             "pattern": "[A-Z]{3}-[0-9]{4}"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "invalid format"
+        ],
+        "ja": [
+          "形式が不正です"
+        ]
+      }
     },
     {
       "about": "a newtype value that holds is the value",
@@ -36,7 +44,15 @@
             "min": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at least 1 characters"
+        ],
+        "ja": [
+          "1文字以上で入力してください"
+        ]
+      }
     },
     {
       "about": "a lower bound fails as out of range at its minimum",
@@ -52,7 +68,15 @@
             "min": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at least 1"
+        ],
+        "ja": [
+          "1以上で入力してください"
+        ]
+      }
     },
     {
       "about": "an upper bound fails as out of range at its maximum",
@@ -68,7 +92,15 @@
             "max": 100
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at most 100"
+        ],
+        "ja": [
+          "100以下で入力してください"
+        ]
+      }
     },
     {
       "about": "an object's named clause fails as an invariant violation naming it",
@@ -88,7 +120,15 @@
             "type": "Line"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "invariant violated on shop.Line: atLeastOne"
+        ],
+        "ja": [
+          "invariant violated on shop.Line: atLeastOne"
+        ]
+      }
     },
     {
       "about": "an object's unnamed clause names the type and no clause",
@@ -107,7 +147,15 @@
             "type": "Line"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "invariant violated on shop.Line"
+        ],
+        "ja": [
+          "invariant violated on shop.Line"
+        ]
+      }
     },
     {
       "about": "a field's own rule is reported at the field",
@@ -125,7 +173,15 @@
             "pattern": "[A-Z]{3}-[0-9]{4}"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "invalid format"
+        ],
+        "ja": [
+          "形式が不正です"
+        ]
+      }
     },
     {
       "about": "a list's length fails as too small",
@@ -141,7 +197,15 @@
             "min": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must not be empty"
+        ],
+        "ja": [
+          "空にはできません"
+        ]
+      }
     }
   ]
 }

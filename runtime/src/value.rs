@@ -814,7 +814,7 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
         return match temporal::read_moment(at, length) {
             Some((second, nano)) => temporal::moment_made(second, nano),
             None => {
-                issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::none());
+                not_written_as(kind, path, path_length);
                 0
             }
         };
@@ -827,10 +827,26 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
     match held {
         Some((tag, day, second)) => temporal::made(tag, day, second),
         None => {
-            issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::none());
+            not_written_as(kind, path, path_length);
             0
         }
     }
+}
+
+/// Text that is no reading of the calendar or the clock, said with the form the temporal is written
+/// in — the language's words for it (spec §temporal-text), which the JVM's decoder says too and the
+/// catalog's template for `invalid_format` would say less than.
+unsafe fn not_written_as(kind: u32, path: u32, path_length: u32) {
+    let said: &[u8] = match kind {
+        KIND_DATE => b"is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999",
+        KIND_TIME => b"is not a Time written as HH:mm or HH:mm:ss",
+        KIND_INSTANT => b"is not an Instant written as yyyy-MM-ddTHH:mm:ss with an offset, its year \
+            signed outside 0000 to 9999",
+        _ => b"is not a DateTime written as yyyy-MM-ddTHH:mm or yyyy-MM-ddTHH:mm:ss, its year signed \
+            outside 0000 to 9999",
+    };
+    issues::said(CODE_INVALID_FORMAT, CODE_INVALID_FORMAT, path, path_length, issues::meta::none(),
+        said);
 }
 
 /// A type with one value is written as an empty object: there is nothing to say about which one it

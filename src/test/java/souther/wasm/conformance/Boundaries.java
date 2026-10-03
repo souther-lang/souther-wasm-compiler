@@ -2,11 +2,13 @@ package souther.wasm.conformance;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import net.unit8.raoh.Err;
 import net.unit8.raoh.Issue;
 import net.unit8.raoh.Ok;
 import net.unit8.raoh.Path;
+import net.unit8.raoh.ResourceBundleMessageResolver;
 import net.unit8.raoh.Result;
 import net.unit8.raoh.decode.Decoder;
 import souther.compiler.Compiler;
@@ -42,6 +44,10 @@ final class Boundaries {
         return JSON.readTree(text);
     }
 
+    /** Raoh's own catalog, as the JVM resolves an issue's message from it. */
+    private static final ResourceBundleMessageResolver CATALOG =
+            new ResourceBundleMessageResolver("net.unit8.raoh.messages");
+
     /** The JVM's reading: the generated class's {@code jsonDecoder()}. */
     static JsonNode jvm(String model, String type, JsonNode input) {
         Map<String, ClassFileImage> classes = Compiler.compileModules(List.of(model));
@@ -58,6 +64,15 @@ final class Boundaries {
         switch (result) {
             case Ok<?> ok -> answer.put("value", "decoded");
             case Err<?> err -> {
+                // What a person reads, as the JVM's resolver writes it from Raoh's catalog, in each
+                // language the catalog has: what the TypeScript side is held to as well.
+                ObjectNode messages = answer.putObject("messages");
+                for (Locale locale : List.of(Locale.ENGLISH, Locale.JAPANESE)) {
+                    ArrayNode said = messages.putArray(locale.getLanguage());
+                    for (Issue resolved : err.issues().resolve(CATALOG, locale).asList()) {
+                        said.add(resolved.message());
+                    }
+                }
                 ArrayNode issues = answer.putArray("issues");
                 for (Issue issue : err.issues().asList()) {
                     ObjectNode written = issues.addObject();
@@ -65,6 +80,9 @@ final class Boundaries {
                     written.put("code", issue.code());
                     written.put("messageKey", issue.messageKey());
                     written.set("meta", JSON.valueToTree(issue.meta()));
+                    if (issue.customMessage()) {
+                        written.put("message", issue.message());
+                    }
                 }
             }
         }

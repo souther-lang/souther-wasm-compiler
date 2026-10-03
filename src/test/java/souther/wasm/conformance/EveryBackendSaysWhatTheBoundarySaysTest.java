@@ -14,6 +14,7 @@ import org.junit.jupiter.api.DynamicNode;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * What a value read at the boundary comes to, held for every backend to one fixture.
@@ -62,6 +63,15 @@ class EveryBackendSaysWhatTheBoundarySaysTest {
                     // working it out by hand.
                     assertThat(each.has("expect")).describedAs("a case says what it expects; "
                             + backend + " answered " + answered).isTrue();
+                    // What a person reads is the JVM's to show, since only a resolver writes it:
+                    // the issues themselves are what every backend is held to.
+                    if (answered.has("messages")) {
+                        assertThat(each.has("messages")).describedAs("a case says what is read; "
+                                + backend + " said " + answered.get("messages")).isTrue();
+                        assertThat(answered.get("messages")).describedAs("what the JVM says")
+                                .isEqualTo(each.get("messages"));
+                        ((ObjectNode) answered).remove("messages");
+                    }
                     assertThat(answered).describedAs(backend + " reading " + each.get("input"))
                             .isEqualTo(expected(each.get("expect")));
                 }));

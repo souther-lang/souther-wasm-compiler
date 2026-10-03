@@ -50,8 +50,10 @@ const OFF_PATH: usize = 16;
 const OFF_PATH_LENGTH: usize = 20;
 const OFF_META: usize = 24;
 const OFF_META_LENGTH: usize = 28;
-const OFF_NEXT: usize = 32;
-const RECORD: usize = 36;
+const OFF_MESSAGE: usize = 32;
+const OFF_MESSAGE_LENGTH: usize = 36;
+const OFF_NEXT: usize = 40;
+const RECORD: usize = 44;
 
 /// Forgets what an earlier call found.
 ///
@@ -84,6 +86,20 @@ pub unsafe fn issue(code: &[u8], path: u32, path_length: u32, meta: (u32, u32)) 
 /// Records one issue under a message key of its own, which says which of its code's constraints it
 /// was.
 pub unsafe fn keyed(code: &[u8], key: &[u8], path: u32, path_length: u32, meta: (u32, u32)) {
+    said(code, key, path, path_length, meta, b"");
+}
+
+/// Records one issue the decoder says in its own words: a sentence the catalog's template for its
+/// code does not replace, since it says more than the template does — what form a temporal is
+/// written in. The words are the language's, and the JVM's decoder says the same.
+pub unsafe fn said(
+    code: &[u8],
+    key: &[u8],
+    path: u32,
+    path_length: u32,
+    meta: (u32, u32),
+    message: &[u8],
+) {
     let record = alloc(RECORD as u32);
     put(record, OFF_CODE, code.as_ptr() as u32);
     put(record, OFF_CODE_LENGTH, code.len() as u32);
@@ -93,6 +109,8 @@ pub unsafe fn keyed(code: &[u8], key: &[u8], path: u32, path_length: u32, meta: 
     put(record, OFF_PATH_LENGTH, path_length);
     put(record, OFF_META, meta.0);
     put(record, OFF_META_LENGTH, meta.1);
+    put(record, OFF_MESSAGE, message.as_ptr() as u32);
+    put(record, OFF_MESSAGE_LENGTH, message.len() as u32);
     put(record, OFF_NEXT, 0);
     if FIRST == 0 {
         FIRST = record;
@@ -123,6 +141,10 @@ pub unsafe extern "C" fn __souther_issues_written() -> u64 {
         quoted(get(record, OFF_KEY), get(record, OFF_KEY_LENGTH));
         write(b",\"meta\":");
         text::push(get(record, OFF_META), get(record, OFF_META_LENGTH));
+        if get(record, OFF_MESSAGE_LENGTH) > 0 {
+            write(b",\"message\":");
+            quoted(get(record, OFF_MESSAGE), get(record, OFF_MESSAGE_LENGTH));
+        }
         write(b"}");
         record = get(record, OFF_NEXT);
     }

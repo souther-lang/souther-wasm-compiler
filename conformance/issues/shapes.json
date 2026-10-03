@@ -18,7 +18,15 @@
             "expected": "long"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
     },
     {
       "about": "a field left out",
@@ -33,7 +41,15 @@
           "messageKey": "required",
           "meta": {}
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is required"
+        ],
+        "ja": [
+          "必須です"
+        ]
+      }
     },
     {
       "about": "every field wrong at once",
@@ -57,7 +73,17 @@
           "messageKey": "required",
           "meta": {}
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected long",
+          "is required"
+        ],
+        "ja": [
+          "long型が必要です",
+          "必須です"
+        ]
+      }
     },
     {
       "about": "an object where a shape is not",
@@ -75,7 +101,15 @@
             "expected": "object"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected object"
+        ],
+        "ja": [
+          "object型が必要です"
+        ]
+      }
     },
     {
       "about": "null where a shape is",
@@ -88,7 +122,15 @@
           "messageKey": "required",
           "meta": {}
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is required"
+        ],
+        "ja": [
+          "必須です"
+        ]
+      }
     },
     {
       "about": "an optional field given null",
@@ -117,7 +159,15 @@
             "expected": "long"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
     },
     {
       "about": "a whole number wider than an Int",
@@ -135,7 +185,15 @@
             "expected": "long"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "value is outside the long range"
+        ],
+        "ja": [
+          "long型の範囲外の値です"
+        ]
+      }
     },
     {
       "about": "a name no case of an enumeration has",
@@ -151,7 +209,15 @@
           }
         }
       ],
-      "note": "Raoh's enum reader folds ASCII case and says invalid_format.enum with allowed; Souther's enumerations are case-sensitive, and the JVM says invalid_format with type. Held here to the JVM until the language says which."
+      "note": "Raoh's enum reader folds ASCII case and says invalid_format.enum with allowed; Souther's enumerations are case-sensitive, and the JVM says invalid_format with type. Held here to the JVM until the language says which.",
+      "messages": {
+        "en": [
+          "invalid format"
+        ],
+        "ja": [
+          "形式が不正です"
+        ]
+      }
     },
     {
       "about": "a number where an enumeration's name is",
@@ -167,7 +233,15 @@
             "expected": "string"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected string"
+        ],
+        "ja": [
+          "string型が必要です"
+        ]
+      }
     },
     {
       "about": "a tag no case of a sum has",
@@ -188,7 +262,15 @@
             ]
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be one of [Circle, Square]"
+        ],
+        "ja": [
+          "[Circle, Square]のいずれかで入力してください"
+        ]
+      }
     },
     {
       "about": "a sum without its tag",
@@ -203,7 +285,15 @@
           "messageKey": "required",
           "meta": {}
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is required"
+        ],
+        "ja": [
+          "必須です"
+        ]
+      }
     },
     {
       "about": "a case of a sum with a field wrong",
@@ -222,7 +312,15 @@
             "expected": "long"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
     },
     {
       "about": "text that is no date",
@@ -233,9 +331,18 @@
           "path": "",
           "code": "invalid_format",
           "messageKey": "invalid_format",
-          "meta": {}
+          "meta": {},
+          "message": "is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999"
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999"
+        ],
+        "ja": [
+          "is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999"
+        ]
+      }
     },
     {
       "about": "text that is no time",
@@ -246,9 +353,18 @@
           "path": "",
           "code": "invalid_format",
           "messageKey": "invalid_format",
-          "meta": {}
+          "meta": {},
+          "message": "is not a Time written as HH:mm or HH:mm:ss"
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is not a Time written as HH:mm or HH:mm:ss"
+        ],
+        "ja": [
+          "is not a Time written as HH:mm or HH:mm:ss"
+        ]
+      }
     },
     {
       "about": "text that is no date-time",
@@ -259,9 +375,18 @@
           "path": "",
           "code": "invalid_format",
           "messageKey": "invalid_format",
-          "meta": {}
+          "meta": {},
+          "message": "is not a DateTime written as yyyy-MM-ddTHH:mm or yyyy-MM-ddTHH:mm:ss, its year signed outside 0000 to 9999"
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is not a DateTime written as yyyy-MM-ddTHH:mm or yyyy-MM-ddTHH:mm:ss, its year signed outside 0000 to 9999"
+        ],
+        "ja": [
+          "is not a DateTime written as yyyy-MM-ddTHH:mm or yyyy-MM-ddTHH:mm:ss, its year signed outside 0000 to 9999"
+        ]
+      }
     },
     {
       "about": "text that is no instant",
@@ -272,9 +397,18 @@
           "path": "",
           "code": "invalid_format",
           "messageKey": "invalid_format",
-          "meta": {}
+          "meta": {},
+          "message": "is not an Instant written as yyyy-MM-ddTHH:mm:ss with an offset, its year signed outside 0000 to 9999"
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is not an Instant written as yyyy-MM-ddTHH:mm:ss with an offset, its year signed outside 0000 to 9999"
+        ],
+        "ja": [
+          "is not an Instant written as yyyy-MM-ddTHH:mm:ss with an offset, its year signed outside 0000 to 9999"
+        ]
+      }
     },
     {
       "about": "a number where a date is",
@@ -290,7 +424,15 @@
             "expected": "string"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected string"
+        ],
+        "ja": [
+          "string型が必要です"
+        ]
+      }
     },
     {
       "about": "text where an amount is",
@@ -306,7 +448,15 @@
             "expected": "number"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected number"
+        ],
+        "ja": [
+          "number型が必要です"
+        ]
+      }
     },
     {
       "about": "text where a truth is",
@@ -322,7 +472,15 @@
             "expected": "boolean"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected boolean"
+        ],
+        "ja": [
+          "boolean型が必要です"
+        ]
+      }
     },
     {
       "about": "an element of a list wrong",
@@ -347,7 +505,15 @@
             "expected": "long"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
     },
     {
       "about": "a value of a map wrong",
@@ -366,7 +532,15 @@
             "expected": "long"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
     },
     {
       "about": "a set given a member twice",
@@ -389,9 +563,18 @@
           "path": "/2026-02-30",
           "code": "invalid_format",
           "messageKey": "invalid_format",
-          "meta": {}
+          "meta": {},
+          "message": "is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999"
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999"
+        ],
+        "ja": [
+          "is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999"
+        ]
+      }
     },
     {
       "about": "a member name that is no case, where a map is keyed by an enumeration",
@@ -408,7 +591,15 @@
             "type": "Colour"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "invalid format"
+        ],
+        "ja": [
+          "形式が不正です"
+        ]
+      }
     }
   ]
 }

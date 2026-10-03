@@ -15,7 +15,15 @@
             "min": 2
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at least 2 characters"
+        ],
+        "ja": [
+          "2文字以上で入力してください"
+        ]
+      }
     },
     {
       "about": "too long",
@@ -31,7 +39,15 @@
             "max": 3
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at most 3 characters"
+        ],
+        "ja": [
+          "3文字以内で入力してください"
+        ]
+      }
     },
     {
       "about": "not exactly as long",
@@ -47,7 +63,15 @@
             "expected": 4
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be exactly 4 characters"
+        ],
+        "ja": [
+          "4文字で入力してください"
+        ]
+      }
     },
     {
       "about": "the first of two length clauses broken",
@@ -63,7 +87,15 @@
             "min": 2
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at least 2 characters"
+        ],
+        "ja": [
+          "2文字以上で入力してください"
+        ]
+      }
     },
     {
       "about": "the second of two length clauses broken",
@@ -79,7 +111,15 @@
             "max": 3
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at most 3 characters"
+        ],
+        "ja": [
+          "3文字以内で入力してください"
+        ]
+      }
     },
     {
       "about": "not positive",
@@ -95,7 +135,15 @@
             "min": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be positive"
+        ],
+        "ja": [
+          "正の値で入力してください"
+        ]
+      }
     },
     {
       "about": "negative",
@@ -111,7 +159,15 @@
             "min": 0
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be non-negative"
+        ],
+        "ja": [
+          "0以上で入力してください"
+        ]
+      }
     },
     {
       "about": "at a strict lower bound",
@@ -127,7 +183,15 @@
             "min": 11
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at least 11"
+        ],
+        "ja": [
+          "11以上で入力してください"
+        ]
+      }
     },
     {
       "about": "below a range written as one clause",
@@ -143,7 +207,15 @@
             "min": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at least 1"
+        ],
+        "ja": [
+          "1以上で入力してください"
+        ]
+      }
     },
     {
       "about": "above a range written as one clause",
@@ -159,7 +231,15 @@
             "max": 9
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at most 9"
+        ],
+        "ja": [
+          "9以下で入力してください"
+        ]
+      }
     },
     {
       "about": "a clause only partly a constraint, broken in the part that is",
@@ -175,7 +255,15 @@
             "min": 0
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be non-negative"
+        ],
+        "ja": [
+          "0以上で入力してください"
+        ]
+      }
     },
     {
       "about": "a clause only partly a constraint, broken in the part that is not",
@@ -191,7 +279,15 @@
             "type": "Even"
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "invariant violated on rules.Even"
+        ],
+        "ja": [
+          "invariant violated on rules.Even"
+        ]
+      }
     },
     {
       "about": "an amount not positive",
@@ -207,7 +303,15 @@
             "min": 0
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be positive"
+        ],
+        "ja": [
+          "正の値で入力してください"
+        ]
+      }
     },
     {
       "about": "an amount below its minimum",
@@ -223,7 +327,15 @@
             "min": 0.5
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at least 0.5"
+        ],
+        "ja": [
+          "0.5以上で入力してください"
+        ]
+      }
     },
     {
       "about": "an amount above its maximum",
@@ -239,7 +351,15 @@
             "max": 1.5
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must be at most 1.5"
+        ],
+        "ja": [
+          "1.5以下で入力してください"
+        ]
+      }
     },
     {
       "about": "an empty list",
@@ -255,7 +375,15 @@
             "min": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must not be empty"
+        ],
+        "ja": [
+          "空にはできません"
+        ]
+      }
     },
     {
       "about": "a list not of its size",
@@ -273,7 +401,15 @@
             "expected": 2
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must have exactly 2 elements"
+        ],
+        "ja": [
+          "2個の要素が必要です"
+        ]
+      }
     },
     {
       "about": "a list too long",
@@ -293,7 +429,15 @@
             "max": 2
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must have at most 2 elements"
+        ],
+        "ja": [
+          "2個以内の要素が必要です"
+        ]
+      }
     },
     {
       "about": "a list holding a value twice",
@@ -317,7 +461,15 @@
             ]
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must not contain duplicates: [1, 2]"
+        ],
+        "ja": [
+          "重複があります: [1, 2]"
+        ]
+      }
     },
     {
       "about": "an empty map",
@@ -333,7 +485,15 @@
             "min": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must not be empty"
+        ],
+        "ja": [
+          "空にはできません"
+        ]
+      }
     },
     {
       "about": "a map too big",
@@ -352,7 +512,15 @@
             "max": 1
           }
         }
-      ]
+      ],
+      "messages": {
+        "en": [
+          "must have at most 1 elements"
+        ],
+        "ja": [
+          "1個以内の要素が必要です"
+        ]
+      }
     }
   ]
 }
