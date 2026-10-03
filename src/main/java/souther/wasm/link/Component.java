@@ -19,6 +19,10 @@ import souther.wasm.emit.WasmWriter;
  * says when the whole of it goes back. That is the bracket the core module left to a caller to
  * keep, moved to where the format states it.
  *
+ * <p>A type a module publishes is read through a function of its own, {@code func(value: string)
+ * -> string}, which answers what the core module's {@code __souther_decode} answers for it. Those
+ * functions are an interface per module too, under a package of their own.
+ *
  * <p>A name crosses as the interface names it. A Souther behavior is written in one convention and
  * a component export in another, so the two are not the same string — and where two behaviors of a
  * module would come to one name, this refuses rather than exporting one of them twice.
@@ -31,8 +35,20 @@ public final class Component {
     /** The namespace and package what a program reaches out for is asked for under. */
     private static final String ASKED = "souther:reached/";
 
+    /** The namespace and package the types a caller may read a value of are read under. */
+    private static final String READ_UNDER = "souther:decode/";
+
     /** What a behavior crosses as, taking the call's arguments and answering the envelope. */
     private static final String TAKES = "arguments";
+
+    /** What a type is read through, taking the one value and answering the envelope. */
+    private static final String GIVEN = "value";
+
+    /** Which type in the component's type section a behavior is lifted as. */
+    private static final int CALLED = 0;
+
+    /** Which type in the component's type section a type's reading is lifted as. */
+    private static final int READ = 1;
 
     private Component() {
     }
@@ -46,20 +62,19 @@ public final class Component {
      * @return the component
      */
     public static byte[] around(byte[] core, Map<String, Map<String, String>> behaviors) {
-        return around(core, behaviors, List.of());
+        return around(core, Offering.ofBehaviors(behaviors));
     }
 
     /**
-     * Wraps a linked core module as a component that reaches out for what it does not implement.
+     * Wraps a linked core module as a component offering what a program offers and asking for what
+     * it reaches out for.
      *
      * @param core the linked core module
-     * @param behaviors every behavior's core export name, by the module that declares it, in the
-     *     order the program declares them
-     * @param reaches the behaviors the program reaches out for, in the order it numbers them
+     * @param offering what the program offers and has to be given
      * @return the component
      */
-    public static byte[] around(byte[] core, Map<String, Map<String, String>> behaviors,
-            List<Reach> reaches) {
+    public static byte[] around(byte[] core, Offering offering) {
+        List<Reach> reaches = offering.reaches();
         Aliases aliases = new Aliases(PROGRAM);
         List<byte[]> lifts = new ArrayList<>();
         List<byte[]> exports = new ArrayList<>();
@@ -71,18 +86,30 @@ public final class Component {
 
         int lifted = 0;
         int made = 0;
-        for (Map.Entry<String, Map<String, String>> module : behaviors.entrySet()) {
+        for (Map.Entry<String, Map<String, String>> module : offering.behaviors().entrySet()) {
             List<Map.Entry<String, Integer>> inside = new ArrayList<>();
             Map<String, String> named = namesIn(module.getKey(), module.getValue());
             for (Map.Entry<String, String> behavior : module.getValue().entrySet()) {
                 String crossing = named.get(behavior.getKey());
                 int core32 = aliases.coreFunc(Lifted.wrapping(behavior.getValue()));
                 lifts.add(ComponentWriter.canonLiftMemoryReallocUtf8PostReturn(
-                        core32, 0, memory, realloc, afterwards));
+                        core32, CALLED, memory, realloc, afterwards));
                 inside.add(Map.entry(crossing, lifted++));
             }
             instances.add(ComponentWriter.componentInstanceFromFuncs(inside));
             exports.add(ComponentWriter.exportInstance(offeredAs(module.getKey()), made++));
+        }
+        for (Map.Entry<String, Map<String, String>> module : offering.readable().entrySet()) {
+            List<Map.Entry<String, Integer>> inside = new ArrayList<>();
+            Map<String, String> named = namesIn(module.getKey(), module.getValue());
+            for (Map.Entry<String, String> type : module.getValue().entrySet()) {
+                int core32 = aliases.coreFunc(Lifted.reading(type.getValue()));
+                lifts.add(ComponentWriter.canonLiftMemoryReallocUtf8PostReturn(
+                        core32, READ, memory, realloc, afterwards));
+                inside.add(Map.entry(named.get(type.getKey()), lifted++));
+            }
+            instances.add(ComponentWriter.componentInstanceFromFuncs(inside));
+            exports.add(ComponentWriter.exportInstance(readAs(module.getKey()), made++));
         }
 
         ComponentWriter out = new ComponentWriter();
@@ -104,9 +131,10 @@ public final class Component {
         }
         out.rawSection(ComponentWriter.SEC_ALIAS, ComponentWriter.vec(taken));
         List<byte[]> types = new ArrayList<>();
-        byte[] crossing = ComponentWriter.funcTypeScalars(List.of(TAKES),
-                List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING);
-        types.add(crossing);
+        types.add(ComponentWriter.funcTypeScalars(List.of(TAKES),
+                List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING));
+        types.add(ComponentWriter.funcTypeScalars(List.of(GIVEN),
+                List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING));
         Map<String, Integer> asked = new LinkedHashMap<>();
         for (Reach reach : reaches) {
             if (!asked.containsKey(reach.module())) {
@@ -283,6 +311,20 @@ public final class Component {
         return ASKED + writable(module);
     }
 
+    /**
+     * What a component calls the interface the types of a module a caller may read a value of are
+     * read through.
+     *
+     * <p>Not the one the module's behaviors are offered under. A type and a behavior of one module
+     * may come to one interface name — {@code LineItem} beside {@code line_item} — and an interface gives each
+     * function one name, so the two kinds of function are offered apart rather than refused.
+     *
+     * @param module the module the types are declared in
+     */
+    public static String readAs(String module) {
+        return READ_UNDER + writable(module);
+    }
+
     private static String writable(String module) {
         String held = interfaceName(module.replace('.', '-'));
         if (!WRITABLE.matcher(held).matches()) {
@@ -293,15 +335,16 @@ public final class Component {
     }
 
     /**
-     * What an interface calls each behavior of a module, or why it can call none of them that.
+     * What an interface calls each behavior of a module, or each type of it a caller may read, or
+     * why it can call none of them that.
      *
      * <p>Asked here rather than where a component is built, because what a program offers is the
      * same whether it is written as a component or only written down — and a name an interface
      * cannot carry is not something to find out at the second of those.
      *
-     * @param module the module the behaviors are declared in, for saying which one
-     * @param behaviors the behaviors of it, by the name Souther wrote
-     * @return each behavior's name, by the name Souther wrote
+     * @param module the module they are declared in, for saying which one
+     * @param behaviors the behaviors or the types of it, by the name Souther wrote
+     * @return each one's name, by the name Souther wrote
      */
     public static Map<String, String> namesIn(String module, Map<String, String> behaviors) {
         Map<String, String> named = new LinkedHashMap<>();
@@ -366,6 +409,15 @@ public final class Component {
         /** The name the function that lifts a behavior's core export is exported under. */
         public static String wrapping(String export) {
             return export + "#lifted";
+        }
+
+        /**
+         * The name the function that reads a value of one type, lifted, is exported under.
+         *
+         * @param type the type, as its module and its name
+         */
+        public static String reading(String type) {
+            return "decode:" + type + "#lifted";
         }
     }
 

@@ -140,6 +140,24 @@ memory it crosses in: the host lowers the argument through `cabi_realloc` and re
 of an area in this memory, and the post-return says when the whole of it goes back. That is the
 bracket a core caller keeps, moved to where the format states it.
 
+A type a module publishes is offered too, to be read on its own as the core module's
+`__souther_decode` reads it: one function per type, under a package of its own.
+
+    world root {
+      export souther:program/cart;
+      export souther:decode/cart;
+    }
+    package souther:decode {
+      interface cart {
+        sku: func(value: string) -> string;
+        line-item: func(value: string) -> string;
+      }
+    }
+
+It takes one value of the type as JSON and answers `{"value": ...}` or `{"issues": [...]}`. The
+types are not functions of the interface the behaviors are in, because a type and a behavior may
+come to one name there (`LineItem` and `line_item`).
+
 A behavior's name is not the same string on both sides — Souther writes one convention and an
 interface another — so where two behaviors of a module would come to one interface name, this
 refuses rather than exporting one of them twice.
@@ -170,7 +188,11 @@ and a component that reaches out is almost entirely indices between sections. Th
 question, so the build asks the format: CI validates a component this writes, and one that reaches
 out, with `wasm-tools`.
 
-They do not run one: nothing here can.
+Validating says each index names something of the right type, and not that a function lifts the
+right one: every function crosses as a string and answers one, so a lift naming another
+behavior's core function, or another type's reading, is still valid. So CI also calls each
+function of one component with `wasmtime` and compares what it answers. The JVM tests run no
+component.
 The three runtime functions a component's canonical calls go through are asked directly instead,
 which is where the one question the writing cannot answer — where a result may begin — can be put.
 The two modules a program reaches out through are run the same way, against lowerings that write
