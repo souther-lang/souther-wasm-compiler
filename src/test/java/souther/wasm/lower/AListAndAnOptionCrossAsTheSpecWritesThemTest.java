@@ -124,7 +124,7 @@ class AListAndAnOptionCrossAsTheSpecWritesThemTest {
                 """);
 
         assertThat(answerOf(module, "counting.same", "[7]"))
-                .contains("\"expected\":\"an array\"", "\"actual\":\"number\"");
+                .contains("\"expected\":\"array\"", "\"actual\":\"number\"");
     }
 
     private static Running compiled(String... sources) {

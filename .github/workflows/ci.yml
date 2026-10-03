@@ -93,9 +93,22 @@ jobs:
       # notice the boundary changing shape — and only while it is still built.
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
-          cache-dependency-path: examples/react-cart/package-lock.json
+          cache-dependency-path: |
+            examples/react-cart/package-lock.json
+            packages/wasm/package-lock.json
+
+      # What a TypeScript caller is handed: the runtime, the binding generated from a module, and the
+      # sentences Raoh's catalog writes of an issue — each held to what the compiler built above
+      # writes, the binding to a page that stops compiling when the model it reads changes, and the
+      # issues and their sentences to the same fixtures the JVM and the wasm module are held to.
+      - name: Test the TypeScript package
+        working-directory: packages/wasm
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
       - name: Build the example
         working-directory: examples/react-cart
         run: |
@@ -109,7 +122,7 @@ jobs:
       # come back. So the glue is run against a module, by the same file the page loads.
       - name: Call a compiled program through the glue the page uses
         working-directory: examples/react-cart
-        run: node check.mjs
+        run: node check.ts
 
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no

@@ -151,7 +151,7 @@ class ADayAndATimeAreWhatACalendarSaysTest {
             assertThat(readableByTheJvm(written))
                     .describedAs(written + " is a day to java.time").isTrue();
             assertThat(answerOf(module, "diary.same", quoted(written)))
-                    .describedAs(written).contains("\"expected\":\"Date\"");
+                    .describedAs(written).contains("\"code\":\"invalid_format\"");
         }
     }
 
@@ -250,9 +250,9 @@ class ADayAndATimeAreWhatACalendarSaysTest {
         Running module = compiled();
 
         assertThat(answerOf(module, "diary.same", quoted("2026-02-30")))
-                .contains("\"expected\":\"Date\"");
+                .contains("\"code\":\"invalid_format\"");
         assertThat(answerOf(module, "diary.same", quoted("26-01-01")))
-                .contains("\"expected\":\"Date\"");
+                .contains("\"code\":\"invalid_format\"");
         assertThat(answerOf(module, "diary.same", "7")).contains("\"actual\":\"number\"");
     }
 

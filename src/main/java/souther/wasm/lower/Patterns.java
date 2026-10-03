@@ -50,16 +50,27 @@ final class Patterns {
      * @param settled what the checker settled the pattern as
      */
     int of(Core.KernelFact.StringMatches settled) {
-        Integer address = placed.get(settled.meaning());
+        return of(settled.meaning(), settled.written());
+    }
+
+    /**
+     * The same, for a pattern a clause states as a constraint: one meaning has one image whichever
+     * of the two asked for it first.
+     *
+     * @param meaning what the pattern means
+     * @param written how it was written, for saying which pattern a backend could not lower
+     */
+    int of(PatternMeaning meaning, String written) {
+        Integer address = placed.get(meaning);
         if (address == null) {
-            address = place(settled);
-            placed.put(settled.meaning(), address);
+            address = place(meaning, written);
+            placed.put(meaning, address);
         }
         return address;
     }
 
-    private int place(Core.KernelFact.StringMatches settled) {
-        return switch (PatternMachine.of(settled.meaning()).image()) {
+    private int place(PatternMeaning meaning, String text) {
+        return switch (PatternMachine.of(meaning).image()) {
             case PatternImage.Written written -> {
                 byte[] image = String.join("", written.strings()).getBytes(StandardCharsets.US_ASCII);
                 ByteArrayOutputStream table = new ByteArrayOutputStream();
@@ -68,7 +79,7 @@ final class Patterns {
                 yield fragment.place(table.toByteArray());
             }
             case PatternImage.MoreCharacters more -> throw new NotLowered("the machine of the pattern "
-                    + settled.written() + " is written in more than " + more.most()
+                    + text + " is written in more than " + more.most()
                     + " characters, which is more than one pattern's image holds");
         };
     }

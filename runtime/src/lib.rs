@@ -27,6 +27,7 @@
 extern crate alloc as heap;
 
 mod captures;
+mod clauses;
 mod decimal;
 mod descriptor;
 mod issues;
@@ -63,7 +64,10 @@ const PAGE: usize = 65536;
 ///
 /// Raised to 7 when a call could end for a reason it could not before, `NO_SUCH_TYPE`, which a host
 /// naming reasons by the numbers of 6 would not know.
-const ABI_VERSION: u32 = 7;
+///
+/// Raised to 8 when an issue became Raoh's, with a message key and the metadata its constraint
+/// carries, and a descriptor of a type with rules came to point at what each rule is reported as.
+const ABI_VERSION: u32 = 8;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -106,10 +110,22 @@ pub unsafe extern "C" fn __souther_runtime_init(static_end: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn __ronto_alloc(size: u32) -> u32 {
     let start = ARENA_TOP;
-    let end = start + size as usize;
+    // Past the last address there is, the end wraps round to a small one and would read as room
+    // already mapped: an arena that ran out has to say so rather than hand out what it already has.
+    let Some(end) = start.checked_add(size as usize) else {
+        __souther_abort(REASON_OUT_OF_MEMORY, 0, size as u64, 0);
+    };
     if end > memory_bytes() {
-        let wanted = (end - memory_bytes()).div_ceil(PAGE);
-        if core::arch::wasm32::memory_grow(0, wanted) == usize::MAX {
+        // At least as much again as there is, and not only what this allocation is short of. An
+        // engine may move all of memory to grow it, so growing by what each allocation lacks makes
+        // an arena that climbs a page at a time cost the square of how far it climbs: a call
+        // reading a list of sixteen thousand elements took twenty seconds the first time and a
+        // fifth of a second after, once memory was wide enough.
+        let short = (end - memory_bytes()).div_ceil(PAGE);
+        let wanted = short.max(core::arch::wasm32::memory_size(0));
+        if core::arch::wasm32::memory_grow(0, wanted) == usize::MAX
+            && core::arch::wasm32::memory_grow(0, short) == usize::MAX
+        {
             __souther_abort(REASON_OUT_OF_MEMORY, 0, size as u64, 0);
         }
     }

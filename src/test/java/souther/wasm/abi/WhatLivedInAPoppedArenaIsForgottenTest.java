@@ -15,8 +15,6 @@ import souther.wasm.Running;
  */
 class WhatLivedInAPoppedArenaIsForgottenTest {
 
-    private static final String ISSUE = "__souther_issue";
-
     @Test
     void forgetsTheIssuesFoundBeforeTheArenaWasReset() {
         Running runtime = Running.bareRuntime();
@@ -47,8 +45,10 @@ class WhatLivedInAPoppedArenaIsForgottenTest {
         assertThat(runtime.call(RuntimeAbi.ISSUES_COUNT)).isZero();
     }
 
+    /** Finds one issue: a call's arguments that are not a list of them. */
     private static void issue(Running runtime) {
-        int text = runtime.staged("type_mismatch");
-        runtime.runWith(ISSUE, text, 13, text, 0, text, 13, text, 13);
+        int text = runtime.staged("1");
+        long document = runtime.callWith(RuntimeAbi.JSON_PARSE, text, 1)[0];
+        runtime.runWith(RuntimeAbi.CHECK_ARGUMENTS, document, 1);
     }
 }

@@ -24,6 +24,15 @@ src/main/java/souther/wasm/emit/
 
 ---
 
+packages/wasm/src/catalog.ts
+
+  The message templates of Raoh's catalog, from raoh-specification
+  (https://github.com/raoh-project/raoh-specification), at the commit the file
+  names. Licensed under the Apache License, Version 2.0, and staying under it;
+  packages/wasm/NOTICE says so for the package on its own.
+
+---
+
 The runnable jar (classifier `cli`) carries this project's dependencies inside
 it, so distributing that jar distributes them:
 

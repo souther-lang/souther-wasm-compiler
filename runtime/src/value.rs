@@ -38,8 +38,8 @@ use crate::descriptor::{
 use crate::temporal;
 use crate::order;
 use crate::issues::{
-    self, CODE_INVALID_FORMAT, CODE_INVALID_SIZE, CODE_INVARIANT_VIOLATION, CODE_MISSING_FIELD, CODE_NOT_ALLOWED,
-    CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH,
+    self, CODE_INVALID_FORMAT, CODE_INVALID_SIZE, CODE_NOT_ALLOWED, CODE_REQUIRED,
+    CODE_TYPE_MISMATCH,
 };
 use crate::json;
 use crate::notation;
@@ -647,12 +647,15 @@ pub unsafe extern "C" fn __souther_none() -> u32 {
 pub unsafe extern "C" fn __souther_check_arguments(document: u32, expected: u32) {
     let tag = json::__souther_json_tag(document);
     if tag != json::TAG_ARRAY {
-        issues::issue(CODE_TYPE_MISMATCH, 0, 0, kind_of(tag), b"arguments");
+        mismatch(0, 0, tag, b"array");
         return;
     }
     let held = json::__souther_json_length(document);
     if held != expected {
-        issues::issue_of(CODE_INVALID_SIZE, 0, 0, decimal(held), decimal(expected));
+        issues::meta::begin();
+        issues::meta::integer(b"actual", held as i64);
+        issues::meta::integer(b"expected", expected as i64);
+        issues::issue(CODE_INVALID_SIZE, 0, 0, issues::meta::end());
     }
 }
 
@@ -706,7 +709,7 @@ pub unsafe extern "C" fn __souther_read(
 unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"Int");
+        mismatch(path, path_length, tag, b"long");
         return 0;
     }
     let bytes = json::__souther_json_bytes(value) as usize;
@@ -718,19 +721,19 @@ unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
         let digit = core::ptr::read((bytes + at) as *const u8);
         if !digit.is_ascii_digit() {
             // A point or an exponent means the document wrote an amount, not a whole number.
-            issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"number", b"Int");
+            mismatch(path, path_length, tag, b"long");
             return 0;
         }
         magnitude = magnitude * 10 + (digit - b'0') as u128;
         if magnitude > 1u128 << 63 {
-            issues::issue(CODE_OUT_OF_RANGE, path, path_length, b"number", b"Int");
+            wider_than_long(path, path_length);
             return 0;
         }
         at += 1;
     }
     let limit = if negative { 1u128 << 63 } else { i64::MAX as u128 };
     if magnitude > limit {
-        issues::issue(CODE_OUT_OF_RANGE, path, path_length, b"number", b"Int");
+        wider_than_long(path, path_length);
         return 0;
     }
     if negative {
@@ -740,12 +743,21 @@ unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
     }
 }
 
+/// A whole number written wider than an `Int` holds, which Raoh's reader of one says as a mismatch
+/// of its range.
+unsafe fn wider_than_long(path: u32, path_length: u32) {
+    issues::meta::begin();
+    issues::meta::word(b"expected", b"long");
+    issues::keyed(CODE_TYPE_MISMATCH, issues::KEY_NUMERIC_RANGE, path, path_length,
+        issues::meta::end());
+}
+
 unsafe fn boolean(value: u32, path: u32, path_length: u32) -> u32 {
     match json::__souther_json_tag(value) {
         json::TAG_TRUE => __souther_bool(1),
         json::TAG_FALSE => __souther_bool(0),
         other => {
-            issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(other), b"Bool");
+            mismatch(path, path_length, other, b"boolean");
             0
         }
     }
@@ -757,13 +769,13 @@ unsafe fn boolean(value: u32, path: u32, path_length: u32) -> u32 {
 unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_STRING {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"String");
+        mismatch(path, path_length, tag, b"string");
         return 0;
     }
     match notation::admitted(json::__souther_json_bytes(value), json::__souther_json_length(value)) {
         Some(held) => held,
         None => {
-            issues::issue(CODE_INVALID_FORMAT, path, path_length, b"string", b"String");
+            issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::none());
             0
         }
     }
@@ -773,7 +785,7 @@ unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
 unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"Decimal");
+        mismatch(path, path_length, tag, b"number");
         return 0;
     }
     let held = decimal::parse(
@@ -781,7 +793,7 @@ unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
         json::__souther_json_length(value),
     );
     if held == 0 {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"number", b"Decimal");
+        mismatch(path, path_length, tag, b"number");
         return 0;
     }
     held
@@ -790,14 +802,10 @@ unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
 /// A day, a time of day, or the two together, read as a calendar and a clock write them.
 unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
-    let wanted: &[u8] = match kind {
-        KIND_DATE => b"Date",
-        KIND_TIME => b"Time",
-        KIND_INSTANT => b"Instant",
-        _ => b"DateTime",
-    };
+    // A temporal is written as text, and text that is no reading of the calendar or the clock is the
+    // format being wrong (spec §decoder-error).
     if tag != json::TAG_STRING {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), wanted);
+        mismatch(path, path_length, tag, b"string");
         return 0;
     }
     let at = json::__souther_json_bytes(value);
@@ -806,7 +814,7 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
         return match temporal::read_moment(at, length) {
             Some((second, nano)) => temporal::moment_made(second, nano),
             None => {
-                issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"string", wanted);
+                not_written_as(kind, path, path_length);
                 0
             }
         };
@@ -819,10 +827,26 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
     match held {
         Some((tag, day, second)) => temporal::made(tag, day, second),
         None => {
-            issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"string", wanted);
+            not_written_as(kind, path, path_length);
             0
         }
     }
+}
+
+/// Text that is no reading of the calendar or the clock, said with the form the temporal is written
+/// in — the language's words for it (spec §temporal-text), which the JVM's decoder says too and the
+/// catalog's template for `invalid_format` would say less than.
+unsafe fn not_written_as(kind: u32, path: u32, path_length: u32) {
+    let said: &[u8] = match kind {
+        KIND_DATE => b"is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999",
+        KIND_TIME => b"is not a Time written as HH:mm or HH:mm:ss",
+        KIND_INSTANT => b"is not an Instant written as yyyy-MM-ddTHH:mm:ss with an offset, its year \
+            signed outside 0000 to 9999",
+        _ => b"is not a DateTime written as yyyy-MM-ddTHH:mm or yyyy-MM-ddTHH:mm:ss, its year signed \
+            outside 0000 to 9999",
+    };
+    issues::said(CODE_INVALID_FORMAT, CODE_INVALID_FORMAT, path, path_length, issues::meta::none(),
+        said);
 }
 
 /// A type with one value is written as an empty object: there is nothing to say about which one it
@@ -830,7 +854,7 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
 unsafe fn unit(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
     __souther_unit(descriptor)
@@ -839,7 +863,7 @@ unsafe fn unit(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 
 unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
     let cell = __souther_record(descriptor);
@@ -856,7 +880,7 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
                 __souther_record_set(cell, i, __souther_none());
                 continue;
             }
-            issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a field");
+            required(at, at_length);
             whole = false;
             continue;
         }
@@ -874,13 +898,7 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     // and it is answered as an issue.
     let clause = __souther_check_invariants(cell, descriptor);
     if clause >= 0 {
-        issues::issue_of(
-            CODE_INVARIANT_VIOLATION,
-            path,
-            path_length,
-            decimal(clause as u32),
-            descriptor::own_name(descriptor),
-        );
+        crate::clauses::broken(cell, descriptor, clause as u32, path, path_length);
         return 0;
     }
     cell
@@ -903,13 +921,7 @@ unsafe fn named_for(value: u32, descriptor: u32, path: u32, path_length: u32) ->
     // written as that value, so the position a caller would look at is this one.
     let clause = __souther_check_invariants(cell, descriptor);
     if clause >= 0 {
-        issues::issue_of(
-            CODE_INVARIANT_VIOLATION,
-            path,
-            path_length,
-            decimal(clause as u32),
-            descriptor::own_name(descriptor),
-        );
+        crate::clauses::broken(cell, descriptor, clause as u32, path, path_length);
         return 0;
     }
     cell
@@ -957,7 +969,7 @@ pub unsafe extern "C" fn __souther_check_invariants(cell: u32, descriptor: u32) 
 unsafe fn list(value: u32, descriptor: u32, path: u32, path_length: u32, unique: bool) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_ARRAY {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an array");
+        mismatch(path, path_length, tag, b"array");
         return 0;
     }
     let held = json::__souther_json_length(value);
@@ -1154,7 +1166,7 @@ fn sign_of(difference: i64) -> i32 {
 unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
     let held = json::__souther_json_length(value);
@@ -1293,7 +1305,7 @@ unsafe fn option(value: u32, descriptor: u32, path: u32, path_length: u32) -> u3
 unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_STRING {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"a case");
+        mismatch(path, path_length, tag, b"string");
         return 0;
     }
     let held = json::__souther_json_bytes(value);
@@ -1304,13 +1316,12 @@ unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) 
             return __souther_unit(descriptor::member(descriptor, i));
         }
     }
-    issues::issue_of(
-        CODE_NOT_ALLOWED,
-        path,
-        path_length,
-        (held, held_length),
-        (b"a case".as_ptr() as u32, 6),
-    );
+    // A name no case goes by is text of a format the set does not take, said with the set it is
+    // not one of, as the JVM's reader of an enumeration says it.
+    issues::meta::begin();
+    let (named, named_length) = descriptor::enumeration_name(descriptor);
+    issues::meta::text(b"type", named, named_length);
+    issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::end());
     0
 }
 
@@ -1318,24 +1329,18 @@ unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) 
 unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
     let written = entry(value, DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32);
     if written == 0 {
         let (at, at_length) = below(path, path_length, discriminator());
-        issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a case");
+        required(at, at_length);
         return 0;
     }
     if json::__souther_json_tag(written) != json::TAG_STRING {
         let (at, at_length) = below(path, path_length, discriminator());
-        issues::issue(
-            CODE_TYPE_MISMATCH,
-            at,
-            at_length,
-            kind_of(json::__souther_json_tag(written)),
-            b"a case",
-        );
+        mismatch(at, at_length, json::__souther_json_tag(written), b"string");
         return 0;
     }
     let held = json::__souther_json_bytes(written);
@@ -1346,14 +1351,14 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
             return __souther_read(value, descriptor::member(descriptor, i), path, path_length);
         }
     }
+    // A tag naming no case is not one of those the sum allows, and which those are is said.
     let (at, at_length) = below(path, path_length, discriminator());
-    issues::issue_of(
-        CODE_NOT_ALLOWED,
-        at,
-        at_length,
-        (held, held_length),
-        (b"a case".as_ptr() as u32, 6),
+    issues::meta::begin();
+    issues::meta::texts(
+        b"allowed",
+        (0..descriptor::arity(descriptor)).map(|i| descriptor::name(descriptor, i)),
     );
+    issues::issue(CODE_NOT_ALLOWED, at, at_length, issues::meta::end());
     0
 }
 
@@ -1412,7 +1417,7 @@ pub unsafe extern "C" fn __souther_write(cell: u32, descriptor: u32) -> u64 {
     json::packed(at, length)
 }
 
-unsafe fn written(cell: u32, descriptor: u32) {
+pub(crate) unsafe fn written(cell: u32, descriptor: u32) {
     match descriptor::kind(descriptor) {
         KIND_INT => copied(json::__souther_json_write_int(__souther_int_value(cell))),
         KIND_BOOL => copied(json::__souther_json_write_bool(__souther_bool_value(cell))),
@@ -1574,6 +1579,29 @@ unsafe fn copied(answer: u64) {
 }
 
 /// What a JSON value is, in the words an issue reports it with.
+/// Something other than what a place was declared to hold, as Raoh's readers say it: nothing at
+/// all, `null` included, is `required`; anything else is a `type_mismatch` naming the kind found
+/// and the kind the reader takes (spec §decoder-error).
+///
+/// `expected` is the word Raoh's reader of the declared type says it takes — `long` for an `Int`,
+/// `number` for a `Decimal`, `string` for text and for a temporal, `object` for a shape — so a
+/// resolver that writes sentences for one backend's issues writes them for this one's.
+unsafe fn mismatch(path: u32, path_length: u32, tag: u32, expected: &[u8]) {
+    if tag == json::TAG_NULL {
+        required(path, path_length);
+        return;
+    }
+    issues::meta::begin();
+    issues::meta::word(b"actual", kind_of(tag));
+    issues::meta::word(b"expected", expected);
+    issues::issue(CODE_TYPE_MISMATCH, path, path_length, issues::meta::end());
+}
+
+/// Nothing where something is required.
+unsafe fn required(path: u32, path_length: u32) {
+    issues::issue(CODE_REQUIRED, path, path_length, issues::meta::none());
+}
+
 fn kind_of(tag: u32) -> &'static [u8] {
     match tag {
         json::TAG_NULL => b"null",

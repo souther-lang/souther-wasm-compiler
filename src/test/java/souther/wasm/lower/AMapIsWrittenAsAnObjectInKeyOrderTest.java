@@ -83,7 +83,7 @@ class AMapIsWrittenAsAnObjectInKeyOrderTest {
         Running module = compiled(TALLY);
 
         assertThat(answerOf(module, "counting.same", "[{\"by\": 7}]"))
-                .contains("\"expected\":\"an object\"", "\"actual\":\"number\"");
+                .contains("\"expected\":\"object\"", "\"actual\":\"number\"");
     }
 
     @Test

@@ -59,7 +59,8 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
 
         assertThat(answerOf(module, "shipping.chosen", "[{\"type\": \"Overnight\"}]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0/type\",\"code\":\"not_allowed\","
-                        + "\"meta\":{\"actual\":\"Overnight\",\"expected\":\"a case\"}}]}");
+                        + "\"messageKey\":\"not_allowed\","
+                        + "\"meta\":{\"allowed\":[\"Standard\",\"Express\"]}}]}");
     }
 
     @Test
@@ -67,7 +68,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
         Running module = compiled(SHIPPING);
 
         assertThat(answerOf(module, "shipping.chosen", "[{\"days\": 3}]"))
-                .contains("\"path\":\"/0/type\"", "\"code\":\"missing_field\"");
+                .contains("\"path\":\"/0/type\"", "\"code\":\"required\"");
     }
 
     @Test
@@ -75,7 +76,7 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
         Running module = compiled(SHIPPING);
 
         assertThat(answerOf(module, "shipping.chosen", "[{\"type\": \"Standard\", \"days\": \"three\"}]"))
-                .contains("\"path\":\"/0/days\"", "\"code\":\"type_mismatch\"", "\"expected\":\"Int\"");
+                .contains("\"path\":\"/0/days\"", "\"code\":\"type_mismatch\"", "\"expected\":\"long\"");
     }
 
     @Test

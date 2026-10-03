@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -103,6 +104,9 @@ class TheSurfaceChangesOnlyWithItsVersionTest {
 
             behavior counted = composed >-> sizes
 
+            behavior unoffered : (n: Int) -> Int
+            let unoffered (n) = n
+
             behavior sizes : (points: List<Point>) -> Map<String, Set<Int>>
             let sizes (points) = Map.empty
             """;
@@ -125,26 +129,45 @@ class TheSurfaceChangesOnlyWithItsVersionTest {
         JsonNode surface = new ObjectMapper().readTree(
                 Running.customSection(module, "souther:surface"));
         Set<String> lines = new TreeSet<>();
-        walk("$", surface, lines);
+        Map<String, int[]> seen = new HashMap<>();
+        walk("$", surface, lines, seen);
+        // A key held by fewer objects than stand at its place is one a reader has to be ready to
+        // find missing.
+        for (Map.Entry<String, int[]> each : seen.entrySet()) {
+            if (each.getKey().endsWith(" ?")) {
+                String place = each.getKey().substring(0, each.getKey().length() - 2);
+                int[] objects = seen.get(place.substring(0, place.lastIndexOf('.')));
+                if (objects != null && each.getValue()[0] < objects[0]) {
+                    lines.add(place + " may be absent");
+                }
+            }
+        }
         return String.join("\n", lines);
     }
 
-    /** Every place under {@code at}, the kind of value there, and a vocabulary's words. */
-    private static void walk(String at, JsonNode node, Set<String> lines) {
+    /**
+     * Every place under {@code at}, the kind of value there, and a vocabulary's words — and, of a
+     * key that some objects at a place have and others do not, that it may be absent: a reader
+     * told a key is always there reads one that is sometimes missing as something else.
+     */
+    private static void walk(String at, JsonNode node, Set<String> lines,
+            Map<String, int[]> seen) {
         if (node.isObject()) {
             String here = node.has("is") ? at + "{is=" + node.get("is").asString() + "}" : at;
             lines.add(here + " object");
+            seen.computeIfAbsent(here, ignored -> new int[1])[0]++;
             for (Map.Entry<String, JsonNode> member : node.properties()) {
                 String place = here + "." + member.getKey();
+                seen.computeIfAbsent(place + " ?", ignored -> new int[1])[0]++;
                 if (VOCABULARY.contains(member.getKey()) && member.getValue().isString()) {
                     lines.add(place + " = " + member.getValue().asString());
                 } else {
-                    walk(place, member.getValue(), lines);
+                    walk(place, member.getValue(), lines, seen);
                 }
             }
         } else if (node.isArray()) {
             lines.add(at + " array");
-            node.forEach(element -> walk(at + "[]", element, lines));
+            node.forEach(element -> walk(at + "[]", element, lines, seen));
         } else {
             lines.add(at + " " + (node.isNull() ? "null" : node.isString() ? "string"
                     : node.isBoolean() ? "boolean" : node.isNumber() ? "number" : node.getNodeType()));

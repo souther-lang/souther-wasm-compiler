@@ -64,11 +64,13 @@ final class Surface {
      * a declaration a caller may read a value of on its own, the number it is read under
      * ({@code "decode"}). Version 3 says, of a behavior the program reaches out for, the number a
      * call out carries for it ({@code "reachOut"}), which a section of its own used to say beside
-     * the surface. What each version says is held to a file named for it by
+     * the surface. Version 4 says a behavior's {@code "export"} only where its module publishes
+     * it, which is only where the module exports it. What each version says is held to a file
+     * named for it by
      * {@code TheSurfaceChangesOnlyWithItsVersionTest}, so what it says cannot change while this
      * stays where it is.
      */
-    static final int VERSION = 3;
+    static final int VERSION = 4;
 
     private final CheckedProgram program;
     private final Map<TypeSymbol.AtModule, Integer> decodable = new LinkedHashMap<>();
@@ -136,9 +138,11 @@ final class Surface {
             parameters.add("{\"name\":" + (names == null ? "null" : quoted(names.get(i)))
                     + ",\"type\":" + input(inputs.get(i)) + "}");
         }
+        // Exported only where its module publishes it, so the export is only there where it is.
+        boolean published = WasmCompiler.publishes(module, behavior);
         return "{\"name\":" + quoted(behavior.name().name())
-                + ",\"export\":" + quoted(WasmCompiler.exportName(behavior.name()))
-                + ",\"published\":" + (module.publicationOf(behavior.name()) == Publication.PUBLISHED)
+                + (published ? ",\"export\":" + quoted(WasmCompiler.exportName(behavior.name())) : "")
+                + ",\"published\":" + published
                 + ",\"implementation\":" + quoted(implementation(behavior.implementation()))
                 // Only where a call is made out of the module, which is where a number is carried.
                 + (reachOut.containsKey(behavior.name())

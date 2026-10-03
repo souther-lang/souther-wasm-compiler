@@ -59,7 +59,7 @@ class AnAmountCrossesInTheOneFormItHasTest {
         Running module = compiled();
 
         assertThat(answerOf(module, "pricing.same", "[\"1\"]"))
-                .contains("\"expected\":\"Decimal\"", "\"actual\":\"string\"");
+                .contains("\"expected\":\"number\"", "\"actual\":\"string\"");
     }
 
     @Test

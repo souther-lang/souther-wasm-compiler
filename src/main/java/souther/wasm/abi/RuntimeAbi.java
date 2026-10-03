@@ -48,9 +48,11 @@ public final class RuntimeAbi {
      * Raised to 6 when the layout of a cell became something a generated body relies on
      * ({@link Cell}), and a walk began to grow a map in place. Raised to 7 when a call could end
      * for a reason it could not before, {@code NO_SUCH_TYPE}: a host naming reasons by the numbers
-     * of 6 would not know it.
+     * of 6 would not know it. Raised to 8 when an issue became Raoh's, with a message key and the
+     * metadata its constraint carries, and a descriptor of a type with rules came to point at what
+     * each rule is reported as: a host reading the issues of 7 would find neither.
      */
-    public static final int VERSION = 7;
+    public static final int VERSION = 8;
 
     /**
      * What of the runtime a linked module still shows its host: the memory, and what the steps

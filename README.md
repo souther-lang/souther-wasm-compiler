@@ -93,6 +93,15 @@ loads the module and does not carry the number to another, so a module built lat
 types differently is never read under an old one. A number the module gives no type ends the call,
 as `NO_SUCH_TYPE`, because it is the caller misusing the module and not a document written wrong.
 
+What the boundary will not read is answered with Raoh's issues, as the language says it is (spec
+§decoder-error): each a `path`, a `code`, the `messageKey` that says which of the code's
+constraints it was, and the `meta` that constraint carries. A newtype's clause that is a standard
+constraint is reported as that constraint — `String.matches` as `invalid_format` with its
+`pattern`, a bound as `out_of_range` under `out_of_range.minimum` — and any other clause as
+`invariant_violation` naming its `module`, its `type` and, where it has one, its `clause`. Which
+issue a value comes to is the language's and not a backend's, so it is written down once, in
+[`conformance/issues`](conformance/issues), and this backend and the JVM's are each held to it.
+
 What Souther adds is a way to say why a call ended without a value. An abort writes a fixed-width
 record outside the arena and traps; the record carries a generation, so a caller that snapshots it
 before the call can tell a Souther abort from an ordinary wasm fault.

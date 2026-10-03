@@ -47,7 +47,9 @@ class WhatMustHoldOfAValueIsCheckedWhereItIsMadeTest {
 
         assertThat(answerOf(module, "counting.same", "[{\"n\": 0}]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0\",\"code\":\"invariant_violation\","
-                        + "\"meta\":{\"actual\":\"0\",\"expected\":\"Positive\"}}]}");
+                        + "\"messageKey\":\"invariant_violation\","
+                        + "\"meta\":{\"module\":\"counting\",\"type\":\"Positive\","
+                        + "\"clause\":\"kept\"}}]}");
     }
 
     @Test
@@ -82,8 +84,8 @@ class WhatMustHoldOfAValueIsCheckedWhereItIsMadeTest {
                 let same (b) = b
                 """);
 
-        assertThat(answerOf(module, "ranging.same", "[{\"n\": 0}]")).contains("\"actual\":\"0\"");
-        assertThat(answerOf(module, "ranging.same", "[{\"n\": 20}]")).contains("\"actual\":\"1\"");
+        assertThat(answerOf(module, "ranging.same", "[{\"n\": 0}]")).contains("\"clause\":\"low\"");
+        assertThat(answerOf(module, "ranging.same", "[{\"n\": 20}]")).contains("\"clause\":\"high\"");
     }
 
     @Test

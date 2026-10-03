@@ -21,11 +21,11 @@ import souther.wasm.abi.RuntimeAbi;
  */
 class TheGlueReadsWhatThisBuildWritesTest {
 
-    private static final Path GLUE = Path.of("examples/react-cart/src/souther.js");
+    private static final Path GLUE = Path.of("packages/wasm/src/index.ts");
 
     @Test
     void readsTheSurfaceVersionAndTheAbiThisBuildWrites() throws IOException {
-        Matcher reads = Pattern.compile("const READS = \\{ surface: (\\d+), abi: (\\d+) \\};")
+        Matcher reads = Pattern.compile("const READS = \\{ surface: (\\d+), abi: (\\d+) \\} as const;")
                 .matcher(Files.readString(GLUE, StandardCharsets.UTF_8));
 
         assertThat(reads.find()).describedAs("the glue says which versions it reads").isTrue();

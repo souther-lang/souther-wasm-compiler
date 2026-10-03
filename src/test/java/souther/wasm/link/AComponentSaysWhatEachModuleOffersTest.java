@@ -83,6 +83,29 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     @Test
+    void offersNothingItsModuleKeeps() {
+        byte[] component = Compiled.component(Compiled.program(List.of("""
+                module rates exposing ( spread )
+
+                behavior today : (pair: String) -> Int
+
+                behavior lowered : (n: Int) -> Int
+
+                let lowered (n) = n - 1
+
+                behavior spread : (pair: String) -> Int
+                    depends on today
+
+                let spread (pair, today) = lowered(today(pair))
+                """)));
+
+        // What the module keeps is no function of its interface, whoever answers it; one kept and
+        // answered outside is still asked for, since the program cannot run without it.
+        assertThat(offered(component).get("souther:program/rates")).containsExactly("spread");
+        assertThat(askedFor(component)).containsExactly("souther:reached/rates");
+    }
+
+    @Test
     void liftsTheWrapperRatherThanTheCrossingItself() {
         byte[] component = Compiled.component(oneBehavior());
 

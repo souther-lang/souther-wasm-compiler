@@ -12,12 +12,12 @@ import java.util.function.Function;
  * keeping every one ever asked for keeps the suite's whole history alive to save nothing: a suite
  * that kept them all ran out of a heap develop's fits in.
  */
-final class Recent<K, V> {
+public final class Recent<K, V> {
 
     private final Map<K, V> held;
 
     /** @param size how many answers to keep, the most recently asked */
-    Recent(int size) {
+    public Recent(int size) {
         this.held = new LinkedHashMap<>(size * 2, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
@@ -32,7 +32,7 @@ final class Recent<K, V> {
      * @param kept what to keep it under, for a key whose own form must not be held — bytes the
      *     caller may write into afterwards
      */
-    synchronized V of(K key, Function<K, K> kept, Function<K, V> answer) {
+    public synchronized V of(K key, Function<K, K> kept, Function<K, V> answer) {
         V already = held.get(key);
         if (already != null) {
             return already;

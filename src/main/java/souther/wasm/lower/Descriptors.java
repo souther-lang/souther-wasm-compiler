@@ -71,6 +71,12 @@ final class Descriptors {
 
     private final ToIntFunction<TypeSymbol.AtModule> checks;
 
+    /** Where each pattern's machine is placed, for a clause and a body alike. */
+    private final Patterns patterns;
+
+    /** What each type's clauses are reported as. */
+    private final Clauses clauses;
+
     /**
      * Every union a behavior answers, as the checker settled it to cross: its leaves and the form
      * they travel in.
@@ -82,6 +88,8 @@ final class Descriptors {
         this.program = program;
         this.fragment = fragment;
         this.checks = checks;
+        this.patterns = new Patterns(fragment);
+        this.clauses = new Clauses(fragment, patterns);
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
                 settle(behavior.signature().output());
@@ -395,7 +403,9 @@ final class Descriptors {
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members) {
         // A form a value is built out of carries its own name and the slot of what checks it,
         // after its fields.
-        int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 12 : 0));
+        // A set of names carries its own name too, for an issue saying a name is not one of them.
+        int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 16 : 0)
+                + (kind == KIND_ENUMERATION ? 8 : 0));
         if (name != null) {
             byName.put(name, descriptor);
         }
@@ -416,7 +426,14 @@ final class Descriptors {
             byte[] own = name.name().getBytes(StandardCharsets.UTF_8);
             out.writeLittleEndian4(fragment.intern(own))
                     .writeLittleEndian4(own.length)
-                    .writeLittleEndian4(checks.applyAsInt(name));
+                    .writeLittleEndian4(checks.applyAsInt(name))
+                    .writeLittleEndian4(clauses.of(name, invariantsOf(name),
+                            kind == KIND_NEWTYPE));
+        }
+        if (kind == KIND_ENUMERATION) {
+            byte[] own = name == null ? new byte[0] : name.name().getBytes(StandardCharsets.UTF_8);
+            out.writeLittleEndian4(own.length == 0 ? 0 : fragment.intern(own))
+                    .writeLittleEndian4(own.length);
         }
         fragment.fill(descriptor, table.toByteArray());
         return descriptor;
@@ -440,6 +457,11 @@ final class Descriptors {
      * <p>A rounding mode is the language's, and a body that names one is naming a type like any
      * other — so it is found where it is declared rather than only where a module would put it.
      */
+    /** Where each pattern's machine is placed, which a body's {@code String.matches} reads too. */
+    Patterns patterns() {
+        return patterns;
+    }
+
     private CheckedData declared(TypeSymbol.AtModule name) {
         return program.declaration(name).data();
     }

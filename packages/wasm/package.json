@@ -1,0 +1,30 @@
+{
+  "name": "@souther/wasm",
+  "version": "0.1.0",
+  "description": "Load and call a Souther program compiled to WebAssembly, and generate its TypeScript binding",
+  "license": "EPL-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./generate": "./src/generate.ts"
+  },
+  "bin": {
+    "souther-wasm-bindings": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "NOTICE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
