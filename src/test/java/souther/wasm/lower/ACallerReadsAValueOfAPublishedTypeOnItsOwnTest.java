@@ -6,7 +6,7 @@ import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.FailureRecord;
@@ -101,7 +101,7 @@ class ACallerReadsAValueOfAPublishedTypeOnItsOwnTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(CODES))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(CODES))));
     }
 
     private static int numberOf(Running module, String name) {

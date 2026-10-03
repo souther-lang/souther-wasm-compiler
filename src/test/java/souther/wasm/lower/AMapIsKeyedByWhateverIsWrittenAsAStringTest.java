@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -203,7 +203,7 @@ class AMapIsKeyedByWhateverIsWrittenAsAStringTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        return Running.linked(Compiled.module(Compiled.program(List.of("""
                 module keyed
 
                 data Kind = Red | Amber | Green

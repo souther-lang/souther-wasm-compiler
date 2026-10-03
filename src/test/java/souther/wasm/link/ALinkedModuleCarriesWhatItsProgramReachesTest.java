@@ -7,7 +7,7 @@ import com.dylibso.chicory.wasm.WasmModule;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.lower.WasmCompiler;
@@ -87,6 +87,6 @@ class ALinkedModuleCarriesWhatItsProgramReachesTest {
     }
 
     private static byte[] compiled() {
-        return WasmCompiler.compile(CheckedProgram.of(List.of(PROGRAM)));
+        return Compiled.module(Compiled.program(List.of(PROGRAM)));
     }
 }

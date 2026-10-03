@@ -11,7 +11,7 @@ import net.unit8.notation199x.pattern.PatternParser;
 import net.unit8.notation199x.pattern.PatternRead;
 import net.unit8.notation199x.pattern.StringPattern;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -142,7 +142,7 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
     void asksEachPatternOfOneCallAboutItsOwnStrings() {
         // The runtime keeps the pattern it read last, so two patterns asked in turn within one call
         // are each read again rather than one of them answering for the other.
-        Running module = Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of("""
                 module checking
 
                 behavior sorted : (xs: List<String>) -> List<String>
@@ -159,7 +159,7 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
 
     @Test
     void usesThePatternTheCheckerSettledUnderALocalBinding() {
-        Running module = Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of("""
                 module checking
 
                 behavior fits : (s: String) -> Bool
@@ -175,7 +175,7 @@ class APatternIsRecognisedWhereTheJvmRecognisesItTest {
     }
 
     private static Running compiled(String pattern) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        return Running.linked(Compiled.module(Compiled.program(List.of("""
                 module checking
 
                 behavior fits : (s: String) -> Bool

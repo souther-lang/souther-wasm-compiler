@@ -8,7 +8,7 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -106,7 +106,7 @@ class AStringWhitespaceAlphabetIsExactlyTwentyFiveCodePointsTest {
 
     private static Running module() {
         if (module == null) {
-            module = Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+            module = Running.linked(Compiled.module(Compiled.program(List.of("""
                     module wording
 
                     behavior tidied : (s: String) -> String

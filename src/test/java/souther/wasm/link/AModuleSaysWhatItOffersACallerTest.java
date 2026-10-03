@@ -5,9 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
-import souther.wasm.lower.WasmCompiler;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -58,7 +57,7 @@ class AModuleSaysWhatItOffersACallerTest {
 
     /** The cart's surface, compiled once: every test here only reads it. */
     private static final JsonNode CARTS =
-            surfaceOf(WasmCompiler.compile(CheckedProgram.of(List.of(CODES, CART))));
+            surfaceOf(Compiled.module(Compiled.program(List.of(CODES, CART))));
 
     private static JsonNode surface() {
         return CARTS;
@@ -96,7 +95,7 @@ class AModuleSaysWhatItOffersACallerTest {
      */
     @Test
     void saysAnAnswersMembersApartFromHowItCrosses() {
-        JsonNode said = surfaceOf(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        JsonNode said = surfaceOf(Compiled.module(Compiled.program(List.of("""
                 module signals
 
                 data Red
@@ -168,7 +167,7 @@ class AModuleSaysWhatItOffersACallerTest {
      *  declaration. */
     @Test
     void namesAPrimitiveStandingAsACaseAsTheScalarItIs() {
-        JsonNode said = surfaceOf(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        JsonNode said = surfaceOf(Compiled.module(Compiled.program(List.of("""
                 module dividing
 
                 data Undivided

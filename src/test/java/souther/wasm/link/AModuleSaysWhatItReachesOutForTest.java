@@ -5,8 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
-import souther.wasm.lower.WasmCompiler;
+import souther.wasm.Compiled;
 
 /**
  * What a module reaches out for, said by the module.
@@ -25,7 +24,7 @@ class AModuleSaysWhatItReachesOutForTest {
 
     @Test
     void namesEveryBehaviorItReachesOutFor() {
-        String said = crossingsIn(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        String said = crossingsIn(Compiled.module(Compiled.program(List.of("""
                 module store
 
                 behavior findIt : (id: Int) -> String
@@ -46,7 +45,7 @@ class AModuleSaysWhatItReachesOutForTest {
 
     @Test
     void saysWhichOfThemAnotherBuildImplements() {
-        String said = crossingsIn(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        String said = crossingsIn(Compiled.module(Compiled.program(List.of("""
                 module store
 
                 behavior findIt : (id: Int) -> String
@@ -59,7 +58,7 @@ class AModuleSaysWhatItReachesOutForTest {
 
     @Test
     void saysNothingWhereItReachesOutForNothing() {
-        byte[] module = WasmCompiler.compile(CheckedProgram.of(List.of("""
+        byte[] module = Compiled.module(Compiled.program(List.of("""
                 module counting
 
                 behavior doubled : (n: Int) -> Int

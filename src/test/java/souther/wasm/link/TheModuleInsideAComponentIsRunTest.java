@@ -6,10 +6,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
-import souther.wasm.lower.WasmCompiler;
 
 /**
  * The core module a component wraps, taken back out and run.
@@ -116,7 +115,7 @@ class TheModuleInsideAComponentIsRunTest {
 
     /** The program's own module, taken back out of the component that carries it. */
     private static byte[] insideComponentFor(String... sources) {
-        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of(sources)));
+        byte[] component = Compiled.component(Compiled.program(List.of(sources)));
         List<byte[]> modules = new ArrayList<>();
         int at = 8;
         while (at < component.length) {

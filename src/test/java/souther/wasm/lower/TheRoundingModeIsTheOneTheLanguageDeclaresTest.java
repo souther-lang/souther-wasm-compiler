@@ -6,6 +6,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import souther.compiler.core.Kernel;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 
 /**
  * Which parameter is a way of rounding is answered by where the set is declared, and not by what
@@ -15,7 +16,7 @@ class TheRoundingModeIsTheOneTheLanguageDeclaresTest {
 
     @Test
     void takesTheSetTheLanguageDeclaresForTheWayOfRounding() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Compiled.program(List.of("""
                 module demo
 
                 behavior same : (d: Decimal) -> Decimal
@@ -31,7 +32,7 @@ class TheRoundingModeIsTheOneTheLanguageDeclaresTest {
 
     @Test
     void doesNotTakeASetOfAProgramsOwnThatIsSpeltTheSame() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Compiled.program(List.of("""
                 module elsewhere
 
                 data RoundingMode = { n: Int }

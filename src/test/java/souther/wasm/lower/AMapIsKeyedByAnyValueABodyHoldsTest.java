@@ -10,7 +10,7 @@ import java.util.Random;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -140,7 +140,7 @@ class AMapIsKeyedByAnyValueABodyHoldsTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(PROGRAM))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(PROGRAM))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {
