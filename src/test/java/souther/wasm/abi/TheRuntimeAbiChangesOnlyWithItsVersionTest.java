@@ -21,7 +21,8 @@ import souther.wasm.Running;
 /**
  * Everything the runtime module shows across its boundary, held against a file that is named for
  * {@link RuntimeAbi#VERSION}: what it imports, and what it exports of every kind, with the
- * signature of each function and the type of each global.
+ * signature of each function and the type of each global, and the number of each reason a call can
+ * end for.
  *
  * <p>A version number is only as good as the change that remembers to move it. What the boundary
  * holds is read off the module rather than from a list written here, so a rename or another
@@ -75,6 +76,10 @@ class TheRuntimeAbiChangesOnlyWithItsVersionTest {
             };
             lines.add("export " + each.name() + " " + what);
         }
+        // What a call can end for is as much the boundary as what it is called by: a host reads the
+        // number in the failure record and names the reason by it.
+        RuntimeReasons.declared().forEach(
+                (name, number) -> lines.add("reason " + number + " " + name));
         Collections.sort(lines);
         return String.join("\n", lines);
     }

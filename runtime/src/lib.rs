@@ -60,7 +60,10 @@ const PAGE: usize = 65536;
 /// memory as the cells this runtime makes, so the layout of a cell became part of what the two
 /// sides agree on; and when a walk began to grow a map in place, and to add one value to a list
 /// without a list of one around it.
-const ABI_VERSION: u32 = 6;
+///
+/// Raised to 7 when a call could end for a reason it could not before, `NO_SUCH_TYPE`, which a host
+/// naming reasons by the numbers of 6 would not know.
+const ABI_VERSION: u32 = 7;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
