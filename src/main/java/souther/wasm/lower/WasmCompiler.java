@@ -1468,7 +1468,7 @@ public final class WasmCompiler {
             // backend lacks — the same distinction `recognised` draws for String.matches's pattern.
             Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
             souther.compiler.types.Type as = shapes.orderedAs(settled.type(), settled.ordering());
-            out.constant(shapes.layersTo(settled.type(), as)).constant(shapes.of(as));
+            out.constant(shapes.namesWornBy(settled.type())).constant(shapes.of(as));
         }
 
         /**
@@ -1883,41 +1883,63 @@ public final class WasmCompiler {
          * turns on which side was written first.
          *
          * <p>What the operands are read as and what orders them are two answers, and the checker
-         * gives both. The reading says how each operand is taken — at its exact value, or opened
-         * through the newtypes it wears to the type the pair is read in ({@link
-         * Descriptors#layersTo}), which stops at a newtype that type lists as a case — and which
-         * type sameness is asked in. The order of {@code <} and the others is the
-         * {@link Core.OrderingBasis}, which no reading says: cases of one sum held as a union of
-         * them read as they stand, and the union keeps its cases in the order of their names while
-         * the sum orders them as it declares them.
+         * gives both. The reading says how each operand is taken and how far it is opened ({@link
+         * #namesOpened}), and which type sameness is asked in. The order of {@code <} and the
+         * others is the {@link Core.OrderingBasis}, which no reading says: cases of one sum held as
+         * a union of them read as they stand, and the union keeps its cases in the order of their
+         * names while the sum orders them as it declares them.
          */
         private void compared(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
             Core left = binary.left();
             Core right = binary.right();
-            if (binary.reading() instanceof Core.BinaryReading.ExactNumbers) {
+            Core.BinaryReading reading = binary.reading();
+            if (reading instanceof Core.BinaryReading.ExactNumbers) {
                 exactly(out, left);
                 exactly(out, right);
                 ordered(out, souther.compiler.types.Type.Prim.RATIONAL, how);
                 return;
             }
-            souther.compiler.types.Type in = shapes.madeOf(binary.op().ordersItsOperands()
-                    ? binary.ordering().orElseThrow(() -> new IllegalStateException(writing
-                            + " orders a " + left.type() + " and a " + right.type()
-                            + " by nothing the checker settled")).type()
-                    : switch (binary.reading()) {
+            souther.compiler.types.Type in = binary.op().ordersItsOperands()
+                    ? shapes.madeOf(binary.ordering().orElseThrow(() -> new IllegalStateException(
+                            writing + " orders a " + left.type() + " and a " + right.type()
+                                    + " by nothing the checker settled")).type())
+                    : switch (reading) {
                         case Core.BinaryReading.In read -> read.type();
-                        default -> left.type();
-                    });
+                        case Core.BinaryReading.Opened read -> read.base();
+                        case Core.BinaryReading.AsTheyStand _ -> shapes.madeOf(left.type());
+                        case Core.BinaryReading.ExactNumbers _ -> throw new IllegalStateException(
+                                writing + " reads two exact values as something else");
+                    };
             // Two whole numbers stand as their numbers do, which is one instruction.
             if (in == souther.compiler.types.Type.Prim.INT) {
-                wholeOpened(out, left);
-                wholeOpened(out, right);
+                wholeOpened(out, left, reading);
+                wholeOpened(out, right, reading);
                 out.comparesWide(how);
                 return;
             }
-            opened(out, left, in);
-            opened(out, right, in);
+            opened(out, left, reading);
+            opened(out, right, reading);
             ordered(out, in, how);
+        }
+
+        /**
+         * How many newtypes one operand of a comparison is opened through, which its reading says
+         * and its type does not.
+         *
+         * <p>Read as they stand, the two are one type and a newtype compares and orders as what it
+         * wraps, so each is opened through every name it wears. Opened beside a literal, the
+         * newtype's side is, and the literal is what it wraps already. Read in a type, neither
+         * is: a {@code Code} beside the {@code Key} listing it is that {@code Key}, and a value
+         * beside one that states nothing about its own type is a value of the reading as it
+         * stands.
+         */
+        private int namesOpened(Core operand, Core.BinaryReading reading) {
+            return switch (reading) {
+                case Core.BinaryReading.AsTheyStand _ -> shapes.namesWornBy(operand.type());
+                case Core.BinaryReading.Opened read -> operand.type().equals(read.newtype())
+                        ? shapes.namesWornBy(operand.type()) : 0;
+                case Core.BinaryReading.In _, Core.BinaryReading.ExactNumbers _ -> 0;
+            };
         }
 
         /** Compares the two values on the stack as values of {@code in}. */
@@ -1929,22 +1951,21 @@ public final class WasmCompiler {
                     .compares(how);
         }
 
-        /** Leaves an operand as a value of {@code as}, opened through the newtypes it wears short
-         *  of that ({@link Descriptors#layersTo}). */
-        private void opened(BodyWriter out, Core operand, souther.compiler.types.Type as) {
+        /** Leaves an operand opened as far as the pair's reading says ({@link #namesOpened}). */
+        private void opened(BodyWriter out, Core operand, Core.BinaryReading reading) {
             value(out, operand);
-            for (int i = shapes.layersTo(operand.type(), as); i > 0; i--) {
+            for (int i = namesOpened(operand, reading); i > 0; i--) {
                 out.constant(0).call(calls.of(RuntimeAbi.RECORD_GET));
             }
         }
 
-        /** Leaves an operand made of a whole number as that number. */
-        private void wholeOpened(BodyWriter out, Core operand) {
+        /** Leaves an operand the pair's reading opens to a whole number as that number. */
+        private void wholeOpened(BodyWriter out, Core operand, Core.BinaryReading reading) {
             if (operand.type() == souther.compiler.types.Type.Prim.INT) {
                 wide(out, operand);
                 return;
             }
-            opened(out, operand, souther.compiler.types.Type.Prim.INT);
+            opened(out, operand, reading);
             out.loadWide(Cell.PAYLOAD);
         }
 

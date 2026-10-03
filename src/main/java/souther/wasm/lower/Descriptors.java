@@ -566,28 +566,16 @@ final class Descriptors {
     }
 
     /**
-     * How many newtypes a value held as {@code held} is opened through before it is a value of
-     * {@code as}: none where it is one already, or where {@code as} is a set of alternatives that
-     * lists it as one of them; one more for each newtype it wears short of that.
+     * How many newtypes a value held as {@code held} wears, which is how many it is opened through
+     * to be {@link #madeOf what it is made of}.
      *
-     * <p>A newtype stands where what it wraps stands, so a value of one is opened to be compared or
-     * placed as what it wraps — {@code Money} as the {@code Int} beside it, {@code BetaN} as the
-     * {@code Beta} its sum places. But a newtype a sum lists as a case is a value of that sum as it
-     * stands: {@code Code} beside a {@code Key} is the {@code Key} it is, and opened it would be an
-     * {@code Int} the {@code Key} has no case for. So how far a value is opened is asked of what it
-     * is opened to, and never answered as every newtype it has.
+     * <p>Whether a value is opened at all is not this answer. A comparison's reading says it
+     * ({@link Core.BinaryReading}): a {@code Code} beside the {@code Key} listing it is read in the
+     * cases as it stands, and opened it would be an {@code Int} the {@code Key} has no case for.
      */
-    int layersTo(Type held, Type as) {
-        List<TypeSymbol> listed = leavesOf(as);
+    int namesWornBy(Type held) {
         int layers = 0;
-        Type at = held;
-        while (!at.equals(as) && !(at instanceof Type.Ref reference
-                && listed.contains(reference.name()))) {
-            Optional<Type> within = wrappedBy(at);
-            if (within.isEmpty()) {
-                break;
-            }
-            at = within.get();
+        for (var within = wrappedBy(held); within.isPresent(); within = wrappedBy(within.get())) {
             layers++;
         }
         return layers;
@@ -604,7 +592,7 @@ final class Descriptors {
 
     /**
      * The descriptor of the order the checker settled for values of {@code held}, for values
-     * opened to it ({@link #layersTo}).
+     * opened to it ({@link #namesWornBy}).
      *
      * <p>How a value is held and what orders it are two answers, and this is only the second.
      * A newtype over a case — {@code data BetaN = Beta}, {@code Beta} one case of {@code Rising} —
