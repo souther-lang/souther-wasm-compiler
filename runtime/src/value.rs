@@ -501,8 +501,40 @@ pub unsafe extern "C" fn __souther_map(descriptor: u32, entries: u32) -> u32 {
     map_over(descriptor, entries, alloc(bytes), 0)
 }
 
+/// The element at a place of a list's elements, for a walk over them that asked where they are
+/// once (`__souther_list_elements`) rather than at every one.
+#[inline(always)]
+pub(crate) unsafe fn element_at(elements: u32, index: u32) -> u32 {
+    word(elements + 4 * index)
+}
+
+/// Puts an element at a place of a list's elements, which only the one making the list does.
+#[inline(always)]
+pub(crate) unsafe fn put_element_at(elements: u32, index: u32, held: u32) {
+    put_word(elements + 4 * index, held);
+}
+
+/// The key of an entry of a map's entries, for a walk that asked where they are once.
+#[inline(always)]
+pub(crate) unsafe fn entry_key(entries: u32, index: u32) -> u32 {
+    word(entries + 8 * index)
+}
+
+/// The value of an entry of a map's entries, for a walk that asked where they are once.
+#[inline(always)]
+pub(crate) unsafe fn entry_value(entries: u32, index: u32) -> u32 {
+    word(entries + 8 * index + 4)
+}
+
+/// Puts an entry at a place of a map's entries, which only the one making the map does.
+#[inline(always)]
+pub(crate) unsafe fn put_entry(entries: u32, index: u32, key: u32, held: u32) {
+    put_word(entries + 8 * index, key);
+    put_word(entries + 8 * index + 4, held);
+}
+
 /// Where a map's entries are, laid out from its tree the first time anything asks.
-unsafe fn map_entries(cell: u32) -> u32 {
+pub(crate) unsafe fn map_entries(cell: u32) -> u32 {
     let entries = word(cell + MAP_ENTRIES);
     if entries != 0 || word(cell + LIST_LENGTH) == 0 {
         return entries;
@@ -1158,6 +1190,7 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
         return;
     }
     let room = alloc(4 * held);
+    let elements = __souther_list_elements(cell);
     let mut width = 1;
     while width < held {
         let mut at = 0;
@@ -1174,8 +1207,8 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
                     true
                 } else {
                     order::compare(
-                        __souther_list_get(cell, left),
-                        __souther_list_get(cell, right),
+                        element_at(elements, left),
+                        element_at(elements, right),
                         element,
                     ) <= 0
                 };
@@ -1188,14 +1221,14 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
                 };
                 core::ptr::write_unaligned(
                     (room + into * 4) as *mut u32,
-                    __souther_list_get(cell, taken),
+                    element_at(elements, taken),
                 );
                 into += 1;
             }
             at += 2 * width;
         }
         for i in 0..held {
-            __souther_list_set(cell, i, core::ptr::read_unaligned((room + i * 4) as *const u32));
+            put_element_at(elements, i, core::ptr::read_unaligned((room + i * 4) as *const u32));
         }
         width *= 2;
     }
@@ -1210,19 +1243,20 @@ pub(crate) unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 
     // Merged in runs that double: a set is written out by hand and is usually small, but usually is
     // not a bound, and a set twice as long would otherwise cost four times as much to settle.
     sorted_in_place(cell, element);
+    let elements = __souther_list_elements(cell);
     let mut kept = 0;
     for i in 0..held {
-        let each = __souther_list_get(cell, i);
+        let each = element_at(elements, i);
         if kept == 0
-            || order::compare(__souther_list_get(cell, kept - 1), each, element) != 0
+            || order::compare(element_at(elements, kept - 1), each, element) != 0
         {
-            __souther_list_set(cell, kept, each);
+            put_element_at(elements, kept, each);
             kept += 1;
         }
     }
     let out = __souther_list(descriptor, kept);
     for i in 0..kept {
-        __souther_list_set(out, i, __souther_list_get(cell, i));
+        __souther_list_set(out, i, element_at(elements, i));
     }
     out
 }
@@ -1392,6 +1426,7 @@ pub(crate) unsafe fn sorted_by_key(cell: u32, keys: u32) {
         return;
     }
     let room = alloc(8 * held);
+    let entries = map_entries(cell);
     let mut width = 1;
     while width < held {
         let mut at = 0;
@@ -1402,9 +1437,7 @@ pub(crate) unsafe fn sorted_by_key(cell: u32, keys: u32) {
             at += 2 * width;
         }
         for i in 0..held {
-            __souther_map_set(
-                cell,
-                i,
+            put_entry(entries, i,
                 core::ptr::read_unaligned((room + i * 8) as *const u32),
                 core::ptr::read_unaligned((room + i * 8 + 4) as *const u32),
             );
@@ -1415,6 +1448,7 @@ pub(crate) unsafe fn sorted_by_key(cell: u32, keys: u32) {
 
 /// Two runs of entries laid into `room` as one, the earlier one first where their keys agree.
 unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u32) {
+    let entries = map_entries(cell);
     let mut left = from;
     let mut right = middle;
     let mut at = from;
@@ -1424,7 +1458,7 @@ unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u
         } else if right == end {
             true
         } else {
-            key_order(__souther_map_key(cell, left), __souther_map_key(cell, right), keys) <= 0
+            key_order(entry_key(entries, left), entry_key(entries, right), keys) <= 0
         };
         let taken = if take_left {
             left += 1;
@@ -1433,10 +1467,10 @@ unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u
             right += 1;
             right - 1
         };
-        core::ptr::write_unaligned((room + at * 8) as *mut u32, __souther_map_key(cell, taken));
+        core::ptr::write_unaligned((room + at * 8) as *mut u32, entry_key(entries, taken));
         core::ptr::write_unaligned(
             (room + at * 8 + 4) as *mut u32,
-            __souther_map_value(cell, taken),
+            entry_value(entries, taken),
         );
         at += 1;
     }

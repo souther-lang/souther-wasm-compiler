@@ -714,6 +714,8 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
         return;
     }
     let room = alloc(8 * held);
+    let elements = __souther_list_elements(list);
+    let ranks = __souther_list_elements(by);
     let mut width = 1;
     while width < held {
         let mut at = 0;
@@ -729,7 +731,7 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
                 } else if right == end {
                     true
                 } else {
-                    order::ranked(__souther_list_get(by, left), __souther_list_get(by, right),
+                    order::ranked(value::element_at(ranks, left), value::element_at(ranks, right),
                             element) <= 0
                 };
                 let taken = if take_left {
@@ -740,16 +742,16 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
                     right - 1
                 };
                 core::ptr::write_unaligned(
-                    (room + into * 8) as *mut u32, __souther_list_get(list, taken));
+                    (room + into * 8) as *mut u32, value::element_at(elements, taken));
                 core::ptr::write_unaligned(
-                    (room + into * 8 + 4) as *mut u32, __souther_list_get(by, taken));
+                    (room + into * 8 + 4) as *mut u32, value::element_at(ranks, taken));
                 into += 1;
             }
             at += 2 * width;
         }
         for i in 0..held {
-            __souther_list_set(list, i, core::ptr::read_unaligned((room + i * 8) as *const u32));
-            __souther_list_set(by, i, core::ptr::read_unaligned((room + i * 8 + 4) as *const u32));
+            value::put_element_at(elements, i, core::ptr::read_unaligned((room + i * 8) as *const u32));
+            value::put_element_at(ranks, i, core::ptr::read_unaligned((room + i * 8 + 4) as *const u32));
         }
         width *= 2;
     }
@@ -947,11 +949,12 @@ pub unsafe extern "C" fn __souther_set_singleton(value: u32, descriptor: u32) ->
 /// Where a value stands in a set, or where it would go: a set's members are in ascending order,
 /// so this halves rather than walks.
 unsafe fn place_in(set: u32, value: u32, element: u32) -> Result<u32, u32> {
+    let members = __souther_list_elements(set);
     let mut low = 0;
     let mut high = __souther_list_length(set);
     while low < high {
         let middle = low + (high - low) / 2;
-        let held = order::compare(__souther_list_get(set, middle), value, element);
+        let held = order::compare(value::element_at(members, middle), value, element);
         if held == 0 {
             return Ok(middle);
         }
@@ -1015,6 +1018,8 @@ pub unsafe extern "C" fn __souther_set_contains(value: u32, set: u32) -> u32 {
 unsafe fn merged(left: u32, right: u32, descriptor: u32, keep: Keep) -> u32 {
     let element = descriptor::member(descriptor, 0);
     let (a, b) = (__souther_list_length(left), __souther_list_length(right));
+    let lefts = __souther_list_elements(left);
+    let rights = __souther_list_elements(right);
     let room = alloc(4 * (a + b));
     let (mut i, mut j, mut kept) = (0, 0, 0);
     let mut take = |member: u32| {
@@ -1027,21 +1032,21 @@ unsafe fn merged(left: u32, right: u32, descriptor: u32, keep: Keep) -> u32 {
         } else if j == b {
             -1
         } else {
-            order::compare(__souther_list_get(left, i), __souther_list_get(right, j), element)
+            order::compare(value::element_at(lefts, i), value::element_at(rights, j), element)
         };
         if held < 0 {
             if keep != Keep::Both {
-                take(__souther_list_get(left, i));
+                take(value::element_at(lefts, i));
             }
             i += 1;
         } else if held > 0 {
             if keep == Keep::Either {
-                take(__souther_list_get(right, j));
+                take(value::element_at(rights, j));
             }
             j += 1;
         } else {
             if keep != Keep::LeftOnly {
-                take(__souther_list_get(left, i));
+                take(value::element_at(lefts, i));
             }
             i += 1;
             j += 1;
@@ -1524,12 +1529,13 @@ unsafe fn entry_value(key: u32, map: u32) -> Option<u32> {
 /// Halved rather than walked: a map's entries stand in the order their keys are written, so
 /// whether a key is there is answered by asking the middle one and dropping the half it is not in.
 unsafe fn place_of(key: u32, map: u32) -> Result<u32, u32> {
+    let entries = value::map_entries(map);
     let keys = value::map_keys(map);
     let mut low = 0;
     let mut high = value::__souther_map_length(map);
     while low < high {
         let middle = low + (high - low) / 2;
-        let held = value::key_order(value::__souther_map_key(map, middle), key, keys);
+        let held = value::key_order(value::entry_key(entries, middle), key, keys);
         if held == 0 {
             return Ok(middle);
         }
