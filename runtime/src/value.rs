@@ -10,11 +10,13 @@
 //! +8  payload
 //! ```
 //!
-//! Boxed even where it need not be. An `Int` in a local would be an `i64` and nothing else, but the
+//! Boxed wherever a value is kept. An `Int` in a local would be an `i64` and nothing else, but the
 //! same `Int` inside a list, a map or an option has to be reachable by a pointer like everything
 //! else there, and a representation that changed at the edge of a container would put a conversion
-//! at every one of those edges. So the box comes first and unboxing a local is something to add
-//! against a measurement, not before one.
+//! at every one of those edges. What a body works out on the way to a value is not kept, so the
+//! compiler works arithmetic and conditions out on numbers and makes a cell only for what comes of
+//! them; and a literal is a cell the compiler writes into static memory once. Both write and read
+//! the layout here, which `RuntimeAbi.Cell` names on the other side.
 //!
 //! # Reading and writing
 //!
@@ -269,9 +271,35 @@ pub unsafe extern "C" fn __souther_held(cell: u32) -> u32 {
 /// quietly standing where the right one was.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
+    __souther_int(__souther_int_sum(__souther_int_value(left), __souther_int_value(right)))
+}
+
+/// The `+` operator on two `Int`s a body holds as numbers rather than as cells.
+///
+/// What a body works out in the middle of an expression is not kept anywhere, so it is not made a
+/// cell: `a + b * c` makes one cell for its answer and none for `b * c`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_sum(a: i64, b: i64) -> i64 {
     match a.checked_add(b) {
-        Some(sum) => __souther_int(sum),
+        Some(sum) => sum,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
+    }
+}
+
+/// The `-` operator on two `Int`s held as numbers.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_difference(a: i64, b: i64) -> i64 {
+    match a.checked_sub(b) {
+        Some(difference) => difference,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
+    }
+}
+
+/// The `*` operator on two `Int`s held as numbers.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_product(a: i64, b: i64) -> i64 {
+    match a.checked_mul(b) {
+        Some(product) => product,
         None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
@@ -290,21 +318,13 @@ pub unsafe extern "C" fn __souther_negate(cell: u32) -> u32 {
 /// The `-` operator on `Int`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_subtract(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    match a.checked_sub(b) {
-        Some(difference) => __souther_int(difference),
-        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
-    }
+    __souther_int(__souther_int_difference(__souther_int_value(left), __souther_int_value(right)))
 }
 
 /// The `*` operator on `Int`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_multiply(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    match a.checked_mul(b) {
-        Some(product) => __souther_int(product),
-        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
-    }
+    __souther_int(__souther_int_product(__souther_int_value(left), __souther_int_value(right)))
 }
 
 /// The `/` operator on `Int`: truncating, and ending the call on a zero divisor.
@@ -361,8 +381,16 @@ pub(crate) unsafe fn map_keys(cell: u32) -> u32 {
 }
 
 /// How many entries a map holds.
+///
+/// Every reader of a map's entries asks this first, so this is where a cell that is not a map is
+/// stopped: a map a walk is growing is laid out otherwise, and only the readers a walk's step may
+/// call are handed one, each of which asks for it by its own tag first.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_length(cell: u32) -> u32 {
+    let tag = core::ptr::read_unaligned(cell as usize as *const u32);
+    if tag != TAG_MAP {
+        abort(REASON_NOT_A_VALUE, 0, tag as u64, cell as u64);
+    }
     core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
 }
 
@@ -456,6 +484,11 @@ pub const TAG_DATE_TIME: u32 = 16;
 /// A moment on the timeline.
 pub const TAG_INSTANT: u32 = 17;
 
+/// A map a walk is growing. Not a map: its entries stand in the order they were put in, found by a
+/// table of their keys' hashes, so a reader taking it for a map would read past what is there. See
+/// `kernel::__souther_map_builder` for its layout.
+pub const TAG_MAP_BUILDER: u32 = 18;
+
 /// Values written together, with nothing in them yet.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_tuple(held: u32) -> u32 {
@@ -529,6 +562,15 @@ pub unsafe extern "C" fn __souther_grow(builder: u32, added: u32) -> u32 {
         held = grown(held, __souther_list_get(added, i));
     }
     held
+}
+
+/// Adds one value to the end of a builder, answering the builder that holds it.
+///
+/// What a step writing `acc ++ [x]` comes to: the one value, without the list of one it was
+/// written in.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_grow_one(builder: u32, value: u32) -> u32 {
+    grown(builder, value)
 }
 
 /// Adds one value to the end of a builder.
@@ -1047,6 +1089,60 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
     }
 }
 
+/// Where one key of a map stands relative to another, and whether they are one key.
+///
+/// Two keys are one key where `==` says they are one value (ADR-0009), which is `order::ranked`
+/// answering nothing between them. A key a map can cross with is written as text, and a map is
+/// written in the order its keys' texts sort, so such a key stands in that order here as well —
+/// and two of them are one text exactly where they are one value. Any other key is a key of a map a
+/// body holds and no boundary writes, and stands where `ranked` puts it.
+///
+/// A key written as text is compared from what it holds where that is the order of its text, so
+/// that finding an entry does not write a key out per comparison. A time of day is written as two
+/// digits per part, the seconds left off where there are none, so its text and its number stand in
+/// one order. A day is written that way while its year has four digits; a year before the first or
+/// past the ten thousandth is written with a sign and more digits, which is not the order of the
+/// days, so such a key is compared as text.
+pub(crate) unsafe fn key_order(left: u32, right: u32, descriptor: u32) -> i32 {
+    match descriptor::kind(descriptor) {
+        KIND_NEWTYPE => key_order(
+            __souther_record_get(left, 0),
+            __souther_record_get(right, 0),
+            descriptor::member(descriptor, 0),
+        ),
+        KIND_STRING => order::compare_runs(
+            __souther_string_bytes(left),
+            __souther_string_length(left),
+            __souther_string_bytes(right),
+            __souther_string_length(right),
+        ),
+        KIND_TIME => sign_of(temporal::second(left) as i64 - temporal::second(right) as i64),
+        KIND_DATE | KIND_DATE_TIME
+            if temporal::in_four_digit_years(left) && temporal::in_four_digit_years(right) =>
+        {
+            let by_day = sign_of(temporal::day(left) as i64 - temporal::day(right) as i64);
+            if by_day != 0 {
+                return by_day;
+            }
+            sign_of(temporal::second(left) as i64 - temporal::second(right) as i64)
+        }
+        KIND_DATE | KIND_DATE_TIME | KIND_INSTANT | KIND_ENUMERATION => {
+            let (a, a_length) = key_text(left, descriptor);
+            let (b, b_length) = key_text(right, descriptor);
+            order::compare_runs(a, a_length, b, b_length)
+        }
+        _ => order::ranked(left, right, descriptor),
+    }
+}
+
+fn sign_of(difference: i64) -> i32 {
+    match difference {
+        d if d < 0 => -1,
+        0 => 0,
+        _ => 1,
+    }
+}
+
 /// A map is written as an object, its keys the keys and its entries in ascending order of them.
 ///
 /// A key written twice names one entry, and the one that stands is the last written: what reaches
@@ -1104,11 +1200,8 @@ unsafe fn collapsed(cell: u32, keys: u32) -> u32 {
     let held = __souther_map_length(cell);
     let mut kept = 0;
     for i in 0..held {
-        let (a, a_length) = key_text(__souther_map_key(cell, i), keys);
-        let last = i + 1 == held || {
-            let (b, b_length) = key_text(__souther_map_key(cell, i + 1), keys);
-            order::compare_runs(a, a_length, b, b_length) != 0
-        };
+        let last = i + 1 == held
+            || key_order(__souther_map_key(cell, i), __souther_map_key(cell, i + 1), keys) != 0;
         if last {
             __souther_map_set(cell, kept, __souther_map_key(cell, i), __souther_map_value(cell, i));
             kept += 1;
@@ -1163,9 +1256,7 @@ unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u
         } else if right == end {
             true
         } else {
-            let (a, a_length) = key_text(__souther_map_key(cell, left), keys);
-            let (b, b_length) = key_text(__souther_map_key(cell, right), keys);
-            order::compare_runs(a, a_length, b, b_length) <= 0
+            key_order(__souther_map_key(cell, left), __souther_map_key(cell, right), keys) <= 0
         };
         let taken = if take_left {
             left += 1;

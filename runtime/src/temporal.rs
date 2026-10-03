@@ -38,6 +38,16 @@ pub unsafe fn day(cell: u32) -> i32 {
     core::ptr::read_unaligned((cell as usize + OFF_DAY) as *const i32)
 }
 
+/// The first of January of the year zero, counted from the first of January nineteen seventy.
+const FIRST_FOUR_DIGIT_DAY: i32 = -719_528;
+/// The last of December of the year nine thousand nine hundred and ninety-nine.
+const LAST_FOUR_DIGIT_DAY: i32 = 2_932_896;
+
+/// Whether a day falls in a year written with four digits and no sign.
+pub unsafe fn in_four_digit_years(cell: u32) -> bool {
+    (FIRST_FOUR_DIGIT_DAY..=LAST_FOUR_DIGIT_DAY).contains(&day(cell))
+}
+
 /// How many seconds past midnight.
 pub unsafe fn second(cell: u32) -> i32 {
     core::ptr::read_unaligned((cell as usize + OFF_SECOND) as *const i32)

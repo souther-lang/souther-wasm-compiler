@@ -146,6 +146,32 @@ class TheRuntimeReadsJsonAsTheDocumentWroteItTest {
     }
 
     @Test
+    void refusesOneContainerPastTheBoundAndNotOneBefore() {
+        Running runtime = Running.bareRuntime();
+        String deepest = "[".repeat(200) + "]".repeat(200);
+        assertThat(parsed(runtime, deepest)).isNotZero();
+
+        String past = "[".repeat(201) + "]".repeat(201);
+        int snapshot = runtime.call(RuntimeAbi.FAILURE_GENERATION);
+        int address = runtime.staged(past);
+        assertThatThrownBy(() -> runtime.call(RuntimeAbi.JSON_PARSE, address,
+                        past.getBytes(StandardCharsets.UTF_8).length))
+                .isInstanceOf(ChicoryException.class);
+        assertThat(runtime.failureRecord().describesTrapAfter(snapshot)).isTrue();
+    }
+
+    @Test
+    void readsAsManyContainersSideBySideAsADocumentHolds() {
+        // How deep a value stands is what is bounded, not how many containers a document holds.
+        // A list of a thousand records each holding a list is two containers deep.
+        String written = "[" + "{\"tags\":[\"a\"]},".repeat(999) + "{\"tags\":[\"a\"]}]";
+        Running runtime = Running.bareRuntime();
+
+        int array = parsed(runtime, written);
+        assertThat(runtime.call(RuntimeAbi.JSON_LENGTH, array)).isEqualTo(1000);
+    }
+
+    @Test
     void takesADocumentNestedAsDeepAsOneMayBe() {
         // The bound is not what a model asks for. A document nested as far as anything anybody
         // writes still reads.

@@ -140,6 +140,52 @@ class AMapIsKeyedByWhateverIsWrittenAsAStringTest {
     }
 
     @Test
+    void ordersDaysAsTheirTextsSortWhereSomeYearsAreNotWrittenInFourDigits() {
+        Running module = compiled();
+
+        // A day in a year written with four digits is compared by which day it is, and one in a
+        // year written with a sign by its text. The two have to land in the one order the texts
+        // sort in, whichever way each pair was compared, and every key has to be found again.
+        List<String> days = new ArrayList<>();
+        for (int year : new int[] {-12000, -10, -1, 0, 1, 999, 1970, 2026, 9999, 10000, 12345}) {
+            days.add(LocalDate.of(year, 1, 1).toString());
+            days.add(LocalDate.of(year, 12, 31).toString());
+        }
+        List<String> shuffled = new ArrayList<>(days);
+        Collections.shuffle(shuffled, new Random(20261003));
+        String written = "{" + shuffled.stream()
+                .map(day -> "\"" + day + "\":" + days.indexOf(day))
+                .collect(Collectors.joining(",")) + "}";
+
+        assertThat(answerOf(module, "keyed.days", written)).isEqualTo(value("{"
+                + days.stream().sorted()
+                        .map(day -> "\"" + day + "\":" + days.indexOf(day))
+                        .collect(Collectors.joining(","))
+                + "}"));
+        for (String day : days) {
+            assertThat(answerOf(module, "keyed.on", written + ",\"" + day + "\""))
+                    .describedAs(day).isEqualTo(value(Integer.toString(days.indexOf(day))));
+        }
+        assertThat(answerOf(module, "keyed.on", written + ",\"2026-06-15\""))
+                .isEqualTo(value("-1"));
+    }
+
+    @Test
+    void ordersTimesAndDayTimesAsTheirTextsSort() {
+        Running module = compiled();
+
+        // A time written without its seconds stands before the same minute written with them.
+        assertThat(answerOf(module, "keyed.times",
+                        "{\"10:00:30\":3,\"09:59:59\":1,\"10:00\":2,\"23:00\":4}"))
+                .isEqualTo(value("{\"09:59:59\":1,\"10:00\":2,\"10:00:30\":3,\"23:00\":4}"));
+        assertThat(answerOf(module, "keyed.stamps", """
+                {"2026-01-01T10:00:30":3,"2025-12-31T23:59":1,"2026-01-01T10:00":2,\
+                "-0001-01-01T00:00":0}"""))
+                .isEqualTo(value("{\"-0001-01-01T00:00\":0,\"2025-12-31T23:59\":1,"
+                        + "\"2026-01-01T10:00\":2,\"2026-01-01T10:00:30\":3}"));
+    }
+
+    @Test
     void keepsWhatTheDocumentWroteLastWhereverTheRepeatWas() {
         Running module = compiled();
 
@@ -177,6 +223,18 @@ class AMapIsKeyedByWhateverIsWrittenAsAStringTest {
                 behavior at : (m: Map<Instant, Int>, k: Instant) -> Int
 
                 let at (m, k) = Option.withDefault(-1, Map.get(k, m))
+
+                behavior on : (m: Map<Date, Int>, k: Date) -> Int
+
+                let on (m, k) = Option.withDefault(-1, Map.get(k, m))
+
+                behavior times : (m: Map<Time, Int>) -> Map<Time, Int>
+
+                let times (m) = m
+
+                behavior stamps : (m: Map<DateTime, Int>) -> Map<DateTime, Int>
+
+                let stamps (m) = m
 
                 behavior plus : (m: Map<Date, Int>, k: Date) -> Map<Date, Int>
 

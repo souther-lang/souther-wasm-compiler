@@ -49,9 +49,8 @@ const HEADER: usize = 8;
 /// would answer about bytes nobody wrote.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_parse(pointer: u32, length: u32) -> u32 {
-    let mut reader =
-        Reader { at: pointer as usize, end: (pointer + length) as usize, deep: 0 };
-    let value = reader.value();
+    let mut reader = Reader { at: pointer as usize, end: (pointer + length) as usize };
+    let value = reader.value(0);
     reader.spaces();
     if reader.at != reader.end {
         abort(REASON_MALFORMED_JSON, 0, reader.at as u64, reader.end as u64);
@@ -242,8 +241,6 @@ unsafe fn write_u32(at: usize, value: u32) {
 struct Reader {
     at: usize,
     end: usize,
-    /// How far in the walk has descended, against how far it may.
-    deep: u32,
 }
 
 /// How far one document may be nested.
@@ -252,24 +249,25 @@ struct Reader {
 /// may write down how much of. Past this the document is refused the way anything that is not one
 /// document is refused — with what a caller can read — rather than by the stack running out, which
 /// is a fault of this module and reads as one.
+///
+/// How deep a value stands is handed to the walk that reads it, one more than its container's,
+/// rather than counted up and down beside the walk: it is then the depth of the call that reads
+/// it, and leaving a container cannot fail to give back what entering it took. Counted beside the
+/// walk, it was never given back, and a document holding two hundred containers side by side was
+/// refused as though they were nested.
 const AS_DEEP_AS: u32 = 200;
 
 impl Reader {
-    /// Goes one deeper, or says the document is nested past what one may be.
-    fn descended(&mut self) -> bool {
-        self.deep += 1;
-        self.deep <= AS_DEEP_AS
-    }
-
-    unsafe fn value(&mut self) -> u32 {
+    /// A value standing `depth` containers in.
+    unsafe fn value(&mut self, depth: u32) -> u32 {
         self.spaces();
         match self.peek() {
             b'n' => self.keyword(b"null", TAG_NULL),
             b't' => self.keyword(b"true", TAG_TRUE),
             b'f' => self.keyword(b"false", TAG_FALSE),
             b'"' => self.string(),
-            b'[' => self.array(),
-            b'{' => self.object(),
+            b'[' => self.array(depth + 1),
+            b'{' => self.object(depth + 1),
             b'-' | b'0'..=b'9' => self.number(),
             _ => self.malformed(),
         }
@@ -449,8 +447,9 @@ impl Reader {
         value
     }
 
-    unsafe fn array(&mut self) -> u32 {
-        if !self.descended() {
+    /// An array that is the `depth`th container in.
+    unsafe fn array(&mut self, depth: u32) -> u32 {
+        if depth > AS_DEEP_AS {
             self.malformed();
         }
         self.expect(b'[');
@@ -460,7 +459,7 @@ impl Reader {
         let mut count = 0u32;
         if self.peek() != b']' {
             loop {
-                let value = self.value();
+                let value = self.value(depth);
                 push(&mut first, &mut last, value);
                 count += 1;
                 self.spaces();
@@ -482,8 +481,9 @@ impl Reader {
         out
     }
 
-    unsafe fn object(&mut self) -> u32 {
-        if !self.descended() {
+    /// An object that is the `depth`th container in.
+    unsafe fn object(&mut self, depth: u32) -> u32 {
+        if depth > AS_DEEP_AS {
             self.malformed();
         }
         self.expect(b'{');
@@ -500,7 +500,7 @@ impl Reader {
                 let key = self.string();
                 self.spaces();
                 self.expect(b':');
-                let value = self.value();
+                let value = self.value(depth);
                 push(&mut first, &mut last, key);
                 push(&mut first, &mut last, value);
                 count += 1;

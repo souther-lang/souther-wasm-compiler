@@ -55,7 +55,12 @@ const PAGE: usize = 65536;
 /// Raised to 5 when what `__souther_string_matches` is told became the image of the pattern's
 /// machine that 199x-notation writes, in place of the compiler's own list of steps: a module
 /// linked by the older compiler would hand this runtime steps it reads as an image.
-const ABI_VERSION: u32 = 5;
+///
+/// Raised to 6 when a body began to read a cell's payload itself and to place literals in static
+/// memory as the cells this runtime makes, so the layout of a cell became part of what the two
+/// sides agree on; and when a walk began to grow a map in place, and to add one value to a list
+/// without a list of one around it.
+const ABI_VERSION: u32 = 6;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.

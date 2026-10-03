@@ -31,6 +31,7 @@ import souther.compiler.types.ResolvedCase;
 import souther.compiler.types.TypeSymbol;
 import souther.compiler.types.ValueName;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.RuntimeAbi.Cell;
 import souther.wasm.abi.WasmAbortMapping;
 import souther.wasm.abi.WasmFault;
 import souther.wasm.emit.Type;
@@ -221,7 +222,15 @@ public final class WasmCompiler {
             }
         }
 
-        Emitter emitter = new Emitter(program, fragment, calls, shapes, reached);
+        Emitter emitter = new Emitter(program, fragment, calls, shapes, reached, name -> {
+            // Asking for the descriptor is what declares the check, so it is asked first.
+            shapes.ofDeclared(name);
+            Integer check = checks.get(name);
+            if (check == null) {
+                throw new IllegalStateException(name + " is checked, and no check was declared for it");
+            }
+            return check;
+        });
         for (Written each : written) {
             fragment.write(each.index(), emitter.overValues(each));
         }
@@ -494,6 +503,9 @@ public final class WasmCompiler {
         private final Runtime calls;
         private final Descriptors shapes;
         private final Map<ValueName, Integer> reached;
+        private final Cells cells;
+        /** The function checking what must hold of a type, by the type. */
+        private final java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf;
 
         private BodyWriter out;
         private Map<BindingId, Integer> locals;
@@ -501,13 +513,16 @@ public final class WasmCompiler {
         private Set<ValueName.Behavior> requirementsInScope = Set.of();
 
         Emitter(CheckedProgram program, WasmFragment fragment, Runtime calls, Descriptors shapes,
-                Map<ValueName, Integer> reached) {
+                Map<ValueName, Integer> reached,
+                java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf) {
             this.program = program;
             this.fragment = fragment;
             this.patterns = new Patterns(fragment);
+            this.cells = new Cells(fragment);
             this.calls = calls;
             this.shapes = shapes;
             this.reached = reached;
+            this.checkOf = checkOf;
         }
 
         /**
@@ -705,8 +720,8 @@ public final class WasmCompiler {
 
             List<ValueShape.Invariant> invariants = shapes.invariantsOf(name);
             for (int i = invariants.size() - 1; i >= 0; i--) {
-                value(out, invariants.get(i).condition());
-                out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifZero().constant(i).localSet(answer).end();
+                truth(out, invariants.get(i).condition());
+                out.ifZero().constant(i).localSet(answer).end();
             }
             return out.localGet(answer).body();
         }
@@ -786,14 +801,11 @@ public final class WasmCompiler {
         /** Leaves the value of an expression on the stack, as the cell it is. */
         private void value(BodyWriter out, Core expression) {
             switch (expression) {
-                case Core.Int number -> out.constant(number.value()).call(calls.of(RuntimeAbi.INT));
-                case Core.Bool bool -> out.constant(bool.value() ? 1 : 0).call(calls.of(RuntimeAbi.BOOL));
-                case Core.Str text -> {
-                    byte[] utf8 = text.value().getBytes(StandardCharsets.UTF_8);
-                    out.constant(fragment.intern(utf8))
-                            .constant(utf8.length)
-                            .call(calls.of(RuntimeAbi.STRING));
-                }
+                // A literal is a cell in static memory, made once, rather than one made per reach.
+                case Core.Int number -> out.constant(cells.ofInt(number.value()));
+                case Core.Bool bool -> out.constant(cells.ofBool(bool.value()));
+                case Core.Str text ->
+                        out.constant(cells.ofString(text.value().getBytes(StandardCharsets.UTF_8)));
                 case Core.Decimal amount -> {
                     // The text rather than the digits and the scale, because that is the one form
                     // both sides already agree on how to read, and what was written is what a
@@ -834,9 +846,8 @@ public final class WasmCompiler {
                     value(out, some.value());
                     out.call(calls.of(RuntimeAbi.SOME));
                 }
-                case Core.OptionNone ignored -> out.call(calls.of(RuntimeAbi.NONE));
-                case Core.UnitValue only -> out.constant(shapes.ofMember(only.data()))
-                        .call(calls.of(RuntimeAbi.UNIT));
+                case Core.OptionNone ignored -> out.constant(cells.none());
+                case Core.UnitValue only -> out.constant(cells.unit(shapes.ofMember(only.data())));
                 case Core.Construct made -> {
                     int record = constructed(out, made);
                     // Construction re-checks what must hold. Here the value is the body's own, so
@@ -845,8 +856,7 @@ public final class WasmCompiler {
                     if (!shapes.invariantsOf(made.typeName()).isEmpty()) {
                         int broken = scratch();
                         out.localGet(record)
-                                .constant(shapes.ofDeclared(made.typeName()))
-                                .call(calls.of(RuntimeAbi.CHECK_INVARIANTS))
+                                .call(checkOf.applyAsInt(made.typeName()))
                                 .localSet(broken)
                                 .localGet(broken)
                                 .constant(-1)
@@ -892,9 +902,14 @@ public final class WasmCompiler {
                 case Core.Neg opposite -> {
                     boolean amount = amountsAreWorkedOut(
                             opposite.operand().type(), opposite.type());
-                    value(out, opposite.operand());
-                    out.call(calls.of(amount
-                            ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
+                    if (worksOutAWholeNumber(opposite)) {
+                        wide(out, opposite);
+                        out.call(calls.of(RuntimeAbi.INT));
+                    } else {
+                        value(out, opposite.operand());
+                        out.call(calls.of(amount
+                                ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
+                    }
                 }
                 case Core.Binary binary -> binary(out, binary);
                 case Core.If chosen -> chosen(out, chosen, this::value);
@@ -944,6 +959,21 @@ public final class WasmCompiler {
          * so the block answers the same afterwards however the body it left goes on.
          */
         private void closure(BodyWriter out, Core.Block block) {
+            List<Core.Read> captured = capturedBy(block);
+            int slot = fragment.slot(blockFunction(block, captured));
+            // A block reading nothing from around it is the same value wherever it is made, so it
+            // is one cell in static memory.
+            if (captured.isEmpty()) {
+                out.constant(cells.closure(slot));
+                return;
+            }
+            out.constant(slot);
+            room(out, captured);
+            out.call(calls.of(RuntimeAbi.CLOSURE));
+        }
+
+        /** What a block reads from around it, each of which the frame it is written in holds. */
+        private List<Core.Read> capturedBy(Core.Block block) {
             List<Core.Read> captured = BlockReaches.of(block, requirementsInScope).bindings();
             for (Core.Read read : captured) {
                 if (!locals.containsKey(read.binding())) {
@@ -951,7 +981,18 @@ public final class WasmCompiler {
                             + " but the Wasm frame around it does not hold it");
                 }
             }
-            int slot = fragment.slot(blockFunction(block, captured));
+            return captured;
+        }
+
+        /**
+         * Leaves on the stack the room holding what a block reads from around it, copied now; or
+         * nothing at all where it reads nothing, which its body then never asks for.
+         */
+        private void room(BodyWriter out, List<Core.Read> captured) {
+            if (captured.isEmpty()) {
+                out.constant(0);
+                return;
+            }
             int room = scratch();
             out.constant(captured.size())
                     .call(calls.of(RuntimeAbi.CAPTURES))
@@ -962,7 +1003,7 @@ public final class WasmCompiler {
                         .localGet(locals.get(captured.get(i).binding()))
                         .call(calls.of(RuntimeAbi.CAPTURE_SET));
             }
-            out.constant(slot).localGet(room).call(calls.of(RuntimeAbi.CLOSURE));
+            out.localGet(room);
         }
 
         /**
@@ -1009,10 +1050,10 @@ public final class WasmCompiler {
             value(out, applied.fn());
             out.localSet(closure)
                     .localGet(closure)
-                    .call(calls.of(RuntimeAbi.CLOSURE_CAPTURED));
+                    .load(Cell.PAYLOAD);
             applied.args().forEach(argument -> value(out, argument));
             out.localGet(closure)
-                    .call(calls.of(RuntimeAbi.CLOSURE_SLOT))
+                    .load(Cell.SECOND)
                     .callSlot(overCells(fragment, 1 + applied.args().size()));
         }
 
@@ -1086,19 +1127,29 @@ public final class WasmCompiler {
             switch (operation) {
                 case GROW_LIST -> {
                     value(out, call.args().get(0));
-                    value(out, call.args().get(1));
-                    out.call(calls.of(RuntimeAbi.GROW));
+                    // What a step adds is written `acc ++ [x]`, and where it is written out like
+                    // that, each value is added as it is rather than in a list of one made for it.
+                    if (unwidened(call.args().get(1)) instanceof Core.ListLit added) {
+                        for (Core element : added.elements()) {
+                            value(out, element);
+                            out.call(calls.of(RuntimeAbi.GROW_ONE));
+                        }
+                    } else {
+                        value(out, call.args().get(1));
+                        out.call(calls.of(RuntimeAbi.GROW));
+                    }
                 }
                 case BUILD_LIST -> walk(out, call, RuntimeAbi.BUILDER, RuntimeAbi.SEALED);
                 case PUT_MAP -> {
                     // The walk carries the map it is growing first; the operation that grows one
-                    // takes it last, after what is being put in it.
+                    // takes it last, after what is being put in it. Nothing else holds that map,
+                    // so the entry is put in it where it goes rather than in a copy.
                     value(out, call.args().get(1));
                     value(out, call.args().get(2));
                     value(out, call.args().get(0));
-                    out.constant(shapes.of(call.type())).call(calls.of(RuntimeAbi.Kernels.MAP_INSERT));
+                    out.call(calls.of(RuntimeAbi.MAP_PUT));
                 }
-                case BUILD_MAP -> walk(out, call, RuntimeAbi.Kernels.MAP_EMPTY, null);
+                case BUILD_MAP -> walk(out, call, RuntimeAbi.MAP_BUILDER, RuntimeAbi.MAP_SEALED);
                 default -> throw new NotLowered(writing + " reaches " + operation
                         + ", which this backend does not write yet");
             }
@@ -1108,8 +1159,8 @@ public final class WasmCompiler {
          * {@code $build(step, xs, from)}: the walk that grows a collection out of a list.
          *
          * @param start what makes the empty one the walk begins with
-         * @param finish what turns what the walk grew into what it answers, or null where the walk
-         *     grew the answer itself
+         * @param finish what turns what the walk grew into what it answers: what grows is never
+         *     the collection itself, since it has room past what it holds
          */
         private void walk(BodyWriter out, Core.Call call, String start, String finish) {
             int step = scratch();
@@ -1118,30 +1169,45 @@ public final class WasmCompiler {
             int held = scratch();
             int builder = scratch();
 
-            value(out, call.args().get(0));
+            // A step written where the walk is, which is what `List.map(f, xs)` leaves once `f` is
+            // written in, is a function this compiler knows: it is called as itself, with what it
+            // reads from around it, rather than made a value and reached through the table.
+            int direct = -1;
+            if (unwidened(call.args().get(0)) instanceof Core.Block block) {
+                List<Core.Read> captured = capturedBy(block);
+                direct = blockFunction(block, captured);
+                room(out, captured);
+            } else {
+                value(out, call.args().get(0));
+            }
             out.localSet(step);
             value(out, call.args().get(1));
             out.localSet(over);
-            value(out, call.args().get(2));
-            out.call(calls.of(RuntimeAbi.INT_VALUE)).wrap().localSet(at);
+            wide(out, call.args().get(2));
+            out.wrap().localSet(at);
             out.localGet(over).call(calls.of(RuntimeAbi.LIST_LENGTH_OF)).localSet(held);
             out.constant(shapes.of(call.type())).call(calls.of(start)).localSet(builder);
 
             out.block().loop()
                     .localGet(at).localGet(held).compares(BodyWriter.Comparison.AT_LEAST).leaveIf(1);
-            out.localGet(step).call(calls.of(RuntimeAbi.CLOSURE_CAPTURED))
-                    .localGet(builder)
-                    .localGet(over).localGet(at).call(calls.of(RuntimeAbi.LIST_GET))
-                    .localGet(step).call(calls.of(RuntimeAbi.CLOSURE_SLOT))
-                    .callSlot(overCells(fragment, 3))
-                    .localSet(builder);
+            out.localGet(step);
+            if (direct < 0) {
+                out.load(Cell.PAYLOAD);
+            }
+            out.localGet(builder);
+            // The element is read where the list holds it, past how many there are.
+            out.localGet(over).localGet(at).shiftLeft(2).add().load(Cell.PAYLOAD + 4);
+            if (direct < 0) {
+                out.localGet(step).load(Cell.SECOND).callSlot(overCells(fragment, 3));
+            } else {
+                out.call(direct);
+            }
+            out.localSet(builder);
             out.localGet(at).constant(1).add().localSet(at).leave(0);
             out.end().end();
 
             out.localGet(builder);
-            if (finish != null) {
-                out.call(calls.of(finish));
-            }
+            out.call(calls.of(finish));
         }
 
         /**
@@ -1291,8 +1357,8 @@ public final class WasmCompiler {
          *  writes what the whole is. */
         private void chosen(BodyWriter out, Core.If chosen, Writing ways) {
             int answer = scratch();
-            value(out, chosen.cond());
-            out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifNotZero();
+            truth(out, chosen.cond());
+            out.ifNotZero();
             ways.write(out, chosen.then());
             out.localSet(answer).otherwise();
             ways.write(out, chosen.els());
@@ -1323,10 +1389,13 @@ public final class WasmCompiler {
             int record = constructed(out, made);
             int broken = scratch();
             int answer = scratch();
-            out.localGet(record)
-                    .constant(shapes.ofDeclared(name))
-                    .call(calls.of(RuntimeAbi.CHECK_INVARIANTS))
-                    .localSet(broken);
+            // A shape with nothing that must hold of it breaks nothing, and has no check to call.
+            if (shapes.invariantsOf(name).isEmpty()) {
+                out.constant(-1);
+            } else {
+                out.localGet(record).call(checkOf.applyAsInt(name));
+            }
+            out.localSet(broken);
 
             out.localGet(broken).constant(-1).compares(BodyWriter.Comparison.EQUAL).ifNotZero();
             locals.put(attempted.binder().binding(), record);
@@ -1389,6 +1458,9 @@ public final class WasmCompiler {
          *
          * <p>Where an arm selects on an option, what it tests is whether the option holds
          * something, and what it binds is what the option holds — not the option.
+         *
+         * <p>The last arm is not tested. The checker settles that one arm answers for every value,
+         * so a value no arm before the last answered for is one the last answers for.
          */
         private void match(BodyWriter out, Core.Match chosen, Writing arms) {
             int subject = scratch();
@@ -1396,24 +1468,20 @@ public final class WasmCompiler {
             value(out, chosen.scrutinee());
             out.localSet(subject);
 
-            int opened = 0;
-            for (Core.Case arm : chosen.cases()) {
+            List<Core.Case> cases = chosen.cases();
+            for (int i = 0; i < cases.size() - 1; i++) {
+                Core.Case arm = cases.get(i);
                 condition(out, arm, subject);
                 out.ifNotZero();
                 bind(out, arm, subject);
                 arms.write(out, arm.body());
                 out.localSet(answer).otherwise();
-                opened++;
             }
-            // The checker settles that one arm answers, so nothing written reaches this. What it
-            // stands for is this backend having tested for the wrong thing.
-            out.constant(WasmFault.BACKEND_INVARIANT_BROKEN.code())
-                    .constant(0)
-                    .constant(0L)
-                    .constant(0L)
-                    .call(calls.of(RuntimeAbi.ABORT))
-                    .unreachable();
-            for (int i = 0; i < opened; i++) {
+            Core.Case last = cases.get(cases.size() - 1);
+            bind(out, last, subject);
+            arms.write(out, last.body());
+            out.localSet(answer);
+            for (int i = 0; i < cases.size() - 1; i++) {
                 out.end();
             }
             out.localGet(answer);
@@ -1487,27 +1555,119 @@ public final class WasmCompiler {
                 case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE,
                         RuntimeAbi.Kernels.DECIMAL_DIVIDE_BY);
                 case CONCAT -> concatenation(out, binary);
-                case EQ -> comparison(out, binary, BodyWriter.Comparison.EQUAL);
-                case NE -> comparison(out, binary, BodyWriter.Comparison.UNEQUAL);
-                case LT -> comparison(out, binary, BodyWriter.Comparison.LESS);
-                case LE -> comparison(out, binary, BodyWriter.Comparison.AT_MOST);
-                case GT -> comparison(out, binary, BodyWriter.Comparison.GREATER);
-                case GE -> comparison(out, binary, BodyWriter.Comparison.AT_LEAST);
-                case AND, OR -> {
+                // Decided as one or zero, and answered as whichever of the two cells that is.
+                case EQ, NE, LT, LE, GT, GE, AND, OR -> {
+                    out.constant(cells.ofBool(true)).constant(cells.ofBool(false));
+                    truth(out, binary);
+                    out.select();
+                }
+            }
+        }
+
+        /**
+         * Leaves whether a {@code Bool} holds on the stack, as one or zero.
+         *
+         * <p>A condition is asked of what it decides and not of a cell: a comparison is the number
+         * its operands stand in, and {@code &&} and {@code ||} are conditions of conditions, so a
+         * condition made of them makes no cell. Anything else is a value, and the {@code Bool} it
+         * holds is read off its cell.
+         */
+        private void truth(BodyWriter out, Core expression) {
+            switch (expression) {
+                case Core.Bool bool -> out.constant(bool.value() ? 1 : 0);
+                case Core.Binary binary when comparisonOf(binary.op()) != null ->
+                        compared(out, binary, comparisonOf(binary.op()));
+                case Core.Binary binary when binary.op() == BinOp.AND || binary.op() == BinOp.OR -> {
+                    // The second is asked only where the first has not decided the whole.
                     int answer = scratch();
-                    value(out, binary.left());
-                    out.localSet(answer)
-                            .localGet(answer)
-                            .call(calls.of(RuntimeAbi.BOOL_VALUE));
+                    truth(out, binary.left());
+                    out.localSet(answer).localGet(answer);
                     if (binary.op() == BinOp.AND) {
                         out.ifNotZero();
                     } else {
                         out.ifZero();
                     }
-                    value(out, binary.right());
+                    truth(out, binary.right());
                     out.localSet(answer).end().localGet(answer);
                 }
+                default -> {
+                    value(out, expression);
+                    out.load(Cell.PAYLOAD);
+                }
             }
+        }
+
+        /** How a comparison operator stands one operand to the other, or null for any other. */
+        private static BodyWriter.Comparison comparisonOf(BinOp op) {
+            return switch (op) {
+                case EQ -> BodyWriter.Comparison.EQUAL;
+                case NE -> BodyWriter.Comparison.UNEQUAL;
+                case LT -> BodyWriter.Comparison.LESS;
+                case LE -> BodyWriter.Comparison.AT_MOST;
+                case GT -> BodyWriter.Comparison.GREATER;
+                case GE -> BodyWriter.Comparison.AT_LEAST;
+                default -> null;
+            };
+        }
+
+        /**
+         * Leaves an {@code Int}'s number on the stack, as sixty-four bits.
+         *
+         * <p>Arithmetic over whole numbers is worked out on the numbers, so what it makes in the
+         * middle of an expression is never a cell; anything else is a value, whose number is read
+         * off its cell.
+         */
+        private void wide(BodyWriter out, Core expression) {
+            switch (expression) {
+                case Core.Int number -> out.constant(number.value());
+                case Core.Binary binary when worksOutAWholeNumber(binary) -> {
+                    wide(out, binary.left());
+                    wide(out, binary.right());
+                    out.call(calls.of(switch (binary.op()) {
+                        case ADD -> RuntimeAbi.INT_SUM;
+                        case SUB -> RuntimeAbi.INT_DIFFERENCE;
+                        case MUL -> RuntimeAbi.INT_PRODUCT;
+                        default -> throw new IllegalStateException(
+                                binary.op() + " is not worked out on whole numbers");
+                    }));
+                }
+                // Negating wraps at the one number whose opposite is not one, as the JVM's does.
+                case Core.Neg opposite when worksOutAWholeNumber(opposite) -> {
+                    out.constant(0L);
+                    wide(out, opposite.operand());
+                    out.subtractWide();
+                }
+                default -> {
+                    value(out, expression);
+                    out.loadWide(Cell.PAYLOAD);
+                }
+            }
+        }
+
+        /** Whether an expression is arithmetic over whole numbers, answering one. */
+        private boolean worksOutAWholeNumber(Core expression) {
+            return switch (expression) {
+                case Core.Binary binary -> switch (binary.op()) {
+                    case ADD, SUB, MUL -> isWhole(binary.left()) && isWhole(binary.right())
+                            && isWhole(binary);
+                    default -> false;
+                };
+                case Core.Neg opposite -> isWhole(opposite.operand()) && isWhole(opposite);
+                default -> false;
+            };
+        }
+
+        private static boolean isWhole(Core expression) {
+            return expression.type() == souther.compiler.types.Type.Prim.INT;
+        }
+
+        /** An expression as what it evaluates, with any widening of it set aside. */
+        private static Core unwidened(Core expression) {
+            Core held = expression;
+            while (held instanceof Core.Widen widened) {
+                held = widened.value();
+            }
+            return held;
         }
 
         /**
@@ -1524,18 +1684,25 @@ public final class WasmCompiler {
             }
         }
 
-        private void comparison(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
+        /** Leaves whether the two operands of a comparison stand that way, as one or zero. */
+        private void compared(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
             // Both sides, because a comparison across Int and Rational is one the language allows
             // and the descriptor below is only the left one's.
             refuseWhatIsNotWritten("compares", binary.left().type());
             refuseWhatIsNotWritten("compares", binary.right().type());
+            // Two whole numbers stand as their numbers do, which is one instruction.
+            if (isWhole(binary.left()) && isWhole(binary.right())) {
+                wide(out, binary.left());
+                wide(out, binary.right());
+                out.comparesWide(how);
+                return;
+            }
             value(out, binary.left());
             value(out, binary.right());
             out.constant(shapes.of(binary.left().type()))
                     .call(calls.of(RuntimeAbi.COMPARE))
                     .constant(0)
-                    .compares(how)
-                    .call(calls.of(RuntimeAbi.BOOL));
+                    .compares(how);
         }
 
         /**
@@ -1567,6 +1734,11 @@ public final class WasmCompiler {
             boolean amounts = amountsAreWorkedOut(binary.left().type(), binary.type());
             if (amounts && amount == null) {
                 throw new NotLowered(writing + " works out an amount with " + binary.op());
+            }
+            if (worksOutAWholeNumber(binary)) {
+                wide(out, binary);
+                out.call(calls.of(RuntimeAbi.INT));
+                return;
             }
             value(out, binary.left());
             value(out, binary.right());

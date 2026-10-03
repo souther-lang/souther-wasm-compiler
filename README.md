@@ -37,10 +37,14 @@ The crate allocates, and this runtime has no allocator of its own beyond the are
 what it allocates from. Nothing is given back one allocation at a time; what a call made goes back
 with the arena.
 
-The Java half emits the program's own functions and links them onto that module. It never reads a
-runtime code body — only the section framing, the exports, and the constants a global or a segment
-offset is written with — so what the Rust toolchain emits inside a function is not something this
-project has to model.
+The Java half emits the program's own functions and links them onto that module. Placing them reads
+no runtime code body — only the section framing, the exports, and the constants a global or a
+segment offset is written with. Once they are placed, the link leaves out every function nothing
+reaches: the runtime carries every kernel and a program calls a few. That walk reads which function
+each call in a body names and copies everything else as it is, so what the Rust toolchain emits
+inside a function is still not something this project has to model beyond how an instruction is
+encoded. What is left is mostly the data the text rules read, which a fold over a list links to in
+about 150 KB.
 
 ## The host contract
 
@@ -48,7 +52,8 @@ Taken from [rontolisp](https://github.com/making/rontolisp), so a host that alre
 rontolisp module drives this one the same way: strings cross as a pointer and a length into the
 exported memory, buffers come from `__ronto_alloc`, and a caller brackets a call with
 `__ronto_alloc_mark` and `__ronto_alloc_reset`. An export that answers a string answers a live
-pointer into the arena, so the reset comes after the bytes have been read out.
+pointer into the arena, so the reset comes after the bytes have been read out. Of the runtime, a
+linked module exports what a host calls and nothing else; the rest is the link's to call.
 
 A behavior this program holds no implementation for is reached the same way whichever of the two
 reasons it is — the caller supplies it, or another build already did — because to a caller reaching
