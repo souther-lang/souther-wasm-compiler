@@ -83,9 +83,16 @@ pub unsafe fn broken(cell: u32, descriptor: u32, clause: u32, path: u32, path_le
                 return;
             }
         }
+        // The checker said these constraints are the whole clause, so a value that meets every one
+        // of them and breaks the clause is this backend evaluating the two apart. The JVM never asks
+        // the clause where its constraints are the whole of it; reporting the rule here would be
+        // reporting what no other backend could.
+        if read(entry + 16) != 0 {
+            crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, descriptor, clause as u64, cell as u64);
+        }
     }
-    // A clause that is no constraint, or one whose constraints the value meets though it breaks the
-    // clause: the rule it is, named.
+    // A clause that is no constraint, or one whose constraints are only part of it and which the
+    // value meets though it breaks the clause: the rule it is, named.
     meta::begin();
     meta::text(b"module", read(table), read(table + 4));
     let (named, named_length) = descriptor::own_name(descriptor);

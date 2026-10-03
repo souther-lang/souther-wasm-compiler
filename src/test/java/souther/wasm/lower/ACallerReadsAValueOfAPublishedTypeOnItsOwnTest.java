@@ -3,7 +3,10 @@ package souther.wasm.lower;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.dylibso.chicory.wasm.ChicoryException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import souther.wasm.Compiled;
@@ -98,6 +101,67 @@ class ACallerReadsAValueOfAPublishedTypeOnItsOwnTest {
                 assertThat(record.aux1()).isEqualTo(2);
             }
         }
+    }
+
+    /**
+     * A clause the checker says its constraints are the whole of cannot be broken by a value meeting
+     * every one of them: the JVM never asks such a clause, only its constraints. Where this backend
+     * finds one broken all the same, it has evaluated the two apart, and ends the call rather than
+     * report a rule no other backend would.
+     */
+    @Test
+    void aClauseItsConstraintsAreTheWholeOfIsNeverReportedAsTheRule() {
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of("""
+                module codes exposing ( Code )
+
+                data Code = String
+                    invariant partly = String.length(value) >= 3 && value /= "abcd"
+                """))));
+        int number = numberOf(module, "Code");
+        // Only part of the clause is a constraint, so the table says it is not the whole.
+        int complete = clauseOf(module, "partly") + 16;
+        assertThat(word(module, complete)).isZero();
+        assertThat(decoded(module, number, "\"abcd\""))
+                .contains("\"code\":\"invariant_violation\"", "\"clause\":\"partly\"");
+
+        // Said to be the whole, the same clause broken by a value meeting its constraint is this
+        // backend at odds with the checker.
+        module.write(complete, new byte[] {1, 0, 0, 0});
+        int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
+        try {
+            decoded(module, number, "\"abcd\"");
+            throw new AssertionError("a clause said to be its constraints was reported as the rule");
+        } catch (ChicoryException trapped) {
+            FailureRecord record = module.failureRecord();
+            assertThat(record.describesTrapAfter(snapshot)).isTrue();
+            assertThat(record.cause())
+                    .contains(new FailureCause.Wasm(WasmFault.BACKEND_INVARIANT_BROKEN));
+            assertThat(record.aux0()).isZero();
+        }
+    }
+
+    /** Where the clause table's entry for the clause named {@code name} is, in memory. */
+    private static int clauseOf(Running module, String name) {
+        byte[] memory = module.read(0, module.call(RuntimeAbi.ALLOC_MARK));
+        byte[] named = name.getBytes(StandardCharsets.UTF_8);
+        for (int at = 0; at + named.length <= memory.length; at++) {
+            if (Arrays.equals(memory, at, at + named.length, named, 0, named.length)) {
+                for (int entry = 0; entry + 8 <= memory.length; entry += 4) {
+                    if (word(memory, entry) == at && word(memory, entry + 4) == named.length) {
+                        return entry;
+                    }
+                }
+            }
+        }
+        throw new AssertionError("no clause " + name + " in the module's memory");
+    }
+
+    private static int word(Running module, int at) {
+        return word(module.read(at, 4), 0);
+    }
+
+    private static int word(byte[] bytes, int at) {
+        return ByteBuffer.wrap(bytes, at, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
     }
 
     private static Running compiled() {
