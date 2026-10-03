@@ -19,9 +19,14 @@ are written in Rust under `runtime/` and compiled to wasm ahead of time. The com
 `src/main/resources` and every build links against that copy, so building this project needs no
 Rust toolchain. Changing the runtime does: rebuild it with
 
-    cd runtime && cargo build --release
-    cp target/wasm32-unknown-unknown/release/souther_wasm_runtime.wasm \
-       ../src/main/resources/souther/wasm/runtime.wasm
+    runtime/build.sh
+
+which needs Docker. What the runtime compiles to depends on the machine as well as the source: a
+dependency with a build script is hashed by Cargo with the host's triple, and the order the linker
+lays functions out in follows the hashes. CI requires the carried module to be what the source
+builds and builds it on x86-64 Linux, so the script builds there too, in the Rust image of the
+toolchain `rust-toolchain.toml` names. `cd runtime && cargo build --release` still builds a runtime
+that works, for trying a change, and is the one to replace before committing.
 
 What a string means is not written here. Its order, its length, its case, its canonical form,
 which characters are white space, which text is a day or a moment, and which strings a pattern

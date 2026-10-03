@@ -148,6 +148,9 @@ jobs:
     # The compiled runtime is carried in the repository so that building the Java half needs no
     # Rust. That only holds while the two agree, and nothing but this notices when they stop:
     # every test would keep passing against the copy that is checked in.
+    #
+    # On x86-64 Linux, which is the host runtime/build.sh builds on: what the runtime compiles to
+    # follows the host's triple through the hash Cargo gives a dependency with a build script.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -163,7 +166,7 @@ jobs:
           carried=src/main/resources/souther/wasm/runtime.wasm
           if ! cmp -s "$built" "$carried"; then
             echo "The runtime carried in src/main/resources is not what runtime/src builds."
-            echo "Rebuild it and commit the result — see the README."
+            echo "Rebuild it with runtime/build.sh, which builds on this host as CI does, and commit the result."
             cmp "$built" "$carried" || true
             exit 1
           fi
