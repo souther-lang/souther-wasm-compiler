@@ -204,9 +204,9 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
      * {@code decimal::parse}, and only that function's own caller may decide what "could not be
      * read" means (regression for the fix that let this one call site decide it by aborting).
      *
-     * <p>Which issue: it is a number, so its type is right, and a number that names no
-     * {@code Decimal} is its format wrong, as text that denotes no {@code String} is. It was said as
-     * a mismatch of a number against a number, which says nothing a caller can act on.
+     * <p>Which issue: a well-formed number a {@code Decimal} has no room for, which is a mismatch of
+     * range as a whole number wider than an {@code Int} is, under Raoh's word for the type. It was
+     * said as a mismatch of a number against a number, which named no range at all.
      */
     @Test
     void saysSoWhereANumbersExponentHasNoPlaceInADecimalRatherThanEndingTheCall() {
@@ -219,8 +219,9 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 """);
 
         assertThat(answerOf(module, "strict.echo", "[1e99999999999]")).isEqualTo(
-                "{\"issues\":[{\"path\":\"/0\",\"code\":\"invalid_format\","
-                        + "\"messageKey\":\"invalid_format\",\"meta\":{}}]}");
+                "{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\","
+                        + "\"messageKey\":\"type_mismatch.numeric_range\","
+                        + "\"meta\":{\"expected\":\"decimal\"}}]}");
     }
 
     @Test

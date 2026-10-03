@@ -602,6 +602,87 @@
       }
     },
     {
+      "about": "a whole number written with a point and zeros after it",
+      "type": "forms.Point",
+      "input": {
+        "x": 5.00,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "long"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
+    },
+    {
+      "about": "a whole number written with an exponent",
+      "type": "forms.Point",
+      "input": {
+        "x": 1E+3,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "long"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
+    },
+    {
+      "about": "a whole number written with an exponent wider than an Int holds",
+      "type": "forms.Point",
+      "input": {
+        "x": 1E+30,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "long"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
+    },
+    {
       "about": "a newtype case, what it wraps under its own key beside the tag",
       "type": "forms.Shipment",
       "input": {

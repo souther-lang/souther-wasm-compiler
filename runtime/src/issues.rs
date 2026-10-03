@@ -23,7 +23,8 @@ use crate::text;
 pub const CODE_REQUIRED: &[u8] = b"required";
 /// A place held another kind of value than the one it was declared to hold.
 pub const CODE_TYPE_MISMATCH: &[u8] = b"type_mismatch";
-/// A whole number written wider than what the declared type holds.
+/// A number read exactly that the declared type has no room for: a whole number wider than an
+/// `Int`, an amount at a scale no `Int` holds.
 pub const KEY_NUMERIC_RANGE: &[u8] = b"type_mismatch.numeric_range";
 /// A string that denotes no value of the declared type: text that is no `String`, no temporal, or
 /// the name of no case.

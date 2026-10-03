@@ -920,8 +920,15 @@ unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
 /// A whole number written wider than an `Int` holds, which Raoh's reader of one says as a mismatch
 /// of its range.
 unsafe fn wider_than_long(path: u32, path_length: u32) {
+    outside_range(path, path_length, b"long");
+}
+
+/// A number read exactly that the declared type has no room for, said as Raoh says one
+/// (`ObjectDecoders.outsideRange`): a mismatch of type keyed as one of range, naming the type by
+/// Raoh's word for it.
+unsafe fn outside_range(path: u32, path_length: u32, expected: &[u8]) {
     issues::meta::begin();
-    issues::meta::word(b"expected", b"long");
+    issues::meta::word(b"expected", expected);
     issues::keyed(CODE_TYPE_MISMATCH, issues::KEY_NUMERIC_RANGE, path, path_length,
         issues::meta::end());
 }
@@ -955,9 +962,12 @@ unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
     }
 }
 
-/// A number is read as the amount it names, keeping the digits it was written with. A number whose
-/// scale no `Int` holds names no `Decimal`: it is a number, so the type is right, and as with text
-/// that denotes no `String` it is the format that is wrong.
+/// A number is read as the amount it names, keeping the digits it was written with.
+///
+/// A number whose scale no `Int` holds is a well-formed number a `Decimal` has no room for: read
+/// exactly, and outside what the type holds. That is a mismatch of range, said as a whole number
+/// wider than an `Int` is said (`wider_than_long`) and as Raoh says one, under Raoh's own word for
+/// the type — not a wrong format, which is text that is no reading of its type at all.
 unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
@@ -969,7 +979,7 @@ unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
         json::__souther_json_length(value),
     );
     if held == 0 {
-        issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::none());
+        outside_range(path, path_length, b"decimal");
         return 0;
     }
     held
