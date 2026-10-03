@@ -11,7 +11,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import souther.compiler.abort.AbortKind;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.RuntimeAbi;
@@ -186,7 +186,7 @@ class WhatABodyWorksOutOnTheWayIsNoCellTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(PROGRAM))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(PROGRAM))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

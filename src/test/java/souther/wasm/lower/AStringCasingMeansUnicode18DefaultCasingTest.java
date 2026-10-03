@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -108,7 +108,7 @@ class AStringCasingMeansUnicode18DefaultCasingTest {
 
     private static Running module() {
         if (module == null) {
-            module = Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+            module = Running.linked(Compiled.module(Compiled.program(List.of("""
                     module wording
 
                     behavior quiet : (s: String) -> String

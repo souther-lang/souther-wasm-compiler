@@ -33,6 +33,13 @@ public final class LinkPlan {
             throw new IllegalArgumentException(
                     "this module exports no " + RuntimeAbi.RUNTIME_INIT + ", so a link could not place its arena");
         }
+        // What is emitted calls the runtime as the ABI of this build says to, and a runtime of
+        // another answers those calls as something else.
+        int abi = layout.abiVersion(runtime);
+        if (abi != RuntimeAbi.VERSION) {
+            throw new IllegalArgumentException("this runtime is ABI " + abi + ", and this compiler"
+                    + " emits against ABI " + RuntimeAbi.VERSION);
+        }
         return new LinkPlan(runtime, layout);
     }
 

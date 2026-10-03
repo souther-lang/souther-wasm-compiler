@@ -6,8 +6,8 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 import souther.runtime.Representations;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 
 /**
@@ -76,7 +76,7 @@ class AnAmountCrossesInTheOneFormItHasTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        return Running.linked(Compiled.module(Compiled.program(List.of("""
                 module pricing
 
                 data Money = { amount: Decimal }

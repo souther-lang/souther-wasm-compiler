@@ -29,11 +29,19 @@ const REASONS = {
   12: "a number the module gives no type under",
 };
 
-/** Where the module says what it reaches out for, and under which numbers. */
-const CROSSINGS = "souther:crossings";
-
-/** Where the module says what it offers a caller. */
+/** Where the module says what it offers a caller, and what it reaches out for under which numbers. */
 const SURFACE = "souther:surface";
+
+/**
+ * Which version of the surface this reads, and which ABI of the runtime it calls.
+ *
+ * A module of another is refused when it is loaded rather than read as this one: a surface of
+ * another version says some things differently or not at all, and read as this one it would be
+ * misread without a word — a version 2 surface carries no numbers for what it reaches out for, and
+ * a program loaded from one would fail at its first call out. Held to what the compiler writes by
+ * `TheGlueReadsWhatThisBuildWritesTest`.
+ */
+const READS = { surface: 3, abi: 7 };
 
 /**
  * An amount, as it was written.
@@ -59,10 +67,15 @@ export function amount(written) {
  */
 export async function load(source, supplied = {}) {
   const module = await WebAssembly.compile(await asBytes(source));
-  const program = new Program(supplied, crossingsIn(module), surfaceOf(module));
-  program.ready(await WebAssembly.instantiate(module, {
+  const program = new Program(supplied, surfaceOf(module));
+  const instance = await WebAssembly.instantiate(module, {
     souther: { host_call: program.reachOut },
-  }));
+  });
+  const abi = instance.exports.__souther_abi_version?.();
+  if (abi !== READS.abi) {
+    throw new Error(`this module's runtime is ABI ${abi}, and this glue calls ABI ${READS.abi}`);
+  }
+  program.ready(instance);
   return program;
 }
 
@@ -75,24 +88,22 @@ async function asBytes(source) {
 }
 
 /**
- * What the module says it reaches out for.
- *
- * A call out carries a number and not a name, so the module says what the numbers are, in a
- * section of itself. In itself and not beside itself: a caller holding the module holds this, and
- * there is no second file to be handed the wrong one of.
- */
-function crossingsIn(module) {
-  const held = WebAssembly.Module.customSections(module, CROSSINGS);
-  return held.length === 0 ? [] : JSON.parse(decoder.decode(held[0]));
-}
-
-/**
- * What the module offers a caller: its behaviors and what each takes and answers, and what a value
- * of each type they name looks like. Carried in the module for the reason the crossings are.
+ * What the module offers a caller: its behaviors and what each takes and answers, what a value of
+ * each type they name looks like, and the number a call out carries for each behavior it reaches
+ * out for. In the module and not beside it: a caller holding the module holds this, and there is no
+ * second file to be handed the wrong one of.
  */
 function surfaceOf(module) {
   const held = WebAssembly.Module.customSections(module, SURFACE);
-  return held.length === 0 ? null : JSON.parse(decoder.decode(held[0]));
+  if (held.length !== 1) {
+    throw new Error(`this module carries ${held.length} ${SURFACE} sections, and the glue reads one`);
+  }
+  const surface = JSON.parse(decoder.decode(held[0]));
+  if (surface.version !== READS.surface) {
+    throw new Error(`this module's surface is version ${surface.version}, and this glue reads `
+      + `version ${READS.surface}`);
+  }
+  return surface;
 }
 
 class Program {
@@ -102,20 +113,23 @@ class Program {
   #surface;
   #decodable;
 
-  constructor(supplied, crossings, surface) {
+  constructor(supplied, surface) {
     this.#supplied = supplied;
-    this.#crossings = crossings;
+    // A call out carries a number and not a name, and the surface says which behavior each is.
+    this.#crossings = surface.modules
+      .flatMap((module) => module.behaviors)
+      .filter((behavior) => behavior.reachOut !== undefined)
+      .map((behavior) => ({ ordinal: behavior.reachOut, behavior: behavior.export }));
     this.#surface = surface;
     // Resolved once, by name: the numbers are this module's, and only its own surface says which
     // type each one is.
-    this.#decodable = new Map((surface?.declarations ?? [])
+    this.#decodable = new Map(surface.declarations
       .filter((declared) => declared.decode !== undefined)
       .map((declared) => [`${declared.module}.${declared.name}`, declared.decode]));
     this.reachOut = this.reachOut.bind(this);
   }
 
-  /** What this program offers a caller, as the module says it, or null for a module that does
-   *  not say. */
+  /** What this program offers a caller, as the module says it. */
   get surface() {
     return this.#surface;
   }

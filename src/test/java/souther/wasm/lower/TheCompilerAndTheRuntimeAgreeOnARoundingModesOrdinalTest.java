@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.TypeSymbol;
+import souther.wasm.Compiled;
 
 /**
  * The ordinal a way of rounding is told apart by, on both sides of the boundary.
@@ -51,7 +52,7 @@ class TheCompilerAndTheRuntimeAgreeOnARoundingModesOrdinalTest {
 
     /** The language's own declared cases, in the order {@code __souther_case_of} answers them by. */
     private static List<String> caseNames() {
-        CheckedProgram program = CheckedProgram.of(List.of("""
+        CheckedProgram program = Compiled.program(List.of("""
                 module demo
 
                 behavior same : (d: Decimal) -> Decimal
