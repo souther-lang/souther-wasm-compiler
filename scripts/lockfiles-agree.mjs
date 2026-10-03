@@ -18,11 +18,22 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 
-/** What a lockfile copies out of a package.json, and so what has to say the same in both. */
+/**
+ * What a lockfile copies out of a package.json at least. Whatever else an entry holds is compared
+ * too, unless it is what npm writes of the install rather than of the package (`LOCKED_ONLY`): so a
+ * field npm comes to copy is held to package.json without anyone adding it here, and a field npm
+ * comes to write of its own is named as a disagreement rather than passed over.
+ */
 const COPIED = [
   "name", "version", "license", "bin", "engines",
   "dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
 ];
+
+/** What npm writes into an entry about the install, which no package.json says. */
+const LOCKED_ONLY = new Set([
+  "resolved", "integrity", "link", "dev", "optional", "devOptional", "peer", "inBundle",
+  "extraneous", "hasInstallScript", "hasShrinkwrap",
+]);
 
 const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
 const lockfiles = execFileSync("git", ["ls-files", "*package-lock.json"], { cwd: root, encoding: "utf-8" })
@@ -39,7 +50,8 @@ for (const lockfile of lockfiles) {
       continue;
     }
     const manifest = JSON.parse(readFileSync(join(root, at, path, "package.json"), "utf-8"));
-    for (const field of COPIED) {
+    const fields = new Set([...COPIED, ...Object.keys(entry).filter((each) => !LOCKED_ONLY.has(each))]);
+    for (const field of fields) {
       const said = normalised(field, manifest[field], manifest.name);
       const copied = normalised(field, entry[field], manifest.name);
       if (canonical(said) !== canonical(copied)) {
