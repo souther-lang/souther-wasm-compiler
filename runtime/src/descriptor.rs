@@ -13,7 +13,11 @@
 //! ```text
 //! +0  u32 kind
 //!
-//! kind INT / BOOL / STRING / UNIT   nothing more
+//! kind INT / BOOL / STRING   nothing more
+//!
+//! kind UNIT
+//! +4  u32 nought, for the fields it does not have
+//! +8  u32 where its own name is, u32 how long
 //!
 //! kind NEWTYPE
 //! +4  u32 one
@@ -42,7 +46,10 @@
 //! same way. What their member is called is nothing, because nothing names it.
 //!
 //! A unit carries its descriptor in its cell and a product carries its own, so which case of a sum
-//! a value is can be asked of the value: the case whose descriptor the cell holds.
+//! a value is can be asked of the value: the case whose descriptor the cell holds. Both name
+//! themselves after their fields, so what a case is called is asked of the value too, and not of
+//! a set of alternatives it is met as — which may be a union narrower than what it was made as,
+//! not listing it at all.
 
 /// An `Int`.
 pub const KIND_INT: u32 = 0;
@@ -124,7 +131,8 @@ pub unsafe fn member(descriptor: u32, index: u32) -> u32 {
     read(descriptor as usize + 8 + 12 * index as usize + 8)
 }
 
-/// Where a product's own name is, and how long it is, for an issue that names the type.
+/// Where a product's or a unit's own name is, and how long it is: for an issue that names the
+/// type, and for what a case is called whichever set of alternatives it is met as.
 pub unsafe fn own_name(descriptor: u32) -> (u32, u32) {
     let at = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
     (read(at), read(at + 4))

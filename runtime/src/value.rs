@@ -1266,26 +1266,24 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
         KIND_TIME => temporal::written_time(cell),
         KIND_DATE_TIME => temporal::written_both(cell),
         KIND_INSTANT => temporal::written_moment(cell),
-        KIND_ENUMERATION => {
-            let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-            for i in 0..descriptor::arity(descriptor) {
-                if descriptor::member(descriptor, i) == held {
-                    return descriptor::name(descriptor, i);
-                }
-            }
-            abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64)
-        }
+        // A case's name is its own and is read off it, not found by its place among the keys' set:
+        // a map made where its keys were a union of a few cases holds that union's descriptor, and
+        // a key put in where they are the whole sum is a case the union does not list.
+        KIND_ENUMERATION => descriptor::own_name(order::case_held(cell)),
         other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
     }
 }
 
 /// Where one key of a map stands relative to another, and whether they are one key.
 ///
-/// Two keys are one key where `==` says they are one value (ADR-0009), which is `order::ranked`
-/// answering nothing between them. A key a map can cross with is written as text, and a map is
-/// written in the order its keys' texts sort, so such a key stands in that order here as well —
-/// and two of them are one text exactly where they are one value. Any other key is a key of a map a
-/// body holds and no boundary writes, and stands where `ranked` puts it.
+/// Two keys are one key where `==` says they are one value (ADR-0009). A key a map can cross with
+/// is written as text, and a map is written in the order its keys' texts sort, so such a key stands
+/// in that order here as well — and two of them are one text exactly where they are one value. Any
+/// other key is a key of a map a body holds and no boundary writes, whose order the language does
+/// not state, and stands where `order::compare` puts it: the order a set's members stand in, which
+/// asks which case a value is of the value. Not `order::ranked`, the order a declaration states,
+/// which places a case by where the keys' set lists it — and the keys' set is the map's own, which
+/// may be a union narrower than a key put in later.
 ///
 /// A key written as text is compared from what it holds where that is the order of its text, so
 /// that finding an entry does not write a key out per comparison. A time of day is written as two
@@ -1321,7 +1319,7 @@ pub(crate) unsafe fn key_order(left: u32, right: u32, descriptor: u32) -> i32 {
             let (b, b_length) = key_text(right, descriptor);
             order::compare_runs(a, a_length, b, b_length)
         }
-        _ => order::ranked(left, right, descriptor),
+        _ => order::compare(left, right, descriptor),
     }
 }
 

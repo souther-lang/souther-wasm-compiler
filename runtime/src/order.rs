@@ -160,15 +160,17 @@ pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
             wide(HASH_START, temporal::moment_second(cell)),
             temporal::moment_nano(cell) as u32,
         ),
-        KIND_ENUMERATION => mixed(HASH_START, case_of(cell, descriptor)),
-        KIND_SUM => {
-            let case = case_of(cell, descriptor);
-            mixed(mixed(HASH_START, case), hash_of(cell, descriptor::member(descriptor, case)))
-        }
-        KIND_PRODUCT => {
-            let mut hash = HASH_START;
-            for i in 0..descriptor::arity(descriptor) {
-                hash = mixed(hash, hash_of(value::__souther_record_get(cell, i), descriptor::member(descriptor, i)));
+        // Which case it is and what it carries, asked of the value as `compare` asks it, so that
+        // one value has one hash whatever type the place holding it was written as: a unit, a
+        // shape, a set of units and a sum listing them hash a value alike, and a set not listing
+        // it still hashes it as itself.
+        KIND_UNIT | KIND_PRODUCT | KIND_ENUMERATION | KIND_SUM => {
+            let case = case_held(cell);
+            let mut hash = mixed(HASH_START, case);
+            if descriptor::kind(case) == KIND_PRODUCT {
+                for i in 0..descriptor::arity(case) {
+                    hash = mixed(hash, hash_of(value::__souther_record_get(cell, i), descriptor::member(case, i)));
+                }
             }
             hash
         }
@@ -201,8 +203,6 @@ pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
             }
             mixed(mixed(HASH_START, held), entries)
         }
-        // A type with one value: every value of it is that one.
-        KIND_UNIT => HASH_START,
         other => abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, other as u64, cell as u64),
     }
 }
@@ -256,13 +256,28 @@ pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
             descriptor::member(descriptor, 0),
         );
     }
+    if declares_a_value(descriptor::kind(descriptor)) {
+        return declared(left, right);
+    }
+    // A tuple has no written form, so no place among written values; it stands where its parts
+    // do, in order. Laid out as a tuple and not as a list, so it is not read as one.
+    if descriptor::kind(descriptor) == KIND_TUPLE {
+        for i in 0..descriptor::arity(descriptor) {
+            let each = compare(
+                value::__souther_tuple_get(left, i),
+                value::__souther_tuple_get(right, i),
+                descriptor::member(descriptor, i),
+            );
+            if each != 0 {
+                return each;
+            }
+        }
+        return 0;
+    }
     let a = rank(left, descriptor);
     let b = rank(right, descriptor);
     if a != b {
         return if a < b { -1 } else { 1 };
-    }
-    if descriptor::kind(descriptor) == KIND_ENUMERATION {
-        return tags(left, right, descriptor);
     }
     match a {
         RANK_NULL | RANK_FALSE | RANK_TRUE => 0,
@@ -397,29 +412,42 @@ unsafe fn elements(left: u32, right: u32, descriptor: u32) -> i32 {
 /// Of one type, so the keys are the same and in the same order, and only what is under them
 /// decides. A `Unit` writes no members at all and two of them are one document.
 unsafe fn members(left: u32, right: u32, descriptor: u32) -> i32 {
-    if descriptor::kind(descriptor) == KIND_UNIT {
-        return 0;
-    }
     if descriptor::kind(descriptor) == KIND_MAP {
         return entries(left, right, descriptor);
     }
-    if descriptor::kind(descriptor) == KIND_SUM {
-        // A sum's members are the tag and then the case's own, so which case each is decides
-        // first — by the tag, which is a string like any other.
-        let (a, b) = (case_of(left, descriptor), case_of(right, descriptor));
-        if a != b {
-            let (first, first_length) = descriptor::name(descriptor, a);
-            let (second, second_length) = descriptor::name(descriptor, b);
-            return compare_runs(first, first_length, second, second_length);
-        }
-        return members(left, right, descriptor::member(descriptor, a));
+    abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, left as u64, right as u64)
+}
+
+/// Whether a kind describes a value a model declared — a unit, a shape, or a set of alternatives
+/// of them — which carries in its cell the descriptor of what it was made as.
+fn declares_a_value(kind: u32) -> bool {
+    matches!(kind, KIND_UNIT | KIND_PRODUCT | KIND_ENUMERATION | KIND_SUM)
+}
+
+/// Two values a model declared, where they are written, each read as what it was made as.
+///
+/// Not as the descriptor that reached here, which is whatever type the place holding them was
+/// written as: a set made where its members were one case, or a union of a few, holds that, and
+/// keeps it when it is later held as the whole sum, so a value put in or looked for there may be a
+/// case it does not describe — read by it, a unit would be taken for any other unit and a shape's
+/// fields read off a cell that has none. The cell says which case it is, and that case's own
+/// descriptor reads it. Which case decides first, by the name it is written as — a set of units is
+/// written as their names, and a sum as an object whose tag comes first — and then what the case
+/// carries, field by field.
+unsafe fn declared(left: u32, right: u32) -> i32 {
+    let by_case = cases(left, right);
+    if by_case != 0 {
+        return by_case;
     }
-    for i in 0..descriptor::arity(descriptor) {
-        let member = descriptor::member(descriptor, i);
+    let own = case_held(left);
+    if descriptor::kind(own) != KIND_PRODUCT {
+        return 0;
+    }
+    for i in 0..descriptor::arity(own) {
         let each = compare(
             value::__souther_record_get(left, i),
             value::__souther_record_get(right, i),
-            member,
+            descriptor::member(own, i),
         );
         if each != 0 {
             return each;
@@ -465,19 +493,49 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
     }
 }
 
-/// Two alternatives that carry nothing, by the names they are written as.
-unsafe fn tags(left: u32, right: u32, descriptor: u32) -> i32 {
-    let (a, a_length) = descriptor::name(descriptor, case_of(left, descriptor));
-    let (b, b_length) = descriptor::name(descriptor, case_of(right, descriptor));
-    compare_runs(a, a_length, b, b_length)
+/// Which case a value is, read off the value: the descriptor of the case its cell holds.
+///
+/// Asked of the value and not of the set of alternatives it is met as, because that set is
+/// whatever descriptor reached this — a collection's own, written where it was made, may be a
+/// union narrower than the sum a value later put in it was made as, and does not list that value
+/// at all. One case is one descriptor wherever it is listed, so this is the same answer for every
+/// set that lists it.
+pub unsafe fn case_held(cell: u32) -> u32 {
+    core::ptr::read_unaligned((cell as usize + 4) as *const u32)
 }
 
+/// Two cases where they are written: by the names they are written as, and two cases that share a
+/// name — one from each of two sums — by which they are, so that only one case is one value.
+/// Neither is asked of a set of alternatives, so a case one does not list stands in its place too.
+unsafe fn cases(left: u32, right: u32) -> i32 {
+    let (a, b) = (case_held(left), case_held(right));
+    if a == b {
+        return 0;
+    }
+    let (first, first_length) = descriptor::own_name(a);
+    let (second, second_length) = descriptor::own_name(b);
+    let by_name = compare_runs(first, first_length, second, second_length);
+    if by_name != 0 {
+        by_name
+    } else if a < b {
+        -1
+    } else {
+        1
+    }
+}
+
+/// Where a case stands among a set's alternatives, for the order that set declares.
+///
+/// Only the language's order asks this, and it asks it of the set the checker settled to order the
+/// value by, which lists every case such a value can be. A case it does not list is the compiler
+/// handing this a set the value is not one of, and it ends the call: taken for the first case, it
+/// would be equal to that one, which is a wrong answer and not a failure.
 unsafe fn case_of(cell: u32, descriptor: u32) -> u32 {
-    let own = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+    let own = case_held(cell);
     for i in 0..descriptor::arity(descriptor) {
         if descriptor::member(descriptor, i) == own {
             return i;
         }
     }
-    0
+    abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, own as u64, cell as u64)
 }

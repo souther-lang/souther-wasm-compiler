@@ -92,6 +92,9 @@ class TwoKeysThatAreOneValueAreOneKeyTest {
             let tuples (xs) = Map.size(List.fold(
                 (acc, x) -> Map.insert((x, x), 1, acc), Map.empty, xs))
 
+            behavior pairs : (xs: List<Decimal>) -> Int
+            let pairs (xs) = Set.size(Set.fromList(List.map(x -> (x, x), xs)))
+
             behavior units : (xs: List<Int>) -> Int
             let units (xs) = Map.size(List.fold(
                 (acc, x) -> Map.insert(Nothing, x, acc), Map.empty, xs))
@@ -126,6 +129,9 @@ class TwoKeysThatAreOneValueAreOneKeyTest {
         assertThat(sizeOf(module, "maps", "[{\"a\":1.0,\"b\":2},{\"b\":2.0,\"a\":1.00},{\"a\":2}]"))
                 .isEqualTo(2);
         assertThat(sizeOf(module, "tuples", "[1.0,1.00,2]")).isEqualTo(2);
+        // A set's members, which stand in the order a written value does, and a tuple has no
+        // written form: it is laid out as a tuple and not as a list.
+        assertThat(sizeOf(module, "pairs", "[1.0,1.00,2]")).isEqualTo(2);
         assertThat(sizeOf(module, "units", "[1,2,3]")).isEqualTo(1);
     }
 

@@ -288,7 +288,7 @@ final class Descriptors {
             case TypeSymbol.AtModule declared -> ofDeclared(declared);
             case TypeSymbol.Primitive scalar -> of(scalar.primitive());
             case TypeSymbol.LanguageCase given ->
-                    languageCases.computeIfAbsent(given, each -> scalar(KIND_UNIT));
+                    languageCases.computeIfAbsent(given, this::unit);
         };
     }
 
@@ -301,7 +301,7 @@ final class Descriptors {
         CheckedData data = declared(name);
         return switch (data) {
             case CheckedData.Unit ignored -> {
-                int descriptor = scalar(KIND_UNIT);
+                int descriptor = unit(name);
                 byName.put(name, descriptor);
                 yield descriptor;
             }
@@ -383,6 +383,26 @@ final class Descriptors {
     private int scalar(int kind) {
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         new WasmWriter(table).writeLittleEndian4(kind);
+        return fragment.place(table.toByteArray());
+    }
+
+    /**
+     * A descriptor of a value that carries nothing, with its own name where a product's is: after
+     * its fields, of which it has none.
+     *
+     * <p>Its name, because a value of it is a case of every set of alternatives that lists it, and
+     * which case it is has to be readable off the value whichever set it is met as. A set the value
+     * was not made as — a union narrower than the sum it is later held as — does not list it, and
+     * a name found by its place in that set's descriptor would be another case's.
+     */
+    private int unit(TypeSymbol name) {
+        byte[] own = name.name().getBytes(StandardCharsets.UTF_8);
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        new WasmWriter(table)
+                .writeLittleEndian4(KIND_UNIT)
+                .writeLittleEndian4(0)
+                .writeLittleEndian4(fragment.intern(own))
+                .writeLittleEndian4(own.length);
         return fragment.place(table.toByteArray());
     }
 
