@@ -28,7 +28,7 @@ import souther.compiler.abort.AbortKind;
  */
 class TheGlueAndTheAbiAgreeOnWhatACallEndedWithTest {
 
-    private static final Path GLUE = Path.of("examples/react-cart/src/souther.js");
+    private static final Path GLUE = Path.of("packages/wasm/src/index.ts");
 
     @Test
     void everyReasonThisNamesIsTheNumberTheGlueReadsItAs() {

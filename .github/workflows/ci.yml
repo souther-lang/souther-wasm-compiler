@@ -122,7 +122,7 @@ jobs:
       # come back. So the glue is run against a module, by the same file the page loads.
       - name: Call a compiled program through the glue the page uses
         working-directory: examples/react-cart
-        run: node check.mjs
+        run: node check.ts
 
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no

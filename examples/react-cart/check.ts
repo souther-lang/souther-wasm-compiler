@@ -1,4 +1,4 @@
-// The glue, run against a compiled model.
+// The glue and the binding generated from the cart's module, run against the module.
 //
 // Building the page says it compiles. This says the calling works, which is a different claim and
 // the only one nothing else in the repository makes: everything else reaches this boundary from
@@ -10,17 +10,25 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { load, amount } from "./src/souther.js";
+import { amount, load as loadModule, messageOf } from "@souther/wasm";
+import { load, type Cart } from "./src/cart.ts";
 
-const program = await load(readFileSync("public/cart.wasm"));
+const bound = await load(readFileSync("public/cart.wasm"));
+const program = bound.program;
 let wrong = 0;
 
-function same(what, held, wanted) {
+function same(what: string, held: unknown, wanted: unknown): void {
   const written = JSON.stringify(held);
   if (written !== JSON.stringify(wanted)) {
     console.error(`${what}\n  answered ${written}\n  and not  ${JSON.stringify(wanted)}`);
     wrong += 1;
   }
+}
+
+/** What a basket's subtotal comes to, through the binding: a number, or the digits where one cannot hold it. */
+function subtotal(cart: Cart): unknown {
+  const answer = bound.cart.price(cart);
+  return answer.value?.type === "Priced" ? answer.value.subtotal : answer;
 }
 
 same("what it offers", program.behaviors, ["cart.price"]);
@@ -30,23 +38,23 @@ same("what the module says it offers",
   [["cart.price"]]);
 
 same("what a product code is written as",
-  (({ decode, ...rest }) => rest)(program.surface.declarations.find((it) => it.name === "Sku")),
+  (({ decode, ...rest }) => rest)(program.surface.declarations.find((it) => it.name === "Sku")!),
   {
     module: "cart", name: "Sku", by: "module", published: true, is: "newtype",
     wraps: { is: "scalar", scalar: "string" }, rules: [{ name: "written" }],
   });
 
-same("a product code read on its own", program.decode("cart.Sku", "ABC-1234"),
+same("a product code read on its own", bound.decode.Sku("ABC-1234"),
   { value: "ABC-1234" });
 
 same("a product code that is not one, read on its own",
-  program.decode("cart.Sku", "nope").issues.map((it) => [it.path, it.code]),
+  bound.decode.Sku("nope").issues?.map((it) => [it.path, it.code]),
   [["", "invalid_format"]]);
 
 same("a basket with something in it",
-  program.call("cart.price", [{
+  bound.cart.price({
     lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: 1500 }], member: "Standard",
-  }]),
+  }),
   { value: { type: "Priced", subtotal: 3000, discount: 0, shipping: 500, total: 3500 } });
 
 same("a member's tenth, and what is left shipping free",
@@ -66,6 +74,19 @@ same("a product code that is not one",
   { issues: [{ path: "/0/lines/0/sku", code: "invalid_format", messageKey: "invalid_format",
     meta: { pattern: "[A-Z]{3}-[0-9]{4}" } }] });
 
+// What a person reads of it is written from Raoh's catalog, in their language, and nowhere here.
+{
+  const answer = bound.cart.price({
+    lines: [{ sku: "ABC-1234", quantity: 0, unitPrice: 1 }], member: "Standard",
+  });
+  same("what is read of a line of none, in English",
+    answer.issues?.map((issue) => messageOf(issue, "en")),
+    ["invariant violated on cart.Line: atLeastOne"]);
+  const code = bound.decode.Sku("nope");
+  same("what is read of a product code that is not one, in Japanese",
+    code.issues?.map((issue) => messageOf(issue, "ja")), ["形式が不正です"]);
+}
+
 same("a quantity that is not a number",
   program.call("cart.price", [{
     lines: [{ sku: "ABC-1234", quantity: "two", unitPrice: 1 }], member: "Standard",
@@ -76,9 +97,9 @@ same("a quantity that is not a number",
 // Everything a call made goes back at the reset, so the tenth call is the first.
 for (let i = 1; i <= 10; i++) {
   same(`call ${i}`,
-    program.call("cart.price", [{
+    subtotal({
       lines: [{ sku: "ABC-1234", quantity: i, unitPrice: 1000 }], member: "Standard",
-    }]).value.subtotal,
+    }),
     i * 1000);
 }
 
@@ -95,34 +116,34 @@ same("a call given nothing",
 // survived being read.
 const wide = "12345678901234567890.12345";
 same("an amount wider than a number holds",
-  program.call("cart.price", [{
+  subtotal({
     lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount(wide) }], member: "Standard",
-  }]).value.subtotal,
+  }),
   wide);
 same("an amount a number does hold",
-  program.call("cart.price", [{
+  subtotal({
     lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: amount("1500.00") }], member: "Standard",
-  }]).value.subtotal,
+  }),
   3000);
 // Written one way and written back another, and the same amount either way: what the two are
 // compared by is how much each is and not which digits each is written with.
 same("an amount written with a point where the answer has none",
-  program.call("cart.price", [{
+  subtotal({
     lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1500.000") }], member: "Standard",
-  }]).value.subtotal,
+  }),
   1500);
 // An amount a number holds exactly and writes another way round: the model writes the digits out
 // and a JavaScript number writes a power of ten, so the two texts differ and the two amounts do
 // not. Comparing the digits without the point would call these two amounts.
 same("an amount a number writes as a power of ten",
-  program.call("cart.price", [{
+  subtotal({
     lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1e21") }], member: "Standard",
-  }]).value.subtotal,
+  }),
   1e21);
 same("an amount written as a power of ten",
-  program.call("cart.price", [{
+  subtotal({
     lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1.5e3") }], member: "Standard",
-  }]).value.subtotal,
+  }),
   1500);
 
 // Everything a call made goes back when it is over. What is left standing after many calls is what
@@ -150,11 +171,11 @@ behavior spread : (pair: String) -> Int
 
 let spread (pair, today, yesterday) = today(pair) - yesterday(pair)
 `);
-  const jar = readdirSync("../../target").find((name) => name.endsWith("-cli.jar"));
+  const jar = readdirSync("../../target").find((name) => name.endsWith("-cli.jar"))!;
   execFileSync("java", ["-jar", join("../../target", jar), at, "-o", join(at, "rates.wasm")]);
-  const reaching = await load(readFileSync(join(at, "rates.wasm")), {
-    "rates.today": (pair) => (pair === "USDJPY" ? 150 : 0),
-    "rates.yesterday": (pair) => (pair === "USDJPY" ? 147 : 0),
+  const reaching = await loadModule(readFileSync(join(at, "rates.wasm")), {
+    "rates.today": (pair: string) => (pair === "USDJPY" ? 150 : 0),
+    "rates.yesterday": (pair: string) => (pair === "USDJPY" ? 147 : 0),
   });
   same("what it reaches out for", reaching.reachesOutFor, ["rates.today", "rates.yesterday"]);
   same("what it answers from what was supplied", reaching.call("rates.spread", ["USDJPY"]),
@@ -172,11 +193,11 @@ let spread (pair, today, yesterday) = today(pair) - yesterday(pair)
     true);
   const older = Buffer.from(bytes);
   older.write('{"version":2,', at, "latin1");
-  let refused = null;
+  let refused: string | null = null;
   try {
-    await load(older);
+    await loadModule(older);
   } catch (said) {
-    refused = said.message;
+    refused = said instanceof Error ? said.message : String(said);
   }
   same("what loading a version 2 surface says", refused,
     "this module's surface is version 2, and this glue reads version 3");
