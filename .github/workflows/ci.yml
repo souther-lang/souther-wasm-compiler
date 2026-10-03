@@ -40,6 +40,8 @@ jobs:
           cat > /tmp/asked/shipping.sou <<'SOURCE'
           module shipping
 
+          data Parcel = { weight: Int }
+
           behavior fee : (total: Int) -> Int
 
           let fee (total) = if total >= 5000 then 0 else 500
@@ -87,6 +89,31 @@ jobs:
           # What it says it needs is what it says it needs whichever end says it.
           grep -q 'import souther:reached/rates' /tmp/component/out.wit
           grep -q 'import souther:reached/rates' /tmp/component/read-back.wit
+          grep -q 'export souther:decode/shipping' /tmp/asked/out.wit
+          grep -q 'export souther:decode/shipping' /tmp/asked/read-back.wit
+
+      # Validating says each index names something of the right type, and not that a function
+      # lifts the right one: every function here crosses as a string and answers one, so a lift
+      # naming another behavior's core function, or another type's reading, is still valid. A
+      # component runtime calling each one is what tells them apart.
+      - name: Install wasmtime
+        run: |
+          version=47.0.4
+          curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v$version/wasmtime-v$version-x86_64-linux.tar.xz" \
+            | tar xJ -C /tmp
+          echo "/tmp/wasmtime-v$version-x86_64-linux" >> "$GITHUB_PATH"
+      - name: Call each function a component this writes offers
+        run: |
+          answers() {
+            got=$(wasmtime run --invoke "$1" /tmp/asked/out.wasm)
+            if [ "$got" != "$2" ]; then
+              echo "$1 answered $got, where $2 was expected"
+              exit 1
+            fi
+          }
+          answers 'fee("[4999]")' '"{\"value\":500}"'
+          answers 'parcel("{\"weight\":2}")' '"{\"value\":{\"weight\":2}}"'
+          answers 'parcel("{}")' '"{\"issues\":[{\"path\":\"/weight\",\"code\":\"required\",\"messageKey\":\"required\",\"meta\":{}}]}"'
 
       # The example is a program compiled by this and then called from a browser. Nothing else
       # here calls a compiled program from outside the JVM, so it is the only place that would

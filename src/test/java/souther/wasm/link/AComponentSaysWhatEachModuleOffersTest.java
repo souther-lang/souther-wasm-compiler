@@ -11,6 +11,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.Compiled;
+import souther.wasm.lower.WasmCompiler;
 
 /**
  * The component a program is wrapped as, read back out of what was written.
@@ -103,6 +104,63 @@ class AComponentSaysWhatEachModuleOffersTest {
         // answered outside is still asked for, since the program cannot run without it.
         assertThat(offered(component).get("souther:program/rates")).containsExactly("spread");
         assertThat(askedFor(component)).containsExactly("souther:reached/rates");
+    }
+
+    @Test
+    void offersEachTypeItsModulePublishesToBeReadOnItsOwn() {
+        CheckedProgram program = Compiled.program(List.of("""
+                module cart exposing ( Sku, LineItem, line_item )
+
+                data Sku = String
+
+                data LineItem = { sku: Sku, quantity: Int }
+
+                data Note = String
+
+                behavior line_item : (s: Sku) -> LineItem
+
+                let line_item (s) = LineItem { sku = s, quantity = 1 }
+                """, """
+                module shared.money
+
+                data Amount = Decimal
+                """));
+        byte[] component = Compiled.component(program);
+
+        // A type and a behavior of one module may come to one name, so the types are read under an
+        // interface of their own; a kept type is no caller's to make a value of; and a module that
+        // publishes types and no behavior still offers them.
+        assertThat(offered(component)).containsOnlyKeys("souther:program/cart",
+                "souther:program/shared-money", "souther:decode/cart",
+                "souther:decode/shared-money");
+        assertThat(offered(component).get("souther:program/cart")).containsExactly("line-item");
+        assertThat(offered(component).get("souther:decode/cart"))
+                .containsExactly("sku", "line-item");
+        assertThat(offered(component).get("souther:decode/shared-money")).containsExactly("amount");
+
+        // What is written down for a reader of interfaces is what the component offers.
+        assertThat(WitText.of(WasmCompiler.offering(program)))
+                .contains("  export souther:decode/cart;\n", "  export souther:decode/shared-money;\n")
+                .contains("package souther:decode {\n  interface cart {\n"
+                        + "    sku: func(value: string) -> string;\n"
+                        + "    line-item: func(value: string) -> string;\n  }\n");
+    }
+
+    @Test
+    void refusesTwoTypesOneInterfaceWouldCallByOneName() {
+        CheckedProgram program = Compiled.program(List.of("""
+                module demo
+
+                data SkuCode = String
+
+                data Sku_code = String
+                """));
+
+        assertThatThrownBy(() -> Compiled.component(program))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SkuCode")
+                .hasMessageContaining("Sku_code")
+                .hasMessageContaining("sku-code");
     }
 
     @Test
