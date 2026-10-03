@@ -33,6 +33,46 @@ class AWalkOverAListRunsItsStepTest {
     }
 
     @Test
+    void walksAListLongerThanTheStackIsDeep() {
+        // List.fold is written as a recursion over the list, which would take a frame per element
+        // if each step were a call. A call that answers for its caller goes back to the top of the
+        // body instead, so the walk runs in one frame however long the list is.
+        Running module = compiled("""
+                module counting
+
+                behavior total : (xs: List<Int>) -> Int
+
+                let total (xs) = List.fold((acc, x) -> acc + x, 0, xs)
+                """);
+        int many = 20_000;
+        String xs = java.util.stream.IntStream.range(0, many)
+                .mapToObj(Integer::toString)
+                .collect(java.util.stream.Collectors.joining(",", "[[", "]]"));
+
+        assertThat(answerOf(module, "counting.total", xs))
+                .isEqualTo("{\"value\":" + ((long) many * (many - 1) / 2) + "}");
+    }
+
+    @Test
+    void goesBackToTheTopOfARecursionAProgramWrote() {
+        Running module = compiled("""
+                module counting
+
+                behavior down : (n: Int, acc: Int) -> Int
+
+                partial let countDown (n: Int, acc: Int): Int =
+                    if n == 0 then acc else countDown(n - 1, acc + n)
+
+                let down (n, acc) = countDown(n, acc)
+                """);
+
+        assertThat(answerOf(module, "counting.down", "[20000,0]"))
+                .isEqualTo("{\"value\":200010000}");
+        // The arguments are all worked out before any is put back: the second reads the first.
+        assertThat(answerOf(module, "counting.down", "[3,0]")).isEqualTo("{\"value\":6}");
+    }
+
+    @Test
     void keepsWhatTheStepHeldFor() {
         Running module = compiled("""
                 module counting

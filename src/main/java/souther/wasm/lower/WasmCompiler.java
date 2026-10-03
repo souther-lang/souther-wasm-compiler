@@ -510,18 +510,49 @@ public final class WasmCompiler {
             this.reached = reached;
         }
 
-        /** A declaration's own function: its parameters as cells, its answer as one. */
+        /**
+         * A declaration's own function: its parameters as cells, its answer as one.
+         *
+         * <p>A call of the declaration to itself where its answer is the declaration's answer is not
+         * a call: the arguments are put where the parameters are and the body runs again from the
+         * top. So a walk written as a recursion, which is how {@code List.fold} is written, runs in
+         * one frame however long the list is, where a call per element would run out of stack a few
+         * thousand elements in.
+         */
         byte[] overValues(Written written) {
-            out = new BodyWriter(written.parameters().size(), 0);
+            int arity = written.parameters().size();
+            out = new BodyWriter(arity, 0);
             locals = new HashMap<>();
             writing = written.declares();
             requirementsInScope = written.requirements();
-            for (int i = 0; i < written.parameters().size(); i++) {
+            for (int i = 0; i < arity; i++) {
                 locals.put(written.parameters().get(i).binding(), i);
             }
+            int answer = scratch();
+            out.block().loop();
+            again = new Again(written.declares(), arity, out.depth());
+            tail = true;
             value(out, written.body());
+            again = null;
+            out.localSet(answer).leave(1).end().end().localGet(answer);
             return out.body();
         }
+
+        /**
+         * Where a call of the declaration being written to itself goes back to instead: the loop
+         * opened at that depth around its body, whose parameters are its first locals.
+         */
+        private record Again(Object declaration, int arity, int depth) {}
+
+        /** The declaration being written and its loop, or null where nothing goes back. */
+        private Again again;
+
+        /**
+         * Whether the expression being written is the answer of the function it is in: it is the
+         * body, or it is in the body only as a way of choosing or binding on the way to the answer.
+         * Read as an expression is entered and given back only to the parts that answer for it.
+         */
+        private boolean tail;
 
         /**
          * A behavior written as stages, each applied to what the one before answered.
@@ -722,6 +753,8 @@ public final class WasmCompiler {
 
         /** Leaves the value of an expression on the stack, as the cell it is. */
         private void value(BodyWriter out, Core expression) {
+            boolean answers = tail;
+            tail = false;
             switch (expression) {
                 case Core.Int number -> out.constant(number.value()).call(calls.of(RuntimeAbi.INT));
                 case Core.Bool bool -> out.constant(bool.value() ? 1 : 0).call(calls.of(RuntimeAbi.BOOL));
@@ -838,8 +871,10 @@ public final class WasmCompiler {
                     int answer = scratch();
                     value(out, chosen.cond());
                     out.call(calls.of(RuntimeAbi.BOOL_VALUE)).ifNotZero();
+                    tail = answers;
                     value(out, chosen.then());
                     out.localSet(answer).otherwise();
+                    tail = answers;
                     value(out, chosen.els());
                     out.localSet(answer).end().localGet(answer);
                 }
@@ -848,6 +883,7 @@ public final class WasmCompiler {
                     value(out, bound.value());
                     out.localSet(local);
                     locals.put(bound.binder().binding(), local);
+                    tail = answers;
                     value(out, bound.body());
                 }
                 case Core.Tuple together -> {
@@ -866,13 +902,22 @@ public final class WasmCompiler {
                     value(out, place.tuple());
                     out.constant(place.index()).call(calls.of(RuntimeAbi.TUPLE_GET));
                 }
-                case Core.Match chosen -> match(out, chosen);
+                case Core.Match chosen -> match(out, chosen, answers);
                 case Core.Block block -> closure(out, block);
                 case Core.Apply applied -> apply(out, applied);
-                case Core.Call call -> call(out, call);
+                case Core.Call call -> {
+                    if (answers && goesBack(call)) {
+                        goBack(out, call);
+                    } else {
+                        call(out, call);
+                    }
+                }
                 // Every value here is a cell that says what it is, so a value standing as a wider
                 // type is the same cell, and nothing is written for the widening.
-                case Core.Widen widened -> value(out, widened.value());
+                case Core.Widen widened -> {
+                    tail = answers;
+                    value(out, widened.value());
+                }
                 case Core.Read read -> {
                     Integer local = locals.get(read.binding());
                     if (local == null) {
@@ -928,6 +973,10 @@ public final class WasmCompiler {
             BodyWriter around = out;
             Map<BindingId, Integer> outer = locals;
             Object was = writing;
+            // The block is a function of its own, so a call in it is never the declaration around
+            // it going back to its top.
+            Again goingBack = again;
+            again = null;
 
             out = new BodyWriter(1 + block.params().size(), 0);
             locals = new HashMap<>();
@@ -942,6 +991,7 @@ public final class WasmCompiler {
             value(out, block.body());
             byte[] body = out.body();
 
+            again = goingBack;
             out = around;
             locals = outer;
             writing = was;
@@ -994,6 +1044,30 @@ public final class WasmCompiler {
                 value(out, argument);
             }
             out.call(index);
+        }
+
+        /** Whether a call is the declaration being written calling itself. */
+        private boolean goesBack(Core.Call call) {
+            return again != null
+                    && call.fn() instanceof Core.Reached.OfDeclaration declaration
+                    && declaration.reaches().declaration().equals(again.declaration())
+                    && call.args().size() == again.arity();
+        }
+
+        /**
+         * A call of the declaration to itself, as its answer: every argument is worked out before
+         * any parameter is put back, since an argument may read the parameter it replaces, and then
+         * the body runs again. Nothing follows that is reached, so what the arm it is in goes on to
+         * write is not run.
+         */
+        private void goBack(BodyWriter out, Core.Call call) {
+            for (Core argument : call.args()) {
+                value(out, argument);
+            }
+            for (int i = again.arity() - 1; i >= 0; i--) {
+                out.localSet(i);
+            }
+            out.leave(out.depth() - again.depth());
         }
 
         /**
@@ -1290,7 +1364,7 @@ public final class WasmCompiler {
          * <p>Where an arm selects on an option, what it tests is whether the option holds
          * something, and what it binds is what the option holds — not the option.
          */
-        private void match(BodyWriter out, Core.Match chosen) {
+        private void match(BodyWriter out, Core.Match chosen, boolean answers) {
             int subject = scratch();
             int answer = scratch();
             value(out, chosen.scrutinee());
@@ -1301,6 +1375,7 @@ public final class WasmCompiler {
                 condition(out, arm, subject);
                 out.ifNotZero();
                 bind(out, arm, subject);
+                tail = answers;
                 value(out, arm.body());
                 out.localSet(answer).otherwise();
                 opened++;

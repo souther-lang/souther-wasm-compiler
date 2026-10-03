@@ -51,6 +51,26 @@ class TheRuntimeReadsJsonAsTheDocumentWroteItTest {
     }
 
     @Test
+    void takesRoomForAStringByWhatTheStringIsAndNotByTheRestOfTheDocument() {
+        Running runtime = Running.bareRuntime();
+        StringBuilder written = new StringBuilder("[");
+        for (int i = 0; i < 4000; i++) {
+            written.append(i == 0 ? "" : ",").append("\"item-").append(i).append('"');
+        }
+        String document = written.append(']').toString();
+        int length = document.getBytes(StandardCharsets.UTF_8).length;
+
+        int before = runtime.call(RuntimeAbi.ALLOC_MARK);
+        int array = parsed(runtime, document);
+        int taken = runtime.call(RuntimeAbi.ALLOC_MARK) - before;
+
+        assertThat(runtime.call(RuntimeAbi.JSON_LENGTH, array)).isEqualTo(4000);
+        // The document, and a cell and the bytes of each string: a few times its length, where
+        // room for the rest of the document per string was several thousand times it.
+        assertThat(taken).isLessThan(16 * length);
+    }
+
+    @Test
     void keepsAnArraysElementsInTheOrderTheyWereWritten() {
         Running runtime = Running.bareRuntime();
         int array = parsed(runtime, "[1, \"two\", true]");

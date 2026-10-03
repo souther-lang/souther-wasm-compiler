@@ -53,6 +53,8 @@ final class BodyWriter {
     private final int parameters;
     private final int wideLocals;
     private int narrowLocals;
+    /** How many conditions, blocks and loops are open where the next instruction goes. */
+    private int depth;
 
     /**
      * @param parameters how many the function's type declares, which take the first indices
@@ -138,12 +140,14 @@ final class BodyWriter {
     /** Runs what follows only when the number on the stack is zero. Closed by {@link #end}. */
     BodyWriter ifZero() {
         writer.write((byte) OPCODE_I32_EQZ).write((byte) OPCODE_IF).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
     }
 
     /** Runs what follows only when the number on the stack is not zero. Closed by {@link #end}. */
     BodyWriter ifNotZero() {
         writer.write((byte) OPCODE_IF).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
     }
 
@@ -166,13 +170,23 @@ final class BodyWriter {
     /** Opens a place to leave from, closed by {@link #end}. */
     BodyWriter block() {
         writer.write((byte) OPCODE_BLOCK).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
     }
 
     /** Opens a place to go back to, closed by {@link #end}. */
     BodyWriter loop() {
         writer.write((byte) OPCODE_LOOP).write((byte) BLOCK_TYPE_EMPTY);
+        depth++;
         return this;
+    }
+
+    /**
+     * How many conditions, blocks and loops are open here, so that a branch to one opened earlier
+     * can say how many out it is: the difference between this and what this answered there.
+     */
+    int depth() {
+        return depth;
     }
 
     /** Goes to the edge of the block that many out, whatever is on the stack. */
@@ -208,6 +222,7 @@ final class BodyWriter {
     /** Closes a condition. */
     BodyWriter end() {
         writer.write((byte) OPCODE_END);
+        depth--;
         return this;
     }
 
