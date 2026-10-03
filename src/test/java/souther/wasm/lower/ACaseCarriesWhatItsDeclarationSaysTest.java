@@ -62,6 +62,30 @@ class ACaseCarriesWhatItsDeclarationSaysTest {
             behavior answered : (n: Int) -> Int | Missing
 
             let answered (n) = if n > 0 then n else Missing
+
+            behavior primitives : (n: Int) -> List<Int>
+
+            let primitives (n) = {
+                let x: Int | Missing = if n > 0 then n else Missing
+                let y: Int | Missing = if n > 5 then n else Missing
+                let gone: Int | Missing = Missing
+                let held = Set.fromList([x, y, x, gone])
+                [Set.size(held),
+                 if Set.contains(gone, held) then 1 else 0,
+                 Map.size(List.fold((m, k) -> Map.insert(k, 1, m), Map.empty, [x, y, x])),
+                 if List.contains(y, [x]) then 1 else 0,
+                 if x == y then 1 else 0]
+            }
+
+            behavior amounts : (n: Int) -> List<Int>
+
+            let amounts (n) = {
+                let a: Decimal | Missing = 1.0m
+                let b: Decimal | Missing = 1.00m
+                let p: Rational | Missing = 1 / 2
+                let q: Rational | Missing = n / 4
+                [Set.size(Set.fromList([a, b])), Set.size(Set.fromList([p, q, p]))]
+            }
             """;
 
     @Test
@@ -96,6 +120,26 @@ class ACaseCarriesWhatItsDeclarationSaysTest {
                 .isEqualTo("{\"value\":{\"type\":\"Int\",\"value\":3}}");
         assertThat(answerOf(module, "carried.answered", "[0]"))
                 .isEqualTo("{\"value\":{\"type\":\"Missing\"}}");
+    }
+
+    /**
+     * A primitive held among cases is told apart from the cases and from another of its primitive
+     * as what it is, in a set, a map grown one key at a time, a list and `==` — the way it is
+     * written, and with no descriptor in its cell to ask. An amount by how much it is, a quotient
+     * by its value.
+     */
+    @Test
+    void aPrimitiveHeldAmongCasesIsComparedAndHashedAsThatPrimitive() {
+        Running module = compiled();
+
+        // 1 and nothing: x is 1, y is Missing.
+        assertThat(answerOf(module, "carried.primitives", "[1]"))
+                .isEqualTo("{\"value\":[2,1,2,0,0]}");
+        // 7 and 7: both are 7.
+        assertThat(answerOf(module, "carried.primitives", "[7]"))
+                .isEqualTo("{\"value\":[2,1,1,1,1]}");
+        assertThat(answerOf(module, "carried.amounts", "[2]")).isEqualTo("{\"value\":[1,1]}");
+        assertThat(answerOf(module, "carried.amounts", "[3]")).isEqualTo("{\"value\":[1,2]}");
     }
 
     private static Running compiled() {

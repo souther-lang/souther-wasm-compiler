@@ -51,6 +51,9 @@ pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
         );
     }
     match descriptor::kind(descriptor) {
+        // By exact value, which is the order the language states for them; `compare` places them
+        // by their parts instead, which is no order the language states.
+        KIND_RATIONAL => descriptor::ordered_exactly(descriptor, left, right),
         KIND_SUM | KIND_ENUMERATION => {
             let a = case_of(left, descriptor);
             let b = case_of(right, descriptor);
@@ -160,12 +163,12 @@ pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
             wide(HASH_START, temporal::moment_second(cell)),
             temporal::moment_nano(cell) as u32,
         ),
-        // Which case it is and what it carries, asked of the value as `compare` asks it, so that
+        // Which type it is and what it carries, asked of the value as `compare` asks it, so that
         // one value has one hash whatever type the place holding it was written as: a unit, a
-        // shape, a set of units and a sum listing them hash a value alike, and a set not listing
-        // it still hashes it as itself.
+        // shape, a set of units and a sum listing them hash a value alike, a set not listing it
+        // still hashes it as itself, and a primitive among cases hashes as that primitive.
         KIND_UNIT | KIND_PRODUCT | KIND_ENUMERATION | KIND_SUM => {
-            let case = case_held(cell);
+            let case = identity(cell);
             let which = mixed(HASH_START, case);
             match descriptor::carried(case) {
                 Carried::Nothing => which,
@@ -294,9 +297,15 @@ pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
                 return decimal::compare(left, right);
             }
             if descriptor::kind(descriptor) == KIND_RATIONAL {
-                // By exact value. Nothing writes one, so this is the order a set and a sort of them
-                // stand in, which is the order the language states for them.
-                return descriptor::ordered_exactly(descriptor, left, right);
+                // By the parts each is, which are one value's own, so two are one exactly where
+                // they are one value. Nothing writes one, so it has no place among written values,
+                // and the order a set of them stands in is the language's to leave open — so it is
+                // not the order of their values, which is exact arithmetic and is `ranked`'s to
+                // answer. Asked of the cells alone, a rational met as one of a set's alternatives
+                // is placed by this whatever descriptor reached it, and no set carries arithmetic.
+                let (a, a_length) = rational::parts(left);
+                let (b, b_length) = rational::parts(right);
+                return bytewise(a, a_length, b, b_length);
             }
             let x = value::__souther_int_value(left);
             let y = value::__souther_int_value(right);
@@ -384,6 +393,17 @@ pub unsafe fn compare_runs(at: u32, length: u32, other: u32, other_length: u32) 
     notation199x::compare(notation::str_at(at, length), notation::str_at(other, other_length)) as i32
 }
 
+/// Two runs of bytes, byte by byte, the shorter first where one begins the other.
+unsafe fn bytewise(at: u32, length: u32, other: u32, other_length: u32) -> i32 {
+    let a = core::slice::from_raw_parts(at as usize as *const u8, length as usize);
+    let b = core::slice::from_raw_parts(other as usize as *const u8, other_length as usize);
+    match a.cmp(b) {
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
+    }
+}
+
 unsafe fn text(left: u32, right: u32) -> i32 {
     notation199x::compare(notation::str_of(left), notation::str_of(right)) as i32
 }
@@ -445,7 +465,7 @@ unsafe fn declared(left: u32, right: u32) -> i32 {
     if by_case != 0 {
         return by_case;
     }
-    let own = case_held(left);
+    let own = identity(left);
     match descriptor::carried(own) {
         Carried::Nothing => 0,
         Carried::Fields => {
@@ -502,36 +522,49 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
     }
 }
 
-/// Which case a value is, read off the value: the descriptor of the case its cell holds.
+/// What a value is, read off the value: the descriptor of the type it was made as.
 ///
 /// Asked of the value and not of the set of alternatives it is met as, because that set is
 /// whatever descriptor reached this — a collection's own, written where it was made, may be a
 /// union narrower than the sum a value later put in it was made as, and does not list that value
-/// at all. One case is one descriptor wherever it is listed, so this is the same answer for every
+/// at all. One type is one descriptor wherever it is listed, so this is the same answer for every
 /// set that lists it.
 ///
-/// Only a value of a declared type holds one: a unit's cell and a shape's, a newtype's among them.
-/// A primitive holds none, and what its cell has there is not a descriptor, so a primitive met here
-/// is a set of alternatives that has one as a member reaching a place that tells cases apart this
-/// way, which the compiler does not write. It ends the call rather than reading a name off nothing.
-pub unsafe fn case_held(cell: u32) -> u32 {
+/// Every value a set of alternatives can hold has one. A value of a declared type — a unit, a
+/// shape, a newtype — holds it in its cell. A primitive holds none, and is the primitive its tag
+/// says, which this runtime holds the descriptor of (`descriptor::primitive`). A list, a map, an
+/// option or a tuple is never one of a set's alternatives, which are named types, so a cell of one
+/// met here ends the call rather than standing for something it is not.
+pub unsafe fn identity(cell: u32) -> u32 {
     let tag = core::ptr::read_unaligned(cell as usize as *const u32);
-    if tag != value::TAG_UNIT && tag != value::TAG_RECORD {
-        abort(REASON_BACKEND_INVARIANT_BROKEN, 0, tag as u64, cell as u64);
-    }
-    core::ptr::read_unaligned((cell as usize + 4) as *const u32)
+    descriptor::primitive(match tag {
+        value::TAG_UNIT | value::TAG_RECORD => {
+            return core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+        }
+        value::TAG_INT => KIND_INT,
+        value::TAG_BOOL => KIND_BOOL,
+        value::TAG_STRING => KIND_STRING,
+        value::TAG_DECIMAL => KIND_DECIMAL,
+        value::TAG_RATIONAL => KIND_RATIONAL,
+        value::TAG_DATE => KIND_DATE,
+        value::TAG_TIME => KIND_TIME,
+        value::TAG_DATE_TIME => KIND_DATE_TIME,
+        value::TAG_INSTANT => KIND_INSTANT,
+        other => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, cell as u64),
+    })
 }
 
-/// Two cases where they are written: by the names they are written as, and two cases that share a
-/// name — one from each of two sums — by which they are, so that only one case is one value.
-/// Neither is asked of a set of alternatives, so a case one does not list stands in its place too.
+/// Two values a set of alternatives holds, by which type each is: by the names they are written
+/// as, and two that share a name — one case from each of two sums — by which they are, so that
+/// only one type is one. Neither is asked of a set of alternatives, so a value one does not list
+/// stands in its place too.
 unsafe fn cases(left: u32, right: u32) -> i32 {
-    let (a, b) = (case_held(left), case_held(right));
+    let (a, b) = (identity(left), identity(right));
     if a == b {
         return 0;
     }
-    let (first, first_length) = descriptor::own_name(a);
-    let (second, second_length) = descriptor::own_name(b);
+    let (first, first_length) = descriptor::called(a);
+    let (second, second_length) = descriptor::called(b);
     let by_name = compare_runs(first, first_length, second, second_length);
     if by_name != 0 {
         by_name

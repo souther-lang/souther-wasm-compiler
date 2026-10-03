@@ -186,12 +186,70 @@ pub enum Carried {
     Itself,
 }
 
+/// Every kind a case can be is named, and one that is not ends the call: a kind added later is a
+/// question this has not answered, not one it answers as the last of the three.
 pub unsafe fn carried(case: u32) -> Carried {
     match kind(case) {
         KIND_UNIT => Carried::Nothing,
         KIND_PRODUCT => Carried::Fields,
-        _ => Carried::Itself,
+        KIND_NEWTYPE | KIND_INT | KIND_BOOL | KIND_STRING | KIND_DECIMAL | KIND_RATIONAL
+        | KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => Carried::Itself,
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, case, other as u64, 0),
     }
+}
+
+/// What a primitive value is, for a place that asks it of the value and not of a type: the
+/// descriptor this runtime holds for each primitive, one address per primitive, so two values of
+/// one primitive are values of one type wherever they were made. Laid out as the compiler lays a
+/// primitive's out, with nothing after the kind but the nought of a type that has no members.
+static PRIMITIVES: [[u32; 2]; 9] = [
+    [KIND_INT, 0],
+    [KIND_BOOL, 0],
+    [KIND_STRING, 0],
+    [KIND_DECIMAL, 0],
+    [KIND_RATIONAL, 0],
+    [KIND_DATE, 0],
+    [KIND_TIME, 0],
+    [KIND_DATE_TIME, 0],
+    [KIND_INSTANT, 0],
+];
+
+/// The descriptor this runtime holds for a primitive kind.
+pub fn primitive(kind: u32) -> u32 {
+    let at = match kind {
+        KIND_INT => 0,
+        KIND_BOOL => 1,
+        KIND_STRING => 2,
+        KIND_DECIMAL => 3,
+        KIND_RATIONAL => 4,
+        KIND_DATE => 5,
+        KIND_TIME => 6,
+        KIND_DATE_TIME => 7,
+        KIND_INSTANT => 8,
+        other => unsafe {
+            crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, 0)
+        },
+    };
+    PRIMITIVES[at].as_ptr() as u32
+}
+
+/// What a type is called, for telling one case from another where they are written: a unit's,
+/// a shape's or a newtype's own name, and a primitive's, which is the language's name for it.
+pub unsafe fn called(descriptor: u32) -> (u32, u32) {
+    let spelt: &'static [u8] = match kind(descriptor) {
+        KIND_UNIT | KIND_PRODUCT | KIND_NEWTYPE => return own_name(descriptor),
+        KIND_INT => b"Int",
+        KIND_BOOL => b"Bool",
+        KIND_STRING => b"String",
+        KIND_DECIMAL => b"Decimal",
+        KIND_RATIONAL => b"Rational",
+        KIND_DATE => b"Date",
+        KIND_TIME => b"Time",
+        KIND_DATE_TIME => b"DateTime",
+        KIND_INSTANT => b"Instant",
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, descriptor, other as u64, 0),
+    };
+    (spelt.as_ptr() as u32, spelt.len() as u32)
 }
 
 /// Where the table of what a product's clauses are reported as is (`crate::clauses`).

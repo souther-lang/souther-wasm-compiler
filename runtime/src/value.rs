@@ -336,7 +336,11 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
         KIND_LIST | KIND_SET => tag == TAG_LIST,
         KIND_MAP => tag == TAG_MAP,
         KIND_OPTION => tag == TAG_SOME || tag == TAG_NONE,
-        _ => core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor,
+        // A declared type, which a value of holds in its cell — and only such a value: what a
+        // primitive's cell has in that word is part of the primitive, which may be any number and
+        // so may be the address of the descriptor asked about.
+        _ => (tag == TAG_UNIT || tag == TAG_RECORD)
+            && core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor,
     })
 }
 
@@ -1263,7 +1267,7 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
         // A case's name is its own and is read off it, not found by its place among the keys' set:
         // a map made where its keys were a union of a few cases holds that union's descriptor, and
         // a key put in where they are the whole sum is a case the union does not list.
-        KIND_ENUMERATION => descriptor::own_name(order::case_held(cell)),
+        KIND_ENUMERATION => descriptor::own_name(order::identity(cell)),
         other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
     }
 }
