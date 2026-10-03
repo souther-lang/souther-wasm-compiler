@@ -8,7 +8,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.ToIntFunction;
 import souther.compiler.core.ValueShape;
+import souther.compiler.program.CheckedAlternativesForm;
+import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedBoundaryOutput;
 import souther.compiler.program.CheckedData;
+import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.Type;
 import souther.compiler.types.TypeKey;
@@ -67,11 +71,62 @@ final class Descriptors {
 
     private final ToIntFunction<TypeSymbol.AtModule> checks;
 
+    /**
+     * Every union a behavior answers, as the checker settled it to cross: its leaves and the form
+     * they travel in.
+     */
+    private final Map<Type.Union, CheckedBoundaryOutput.Cases> answered = new HashMap<>();
+
     Descriptors(CheckedProgram program, WasmFragment fragment,
             ToIntFunction<TypeSymbol.AtModule> checks) {
         this.program = program;
         this.fragment = fragment;
         this.checks = checks;
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                settle(behavior.signature().output());
+            }
+        }
+    }
+
+    private void settle(CheckedBoundaryOutput output) {
+        switch (output) {
+            case CheckedBoundaryOutput.Cases cases -> answered.put(cases.type(), cases);
+            case CheckedBoundaryOutput.ListOf list -> settle(list.element());
+            case CheckedBoundaryOutput.SetOf set -> settle(set.element());
+            case CheckedBoundaryOutput.MapOf map -> settle(map.value());
+            case CheckedBoundaryOutput.Scalar ignored -> { }
+            case CheckedBoundaryOutput.Nominal ignored -> { }
+        }
+    }
+
+    private static boolean isBareTag(CheckedAlternativesForm form) {
+        return form instanceof CheckedAlternativesForm.Enumeration;
+    }
+
+    /**
+     * A union no behavior answers, which only a body holds.
+     *
+     * <p>Its leaves are its members with each sum among them descended into, as the checker's are,
+     * because a value of it is told apart by the leaf it is. No boundary writes one, so its form is
+     * never read; it is given the one the checker gives a union, a bare tag where every leaf is a
+     * unit, so that a descriptor never says something about a set the checker would not.
+     */
+    private int unsettled(Type.Union union) {
+        List<TypeSymbol> leaves = new ArrayList<>();
+        for (TypeSymbol member : union.members()) {
+            List<TypeSymbol> under = member instanceof TypeSymbol.AtModule named
+                    && declared(named) instanceof CheckedData.Sum sum ? sum.cases() : List.of(member);
+            for (TypeSymbol leaf : under) {
+                if (!leaves.contains(leaf)) {
+                    leaves.add(leaf);
+                }
+            }
+        }
+        boolean units = !leaves.isEmpty() && leaves.stream().allMatch(
+                each -> each instanceof TypeSymbol.AtModule held
+                        && declared(held) instanceof CheckedData.Unit);
+        return alternatives(null, leaves, units);
     }
 
     /**
@@ -109,7 +164,12 @@ final class Descriptors {
                 }
                 yield written(KIND_TUPLE, null, places);
             }
-            case Type.Union union -> alternatives(null, List.copyOf(union.members()));
+            case Type.Union union -> {
+                CheckedBoundaryOutput.Cases settled = answered.get(union);
+                yield settled != null
+                        ? alternatives(null, settled.cases(), isBareTag(settled.representation()))
+                        : unsettled(union);
+            }
             case Type.MapOf map -> {
                 // A key is written as the name of an object's member, so a type keys a map
                 // exactly when it is written as a bare string — and it is written the same way
@@ -230,7 +290,8 @@ final class Descriptors {
                     .toList());
             // A sum's cases are its leaves: a case written as another sum is carried here as the
             // cases under it, so nothing nested reaches this and the tag always names a leaf.
-            case CheckedData.Sum choice -> alternatives(name, choice.cases());
+            case CheckedData.Sum choice ->
+                    alternatives(name, choice.cases(), isBareTag(choice.representation()));
         };
     }
 
@@ -239,15 +300,17 @@ final class Descriptors {
      *
      * <p>Where every one of them carries nothing but which it is, the value written is the name
      * itself; where any carries something of its own, the name stands beside it under a key. That
-     * is the language's rule about how a set of alternatives crosses, and both backends have to
-     * read it the same way or one set is two documents.
+     * is the language's rule about how a set of alternatives crosses, and every backend has to
+     * read it the same way or one set is two documents — so the form is the checker's answer, read
+     * here and never worked out again from the members.
      *
      * @param name the type the set is declared as, or null where nobody named the members together
+     * @param members the leaves, a member that is itself a sum already descended into: a value of
+     *     the set carries the descriptor of the leaf it is, and that is what it is told apart by
+     * @param carriesNothing whether the set travels as a bare tag
      */
-    private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members) {
-        boolean carriesNothing = !members.isEmpty() && members.stream().allMatch(
-                each -> each instanceof TypeSymbol.AtModule held
-                        && declared(held) instanceof CheckedData.Unit);
+    private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members,
+            boolean carriesNothing) {
         List<int[]> described = new ArrayList<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);

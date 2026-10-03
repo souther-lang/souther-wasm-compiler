@@ -64,6 +64,45 @@ class AUnionCrossesAsTheSetOfAlternativesItIsTest {
                 .isEqualTo("{\"value\":\"Red\"}");
     }
 
+    private static final String WITH_A_SUM = """
+            module signals
+
+            data Red
+            data Green
+            data Signal = Red | Green
+            data Missing
+            data Amount = { n: Int }
+
+            behavior units : (n: Int) -> Signal | Missing
+            let units (n) = if n > 1 then Red else if n > 0 then Green else Missing
+
+            behavior mixed : (n: Int) -> Signal | Amount
+            let mixed (n) = if n > 1 then Red else Amount { n = n }
+
+            behavior named : (n: Int) -> String
+            let named (n) = match units(n) with
+                | Red -> "red"
+                | Green -> "green"
+                | Missing -> "missing"
+            """;
+
+    /**
+     * A member that is itself a sum is its cases: a value of the set is one of them and says
+     * which, so the set is made of the leaves, and is a bare tag where every leaf is a unit.
+     */
+    @Test
+    void aSumAmongTheMembersIsItsCases() {
+        Running module = compiled(WITH_A_SUM);
+
+        assertThat(answerOf(module, "signals.units", "[2]")).isEqualTo("{\"value\":\"Red\"}");
+        assertThat(answerOf(module, "signals.units", "[0]")).isEqualTo("{\"value\":\"Missing\"}");
+        assertThat(answerOf(module, "signals.mixed", "[2]"))
+                .isEqualTo("{\"value\":{\"type\":\"Red\"}}");
+        assertThat(answerOf(module, "signals.mixed", "[0]"))
+                .isEqualTo("{\"value\":{\"type\":\"Amount\",\"n\":0}}");
+        assertThat(answerOf(module, "signals.named", "[1]")).isEqualTo("{\"value\":\"green\"}");
+    }
+
     @Test
     void takesTheArmAnAlternativeIs() {
         Running module = compiled("""

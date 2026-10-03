@@ -263,6 +263,7 @@ public final class WasmCompiler {
         if (lifted) {
             liftable(fragment, calls, program);
         }
+        fragment.offers(Surface.of(program));
         return Linker.link(fragment);
     }
 

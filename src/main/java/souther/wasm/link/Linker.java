@@ -101,7 +101,8 @@ public final class Linker {
         // What no export, no start and no table reaches is left out: the runtime carries every
         // kernel, and a program calls a few of them. Equal bodies are not folded: a linked module
         // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
-        return WasmTreeShaker.withoutWhatNothingReaches(assemble(sections, crossings(fragment)));
+        return WasmTreeShaker.withoutWhatNothingReaches(
+                assemble(sections, crossings(fragment), surface(fragment)));
     }
 
     /**
@@ -306,7 +307,8 @@ public final class Linker {
         return out.toByteArray();
     }
 
-    private static byte[] assemble(Map<Integer, byte[]> sections, byte[] crossings) {
+    private static byte[] assemble(Map<Integer, byte[]> sections, byte[] crossings,
+            byte[] surface) {
         ByteArrayOutputStream module = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(module);
         writer.write(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
@@ -319,6 +321,9 @@ public final class Linker {
         }
         if (crossings.length > 0) {
             writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(crossings.length).write(crossings);
+        }
+        if (surface.length > 0) {
+            writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(surface.length).write(surface);
         }
         return module.toByteArray();
     }
@@ -350,11 +355,25 @@ public final class Linker {
                     .append("\",\"implementedElsewhere\":").append(crossing.elsewhere())
                     .append("}");
         }
-        byte[] payload = written.append("]").toString().getBytes(StandardCharsets.UTF_8);
+        return custom(CROSSINGS, written.append("]").toString());
+    }
+
+    /** What the program offers a caller, under the name a reader looks for it by. */
+    private static final String SURFACE = "souther:surface";
+
+    /** What the program offers a caller, written as a section of the module, where it said. */
+    private static byte[] surface(WasmFragment fragment) {
+        String held = fragment.surface();
+        return held == null ? new byte[0] : custom(SURFACE, held);
+    }
+
+    /** A custom section: its name, then what it says. */
+    private static byte[] custom(String named, String written) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(out);
-        byte[] name = CROSSINGS.getBytes(StandardCharsets.UTF_8);
-        writer.writeUnsignedLeb128(name.length).write(name).write(payload);
+        byte[] name = named.getBytes(StandardCharsets.UTF_8);
+        writer.writeUnsignedLeb128(name.length).write(name)
+                .write(written.getBytes(StandardCharsets.UTF_8));
         return out.toByteArray();
     }
 
