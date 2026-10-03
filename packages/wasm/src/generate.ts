@@ -231,8 +231,12 @@ function declarationType(
 ): string {
   switch (declaration.is) {
     case "product": {
+      // An optional field is the boundary's to read as nothing where it is left out and where it
+      // is written as null, so its type says both: what a type says is what the boundary takes, and
+      // a field typed narrower would refuse a value every backend reads. That a module leaves it out
+      // when it writes one is how it writes, and a reader handling both loses nothing.
       const fields = declaration.fields.map((field) => field.type.is === "option"
-        ? `readonly ${property(field.name)}?: ${typeOf(field.type.of)}`
+        ? `readonly ${property(field.name)}?: ${typeOf(field.type)}`
         : `readonly ${property(field.name)}: ${typeOf(field.type)}`);
       return fields.length === 0 ? "Readonly<Record<string, never>>" : `{ ${fields.join("; ")} }`;
     }

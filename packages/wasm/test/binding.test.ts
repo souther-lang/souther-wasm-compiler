@@ -220,6 +220,24 @@ export async function tiny(bytes: Uint8Array): Promise<string> {
     assert.equal(amount("-0.10e+3").rawJSON, "-0.10e+3");
   });
 
+  // What a page hands over may write an optional field as null, which every backend reads as
+  // nothing; and what comes back leaves it out, which the same type says.
+  it("takes an optional field written as null, as the boundary does", async () => {
+    const { at, bytes } = await generated(MODEL, `import { load, type Line } from "./binding.ts";
+
+export async function priced(bytes: Uint8Array): Promise<unknown> {
+  const shop = await load(bytes, { "shop.rate": () => 1 });
+  const line: Line = { sku: "ABC-1234", quantity: 1, note: null };
+  const read = shop.decode.shop.Line(line);
+  return [shop.modules.shop.price([line], "Standard").value, read.value];
+}
+`);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.deepEqual(await page.priced(bytes),
+      [{ type: "Priced", total: 1 }, { sku: "ABC-1234", quantity: 1 }]);
+  });
+
   it("stops a page compiling where it hands over a number as a string", async () => {
     const { at } = await generated(MODEL, `import { load } from "./binding.ts";
 

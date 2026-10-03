@@ -33,7 +33,8 @@ So a case or a field renamed in the model is a type renamed in the binding, and 
 reading the old one stops compiling. A product is an object type, a newtype the type it is written
 as, a sum the union of its cases discriminated by `type`, an enumeration the union of its names, an
 `Int` or a `Decimal` a `Numeric` — a number where a JavaScript number holds it and an `Amount` where
-one does not — and a temporal its text.
+one does not — and a temporal its text. An optional field may be left out or written as `null`,
+since the boundary reads either as nothing; a module writing one leaves it out.
 
 An `Amount` is the digits crossing as the number they are (`JSON.rawJSON`): `amount("1.10")` makes
 one to hand over, an answer too wide for a number comes back as one, and either is handed over
