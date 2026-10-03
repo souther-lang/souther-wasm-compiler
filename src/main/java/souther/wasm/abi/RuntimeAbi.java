@@ -247,9 +247,12 @@ public final class RuntimeAbi {
 
     /**
      * {@code (i32 key, i32 value, i32 builder) -> i32}: the map a walk is growing, holding one more
-     * entry, put in where it goes rather than in a copy.
+     * entry, put in the map rather than in a copy of it.
      */
     public static final String MAP_PUT = "__souther_map_put";
+
+    /** {@code (i32 builder) -> i32}: the map a walk grew, its entries in the order of their keys. */
+    public static final String MAP_SEALED = "__souther_map_sealed";
 
     /** {@code (i32 builder) -> i32}: the list a builder has grown. */
     public static final String SEALED = "__souther_sealed";

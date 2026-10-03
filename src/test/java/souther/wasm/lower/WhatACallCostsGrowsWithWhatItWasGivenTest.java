@@ -95,6 +95,17 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
                 .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
     }
 
+    @Test
+    void growsAMapOutOfKeysInDescendingOrderByAboutAsMuchAgainForTwiceAsMany() {
+        Running module = compiled();
+
+        // Each key comes before every key already put in, which is the order a map kept in its own
+        // order while it grows is worst at: every entry moves for every one put in.
+        assertThat(howMuchMoreForFourTimesAsMuch(module, "growing.tallied",
+                descendingKeys(SMALLER), descendingKeys(LARGER)))
+                .isLessThan(NOT_EVERY_PAIR * NOT_EVERY_PAIR);
+    }
+
     /**
      * How many times as long the larger of two takes.
      *
@@ -138,6 +149,11 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
                 .mapToObj(String::valueOf).collect(Collectors.joining(",")) + "]]";
     }
 
+    private static String descendingKeys(int held) {
+        return "[[" + IntStream.range(0, held).mapToObj(i -> "\"k" + String.format("%06d", held - i) + "\"")
+                .collect(Collectors.joining(",")) + "]]";
+    }
+
     private static String descending(int held) {
         return "[[" + IntStream.range(0, held).map(i -> held - i)
                 .mapToObj(String::valueOf).collect(Collectors.joining(",")) + "]]";
@@ -170,6 +186,11 @@ class WhatACallCostsGrowsWithWhatItWasGivenTest {
                 behavior keyed : (xs: List<Int>) -> Int
 
                 let keyed (xs) = Map.size(Map.fromList(List.map(x -> (String.fromInt(x), x), xs)))
+
+                behavior tallied : (xs: List<String>) -> Int
+
+                let tallied (xs) = Map.size(
+                    List.fold((acc, x) -> Map.insert(x, 1, acc), Map.empty, xs))
                 """))));
     }
 }

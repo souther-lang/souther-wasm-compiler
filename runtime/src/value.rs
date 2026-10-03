@@ -375,19 +375,22 @@ pub unsafe extern "C" fn __souther_map(descriptor: u32, entries: u32) -> u32 {
     cell
 }
 
-/// What a map was declared as.
-pub(crate) unsafe fn map_descriptor(cell: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + 4) as *const u32)
-}
-
 /// What a map's keys are, for a caller that has the map and not the type it was declared as.
 pub(crate) unsafe fn map_keys(cell: u32) -> u32 {
     descriptor::member(core::ptr::read_unaligned((cell as usize + 4) as *const u32), 0)
 }
 
 /// How many entries a map holds.
+///
+/// Every reader of a map's entries asks this first, so this is where a cell that is not a map is
+/// stopped: a map a walk is growing is laid out otherwise, and only the readers a walk's step may
+/// call are handed one, each of which asks for it by its own tag first.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_length(cell: u32) -> u32 {
+    let tag = core::ptr::read_unaligned(cell as usize as *const u32);
+    if tag != TAG_MAP {
+        abort(REASON_NOT_A_VALUE, 0, tag as u64, cell as u64);
+    }
     core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
 }
 
@@ -480,6 +483,11 @@ pub const TAG_DATE_TIME: u32 = 16;
 
 /// A moment on the timeline.
 pub const TAG_INSTANT: u32 = 17;
+
+/// A map a walk is growing. Not a map: its entries stand in the order they were put in, found by a
+/// table of their keys' hashes, so a reader taking it for a map would read past what is there. See
+/// `kernel::__souther_map_builder` for its layout.
+pub const TAG_MAP_BUILDER: u32 = 18;
 
 /// Values written together, with nothing in them yet.
 #[no_mangle]

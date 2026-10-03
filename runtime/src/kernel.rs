@@ -1105,8 +1105,8 @@ pub unsafe extern "C" fn __souther_map_empty(descriptor: u32) -> u32 {
 /// `Map.get(key, m)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_get(key: u32, map: u32) -> u32 {
-    match entry_of(key, map) {
-        Some(at) => value::__souther_some(value::__souther_map_value(map, at)),
+    match held_under(key, map) {
+        Some(held) => value::__souther_some(held),
         None => value::__souther_none(),
     }
 }
@@ -1114,12 +1114,13 @@ pub unsafe extern "C" fn __souther_map_get(key: u32, map: u32) -> u32 {
 /// `Map.containsKey(key, m)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_contains(key: u32, map: u32) -> u32 {
-    value::__souther_bool(u32::from(entry_of(key, map).is_some()))
+    value::__souther_bool(u32::from(held_under(key, map).is_some()))
 }
 
 /// `Map.keys(m)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_keys(map: u32, descriptor: u32) -> u32 {
+    let map = in_order(map);
     let held = value::__souther_map_length(map);
     let out = __souther_list(descriptor, held);
     for i in 0..held {
@@ -1131,6 +1132,7 @@ pub unsafe extern "C" fn __souther_map_keys(map: u32, descriptor: u32) -> u32 {
 /// `Map.values(m)`, in the order of the keys they stand under.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_values(map: u32, descriptor: u32) -> u32 {
+    let map = in_order(map);
     let held = value::__souther_map_length(map);
     let out = __souther_list(descriptor, held);
     for i in 0..held {
@@ -1191,83 +1193,271 @@ pub unsafe extern "C" fn __souther_map_insert(
 
 /// A map for a walk to grow, holding nothing yet.
 ///
-/// The same cell a map is, so a step that reads what it has written so far reads a map, with room
-/// past its entries and how much room there is written in the word before the cell:
+/// A walk is the only one holding the map it grows — that is what the compiler asked of the walk
+/// before it wrote one — so it is grown in place. Kept in the order the map will stand in, each
+/// entry put in would move every one after it, which for keys arriving in descending order is every
+/// entry every time. So it is kept in the order the entries came, with a table of where each key's
+/// hash leads:
 ///
 /// ```text
-/// -4  u32 how many entries there is room for
-/// +0  the map
+/// +0   u32 tag
+/// +4   u32 descriptor of the map
+/// +8   u32 how many entries
+/// +12  u32 how many places the table has, a power of two
+/// +16  u32 the table: per place, nothing or one more than the entry there
+/// +20  u32 the entries: per entry its key, its value and its key's hash
+/// +24  u32 the entries put in order so far, as a map, or nothing
+/// +28  u32 how many of the first entries that map holds
 /// ```
 ///
-/// A walk is the only one holding the map it grows — that is what the compiler asked of the walk
-/// before it wrote one — so an entry is put in where it goes, rather than in a copy of the map, and
-/// a walk over n pairs takes room for n entries and not for n copies of them.
+/// The table is kept at most three quarters full, and the entries have room for as many as it
+/// holds then. Growing doubles both, so a walk over n pairs takes room for about four times n.
+///
+/// Its entries are put in the map's order where something asks for them in order: the walk's end,
+/// and a step reading its keys, values or pairs. What was put in order is kept, and only what came
+/// since is sorted and merged in, so a step reading the keys at every element costs what reading
+/// them costs and not a sort of them each time.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_builder(descriptor: u32) -> u32 {
-    room_for(descriptor, MAP_ROOM)
-}
-
-/// How many entries a map being grown starts with room for.
-const MAP_ROOM: u32 = 4;
-
-unsafe fn room_for(descriptor: u32, room: u32) -> u32 {
-    let at = alloc(4);
-    core::ptr::write_unaligned(at as usize as *mut u32, room);
-    let cell = value::__souther_map(descriptor, room);
-    // The word is found by where the cell is, so the cell has to follow it. The arena hands out
-    // the next bytes, and an arena that did not would have the room read off whatever was there.
-    if cell != at + 4 {
-        abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, at as u64, cell as u64);
-    }
-    value::map_of_length(cell, 0);
+    let cell = alloc(BUILDER_HEADER);
+    core::ptr::write_unaligned(cell as usize as *mut u32, value::TAG_MAP_BUILDER);
+    builder_set(cell, B_DESCRIPTOR, descriptor);
+    builder_set(cell, B_HELD, 0);
+    builder_set(cell, B_ORDERED, 0);
+    builder_set(cell, B_ORDERED_HELD, 0);
+    with_places(cell, FIRST_PLACES);
     cell
 }
 
-/// Puts an entry in a map a walk is growing, answering the map that holds it — the same one where
-/// it had room, and a longer one it moved to where it had not.
+const BUILDER_HEADER: u32 = 32;
+const B_DESCRIPTOR: usize = 4;
+const B_HELD: usize = 8;
+const B_PLACES: usize = 12;
+const B_TABLE: usize = 16;
+const B_ENTRIES: usize = 20;
+const B_ORDERED: usize = 24;
+const B_ORDERED_HELD: usize = 28;
+const ENTRY: u32 = 12;
+
+/// How many places a map being grown starts with.
+const FIRST_PLACES: u32 = 8;
+
+unsafe fn builder_get(cell: u32, at: usize) -> u32 {
+    core::ptr::read_unaligned((cell as usize + at) as *const u32)
+}
+
+unsafe fn builder_set(cell: u32, at: usize, word: u32) {
+    core::ptr::write_unaligned((cell as usize + at) as *mut u32, word);
+}
+
+unsafe fn entry_word(cell: u32, entry: u32, word: u32) -> u32 {
+    core::ptr::read_unaligned(
+        (builder_get(cell, B_ENTRIES) + entry * ENTRY + 4 * word) as usize as *const u32,
+    )
+}
+
+unsafe fn set_entry_word(cell: u32, entry: u32, word: u32, held: u32) {
+    core::ptr::write_unaligned(
+        (builder_get(cell, B_ENTRIES) + entry * ENTRY + 4 * word) as usize as *mut u32,
+        held,
+    );
+}
+
+/// Gives a builder a table of that many places and room for the entries it may hold, keeping
+/// the entries it has and placing each again by the hash it carries.
+unsafe fn with_places(cell: u32, places: u32) {
+    let held = builder_get(cell, B_HELD);
+    let entries = alloc(ENTRY * (places / 4 * 3));
+    if held > 0 {
+        core::ptr::copy_nonoverlapping(
+            builder_get(cell, B_ENTRIES) as usize as *const u8,
+            entries as usize as *mut u8,
+            (ENTRY * held) as usize,
+        );
+    }
+    builder_set(cell, B_ENTRIES, entries);
+    builder_set(cell, B_PLACES, places);
+    builder_set(cell, B_TABLE, alloc(4 * places));
+    for entry in 0..held {
+        let at = free_place(cell, entry_word(cell, entry, 2));
+        core::ptr::write_unaligned(at as usize as *mut u32, entry + 1);
+    }
+}
+
+/// The first empty place a hash leads to.
+unsafe fn free_place(cell: u32, hash: u32) -> u32 {
+    let mask = builder_get(cell, B_PLACES) - 1;
+    let table = builder_get(cell, B_TABLE);
+    let mut place = hash & mask;
+    while core::ptr::read_unaligned((table + 4 * place) as usize as *const u32) != 0 {
+        place = (place + 1) & mask;
+    }
+    table + 4 * place
+}
+
+/// The entry a builder holds under a key, by the hash the key has.
+unsafe fn entry_under(cell: u32, key: u32, hash: u32) -> Option<u32> {
+    let keys = descriptor::member(builder_get(cell, B_DESCRIPTOR), 0);
+    let mask = builder_get(cell, B_PLACES) - 1;
+    let table = builder_get(cell, B_TABLE);
+    let mut place = hash & mask;
+    loop {
+        let held = core::ptr::read_unaligned((table + 4 * place) as usize as *const u32);
+        if held == 0 {
+            return None;
+        }
+        let entry = held - 1;
+        if entry_word(cell, entry, 2) == hash
+            && value::key_order(entry_word(cell, entry, 0), key, keys) == 0
+        {
+            return Some(entry);
+        }
+        place = (place + 1) & mask;
+    }
+}
+
+/// A hash of what a key is written as.
+///
+/// Of the text and not of how the key is held, because two keys are one key exactly where their
+/// texts are one text — which is what `value::key_order` answers nothing for — so two keys that are
+/// one have one hash whatever kind of key they are.
+unsafe fn key_hash(key: u32, keys: u32) -> u32 {
+    let (at, length) = value::key_text(key, keys);
+    let mut hash: u32 = 0x811c_9dc5;
+    for i in 0..length {
+        hash ^= u32::from(core::ptr::read((at + i) as usize as *const u8));
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+/// Whether a cell is a map a walk is growing.
+unsafe fn is_builder(cell: u32) -> bool {
+    core::ptr::read_unaligned(cell as usize as *const u32) == value::TAG_MAP_BUILDER
+}
+
+/// Puts an entry in a map a walk is growing, answering that map. A key it already holds keeps
+/// the key it was first put in under and stands over the new value, as `Map.insert` does.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_put(key: u32, held: u32, builder: u32) -> u32 {
-    let entries = value::__souther_map_length(builder);
-    let at = match place_of(key, builder) {
-        Ok(at) => {
-            value::__souther_map_set(builder, at, value::__souther_map_key(builder, at), held);
-            return builder;
+    let keys = descriptor::member(builder_get(builder, B_DESCRIPTOR), 0);
+    let hash = key_hash(key, keys);
+    if let Some(entry) = entry_under(builder, key, hash) {
+        set_entry_word(builder, entry, 1, held);
+        // An entry already put in order stands there under its key, and stands over the new
+        // value there too. That map is the builder's own: nothing a step was handed is it.
+        if entry < builder_get(builder, B_ORDERED_HELD) {
+            let ordered = builder_get(builder, B_ORDERED);
+            if let Ok(at) = place_of(entry_word(builder, entry, 0), ordered) {
+                value::__souther_map_set(ordered, at, value::__souther_map_key(ordered, at), held);
+            } else {
+                abort(REASON_BACKEND_INVARIANT_BROKEN, 0, entry as u64, ordered as u64);
+            }
         }
-        Err(at) => at,
-    };
-    let room = core::ptr::read_unaligned((builder as usize - 4) as *const u32);
-    let out = if entries < room {
-        builder
-    } else {
-        let wider = room_for(value::map_descriptor(builder), room * 2);
-        for i in 0..entries {
-            value::__souther_map_set(
-                wider,
-                i,
-                value::__souther_map_key(builder, i),
-                value::__souther_map_value(builder, i),
-            );
-        }
-        wider
-    };
-    let mut i = entries;
-    while i > at {
+        return builder;
+    }
+    let count = builder_get(builder, B_HELD);
+    let places = builder_get(builder, B_PLACES);
+    if count + 1 > places / 4 * 3 {
+        with_places(builder, places * 2);
+    }
+    set_entry_word(builder, count, 0, key);
+    set_entry_word(builder, count, 1, held);
+    set_entry_word(builder, count, 2, hash);
+    let at = free_place(builder, hash);
+    core::ptr::write_unaligned(at as usize as *mut u32, count + 1);
+    builder_set(builder, B_HELD, count + 1);
+    builder
+}
+
+/// The map a walk grew, its entries in the order of their keys.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_map_sealed(builder: u32) -> u32 {
+    put_in_order(builder)
+}
+
+/// A builder's entries as a map in the order of their keys: what was put in order before, with
+/// what came since sorted and merged in. The answer is the builder's own, and changes where a
+/// later put changes a value, so it is read and not kept by whoever asked for it.
+unsafe fn put_in_order(builder: u32) -> u32 {
+    let descriptor = builder_get(builder, B_DESCRIPTOR);
+    let held = builder_get(builder, B_HELD);
+    let before = builder_get(builder, B_ORDERED_HELD);
+    let ordered = builder_get(builder, B_ORDERED);
+    if ordered != 0 && before == held {
+        return ordered;
+    }
+    let keys = descriptor::member(descriptor, 0);
+    let since = value::__souther_map(descriptor, held - before);
+    for entry in before..held {
+        value::__souther_map_set(
+            since,
+            entry - before,
+            entry_word(builder, entry, 0),
+            entry_word(builder, entry, 1),
+        );
+    }
+    value::sorted_by_key(since, keys);
+    let out = if ordered == 0 { since } else { merged_entries(ordered, since, descriptor, keys) };
+    builder_set(builder, B_ORDERED, out);
+    builder_set(builder, B_ORDERED_HELD, held);
+    out
+}
+
+/// Two maps with no key in common, as one, in the order of their keys.
+unsafe fn merged_entries(left: u32, right: u32, descriptor: u32, keys: u32) -> u32 {
+    let a = value::__souther_map_length(left);
+    let b = value::__souther_map_length(right);
+    let out = value::__souther_map(descriptor, a + b);
+    let (mut i, mut j) = (0, 0);
+    while i < a || j < b {
+        let from_left = j == b
+            || (i < a
+                && value::key_order(
+                    value::__souther_map_key(left, i),
+                    value::__souther_map_key(right, j),
+                    keys,
+                ) < 0);
+        let (map, at) = if from_left { (left, i) } else { (right, j) };
         value::__souther_map_set(
             out,
-            i,
-            value::__souther_map_key(out, i - 1),
-            value::__souther_map_value(out, i - 1),
+            i + j,
+            value::__souther_map_key(map, at),
+            value::__souther_map_value(map, at),
         );
-        i -= 1;
+        if from_left {
+            i += 1;
+        } else {
+            j += 1;
+        }
     }
-    value::__souther_map_set(out, at, key, held);
-    value::map_of_length(out, entries + 1);
     out
+}
+
+/// A map to read the entries of in order, whichever form it is in: one a walk is still growing is
+/// read as it stands in order now.
+unsafe fn in_order(map: u32) -> u32 {
+    if is_builder(map) {
+        put_in_order(map)
+    } else {
+        map
+    }
+}
+
+/// What a map holds under a key, whichever form it is in.
+unsafe fn held_under(key: u32, map: u32) -> Option<u32> {
+    if is_builder(map) {
+        let keys = descriptor::member(builder_get(map, B_DESCRIPTOR), 0);
+        entry_under(map, key, key_hash(key, keys)).map(|entry| entry_word(map, entry, 1))
+    } else {
+        entry_of(key, map).map(|at| value::__souther_map_value(map, at))
+    }
 }
 
 /// `Map.toList(m)`: a pair per entry, in the order the map holds them.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_to_list(map: u32, descriptor: u32) -> u32 {
+    let map = in_order(map);
     let held = value::__souther_map_length(map);
     let out = __souther_list(descriptor, held);
     for i in 0..held {
@@ -1372,12 +1562,12 @@ unsafe fn place_of(key: u32, map: u32) -> Result<u32, u32> {
     Err(low)
 }
 
-/// How many a set or a map holds.
+/// How many a set or a map holds, a map a walk is growing included.
 unsafe fn sized(collection: u32) -> u32 {
-    if core::ptr::read_unaligned(collection as usize as *const u32) == value::TAG_MAP {
-        value::__souther_map_length(collection)
-    } else {
-        __souther_list_length(collection)
+    match core::ptr::read_unaligned(collection as usize as *const u32) {
+        value::TAG_MAP => value::__souther_map_length(collection),
+        value::TAG_MAP_BUILDER => builder_get(collection, B_HELD),
+        _ => __souther_list_length(collection),
     }
 }
 

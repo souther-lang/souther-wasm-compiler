@@ -1149,7 +1149,7 @@ public final class WasmCompiler {
                     value(out, call.args().get(0));
                     out.call(calls.of(RuntimeAbi.MAP_PUT));
                 }
-                case BUILD_MAP -> walk(out, call, RuntimeAbi.MAP_BUILDER, null);
+                case BUILD_MAP -> walk(out, call, RuntimeAbi.MAP_BUILDER, RuntimeAbi.MAP_SEALED);
                 default -> throw new NotLowered(writing + " reaches " + operation
                         + ", which this backend does not write yet");
             }
@@ -1159,8 +1159,8 @@ public final class WasmCompiler {
          * {@code $build(step, xs, from)}: the walk that grows a collection out of a list.
          *
          * @param start what makes the empty one the walk begins with
-         * @param finish what turns what the walk grew into what it answers, or null where the walk
-         *     grew the answer itself
+         * @param finish what turns what the walk grew into what it answers: what grows is never
+         *     the collection itself, since it has room past what it holds
          */
         private void walk(BodyWriter out, Core.Call call, String start, String finish) {
             int step = scratch();
@@ -1207,9 +1207,7 @@ public final class WasmCompiler {
             out.end().end();
 
             out.localGet(builder);
-            if (finish != null) {
-                out.call(calls.of(finish));
-            }
+            out.call(calls.of(finish));
         }
 
         /**
