@@ -49,7 +49,20 @@ const HEADER: usize = 8;
 /// would answer about bytes nobody wrote.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_parse(pointer: u32, length: u32) -> u32 {
-    let mut reader = Reader { at: pointer as usize, end: (pointer + length) as usize };
+    read(pointer, length, AS_DEEP_AS)
+}
+
+/// Reads back a document this runtime wrote itself, to ask something of what it wrote.
+///
+/// Not a document from outside, so not held to what one from outside is held to: whatever the
+/// writer writes is read here, however deep, since a value written that deep was walked that deep
+/// to write it. What the boundary refuses of a stranger it does not refuse of its own writer.
+pub unsafe fn parse_own(pointer: u32, length: u32) -> u32 {
+    read(pointer, length, u32::MAX)
+}
+
+unsafe fn read(pointer: u32, length: u32, deepest: u32) -> u32 {
+    let mut reader = Reader { at: pointer as usize, end: (pointer + length) as usize, deepest };
     let value = reader.value(0);
     reader.spaces();
     if reader.at != reader.end {
@@ -92,6 +105,16 @@ pub unsafe extern "C" fn __souther_json_key(cell: u32, index: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_value(cell: u32, index: u32) -> u32 {
     read_u32(cell as usize + HEADER + 8 * index as usize + 4)
+}
+
+/// Puts an object's entries back, `held` key and value pairs from `entries`, in the order given:
+/// for a reader that orders them itself, the document having said nothing by its order.
+pub unsafe fn put_entries(cell: u32, entries: *const u32, held: u32) {
+    core::ptr::copy_nonoverlapping(
+        entries as *const u8,
+        (cell as usize + HEADER) as *mut u8,
+        8 * held as usize,
+    );
 }
 
 /// A whole number, written as JSON writes one.
@@ -241,6 +264,9 @@ unsafe fn write_u32(at: usize, value: u32) {
 struct Reader {
     at: usize,
     end: usize,
+    /// How deep a container it reads, which is the boundary's `AS_DEEP_AS` for a document from
+    /// outside and no bound for one this runtime wrote itself.
+    deepest: u32,
 }
 
 /// How far one document may be nested.
@@ -449,7 +475,7 @@ impl Reader {
 
     /// An array that is the `depth`th container in.
     unsafe fn array(&mut self, depth: u32) -> u32 {
-        if depth > AS_DEEP_AS {
+        if depth > self.deepest {
             self.malformed();
         }
         self.expect(b'[');
@@ -483,7 +509,7 @@ impl Reader {
 
     /// An object that is the `depth`th container in.
     unsafe fn object(&mut self, depth: u32) -> u32 {
-        if depth > AS_DEEP_AS {
+        if depth > self.deepest {
             self.malformed();
         }
         self.expect(b'{');

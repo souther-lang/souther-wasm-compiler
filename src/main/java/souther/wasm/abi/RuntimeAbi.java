@@ -54,9 +54,12 @@ public final class RuntimeAbi {
      * {@code ++} stopped having entries of its own (issue #26): on strings it is
      * {@link Kernels#STRING_APPEND} and on lists {@link #LIST_APPEND}. Raised to 10 when a list
      * came to point at its elements rather than hold them, read through {@link #LIST_ELEMENTS},
-     * and a set and a map changed one member at a time came to be held as a tree.
+     * and a set and a map changed one member at a time came to be held as a tree. Raised to 11
+     * when a {@code Rational} came to be a value, read through {@link Kernels#RATIONAL_ADD} and the
+     * rest of its functions, and {@code /} came to answer one: the {@code /} of a truncated
+     * {@code Int} and of a rounded {@code Decimal} are gone.
      */
-    public static final int VERSION = 10;
+    public static final int VERSION = 11;
 
     /**
      * What of the runtime a linked module still shows its host: the memory, and what the steps
@@ -316,14 +319,27 @@ public final class RuntimeAbi {
     /** {@code (i32 left, i32 right) -> i32}: the {@code *} operator on {@code Int}. */
     public static final String MULTIPLY = "__souther_multiply";
 
-    /** {@code (i32 left, i32 right) -> i32}: the {@code /} operator on {@code Int}. */
-    public static final String DIVIDE = "__souther_divide";
-
     /**
      * {@code (i32 left, i32 right, i32 descriptor) -> i32}: where one value is written relative to
      * another of its type, which is what every comparison is answered by.
      */
     public static final String COMPARE = "__souther_compare";
+
+    /**
+     * {@code (i32 left, i32 right) -> i32}: where two exact quotients stand. Called by nothing a
+     * body writes: a descriptor of a {@code Rational} holds the slot of it, which is how
+     * {@link #COMPARE} reaches it without carrying exact arithmetic into a module that has none.
+     */
+    public static final String RATIONAL_ORDER = "__souther_rational_order";
+
+    /**
+     * {@code (i32 list) -> i32}: {@code List.sum} over exact quotients. An entry of its own, so
+     * that {@link Kernels#LIST_SUM}, which every total reaches, carries no exact arithmetic.
+     */
+    public static final String RATIONAL_SUM = "__souther_rational_sum";
+
+    /** {@code (i32 list) -> i32}: {@code List.product} over exact quotients, as {@link #RATIONAL_SUM}. */
+    public static final String RATIONAL_PRODUCT = "__souther_rational_product";
 
     /** {@code (i32 cell) -> i32}: the {@code Bool} a cell holds, as one or zero. */
     public static final String BOOL_VALUE = "__souther_bool_value";
@@ -442,8 +458,6 @@ public final class RuntimeAbi {
         public static final String DECIMAL_SUBTRACT = "__souther_decimal_subtract";
         /** {@code (i32 a, i32 b) -> i32}. */
         public static final String DECIMAL_MULTIPLY = "__souther_decimal_multiply";
-        /** {@code (i32 a, i32 b) -> i32}: the {@code /} operator. */
-        public static final String DECIMAL_DIVIDE_BY = "__souther_decimal_divide_by";
         /** {@code (i32 a, i32 b, i32 scale, i32 mode, i32 absent) -> i32}. */
         public static final String DECIMAL_DIVIDE = "__souther_decimal_divide";
         /** {@code (i32 scale, i32 mode, i32 d) -> i32}. */
@@ -456,6 +470,37 @@ public final class RuntimeAbi {
         public static final String DECIMAL_COMPARE = "__souther_decimal_compare";
         /** {@code (i32 cell) -> i32}: the unary {@code -} on an amount. */
         public static final String DECIMAL_NEGATE = "__souther_decimal_negate";
+        /**
+         * {@code (i32 n) -> i32}: {@code Rational.fromInt}, and an {@code Int} read at its exact
+         * value by an operator with a {@code Rational} on the other side.
+         */
+        public static final String RATIONAL_FROM_INT = "__souther_rational_from_int";
+        /**
+         * {@code (i32 d) -> i32}: {@code Rational.fromDecimal}, and a {@code Decimal} read at its
+         * exact value by an operator.
+         */
+        public static final String RATIONAL_FROM_DECIMAL = "__souther_rational_from_decimal";
+        /** {@code (i32 r, i32 absent) -> i32}. */
+        public static final String RATIONAL_TO_WHOLE_NUMBER = "__souther_rational_to_whole_number";
+        /** {@code (i32 r, i32 absent) -> i32}. */
+        public static final String RATIONAL_TO_FINITE_DECIMAL =
+                "__souther_rational_to_finite_decimal";
+        /** {@code (i32 mode, i32 r) -> i32}. */
+        public static final String RATIONAL_TO_INT = "__souther_rational_to_int";
+        /** {@code (i32 scale, i32 mode, i32 r) -> i32}. */
+        public static final String RATIONAL_TO_DECIMAL = "__souther_rational_to_decimal";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.add} and the {@code +} operator. */
+        public static final String RATIONAL_ADD = "__souther_rational_add";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.subtract} and the {@code -} operator. */
+        public static final String RATIONAL_SUBTRACT = "__souther_rational_subtract";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.multiply} and the {@code *} operator. */
+        public static final String RATIONAL_MULTIPLY = "__souther_rational_multiply";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.divide} and the {@code /} operator. */
+        public static final String RATIONAL_DIVIDE = "__souther_rational_divide";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String RATIONAL_COMPARE = "__souther_rational_compare";
+        /** {@code (i32 cell) -> i32}: the unary {@code -} on an exact quotient. */
+        public static final String RATIONAL_NEGATE = "__souther_rational_negate";
         /** {@code (i32 days, i32 d) -> i32}. */
         public static final String DATE_ADD_DAYS = "__souther_date_add_days";
         /** {@code (i32 months, i32 d) -> i32}. */

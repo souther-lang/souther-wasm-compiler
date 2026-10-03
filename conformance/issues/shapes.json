@@ -1,5 +1,5 @@
 {
-  "model": "module forms\n\ndata Point = { x: Int, label: String, note: String? }\n\ndata Red\ndata Green\ndata Colour = Red | Green\n\ndata Circle = { radius: Int }\ndata Square = { side: Int }\ndata Shape = Circle | Square\n\ndata Day = Date\n\ndata At = Time\n\ndata Stamp = DateTime\n\ndata Moment = Instant\n\ndata Amount = Decimal\n\ndata Flag = Bool\n\ndata Points = List<Point>\n\ndata Counts = Map<String, Int>\n\ndata Unique = Set<Int>\n\ndata ByDay = Map<Date, Int>\n\ndata ByColour = Map<Colour, Int>\n",
+  "model": "module forms\n\ndata Point = { x: Int, label: String, note: String? }\n\ndata Red\ndata Green\ndata Colour = Red | Green\n\ndata Circle = { radius: Int }\ndata Square = { side: Int }\ndata Shape = Circle | Square\n\ndata Day = Date\n\ndata At = Time\n\ndata Stamp = DateTime\n\ndata Moment = Instant\n\ndata Amount = Decimal\n\ndata Flag = Bool\n\ndata Points = List<Point>\n\ndata Counts = Map<String, Int>\n\ndata Unique = Set<Int>\n\ndata ByDay = Map<Date, Int>\n\ndata ByColour = Map<Colour, Int>\n\ndata Tracking = Int\ndata Untracked\ndata Shipment = Tracking | Untracked\n",
   "cases": [
     {
       "about": "a field of the wrong kind",
@@ -598,6 +598,146 @@
         ],
         "ja": [
           "形式が不正です"
+        ]
+      }
+    },
+    {
+      "about": "a whole number written with a point and zeros after it",
+      "type": "forms.Point",
+      "input": {
+        "x": 5.00,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "long"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
+    },
+    {
+      "about": "a whole number written with an exponent",
+      "type": "forms.Point",
+      "input": {
+        "x": 1E+3,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "long"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
+    },
+    {
+      "about": "a whole number written with an exponent wider than an Int holds",
+      "type": "forms.Point",
+      "input": {
+        "x": 1E+30,
+        "label": "a"
+      },
+      "expect": [
+        {
+          "path": "/x",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "number",
+            "expected": "long"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
+        ]
+      }
+    },
+    {
+      "about": "a newtype case, what it wraps under its own key beside the tag",
+      "type": "forms.Shipment",
+      "input": {
+        "type": "Tracking",
+        "value": 7
+      },
+      "expect": "value"
+    },
+    {
+      "about": "a newtype case with nothing under its own key",
+      "type": "forms.Shipment",
+      "input": {
+        "type": "Tracking"
+      },
+      "expect": [
+        {
+          "path": "/value",
+          "code": "required",
+          "messageKey": "required",
+          "meta": {}
+        }
+      ],
+      "messages": {
+        "en": [
+          "is required"
+        ],
+        "ja": [
+          "必須です"
+        ]
+      }
+    },
+    {
+      "about": "a newtype case holding what it does not wrap",
+      "type": "forms.Shipment",
+      "input": {
+        "type": "Tracking",
+        "value": "seven"
+      },
+      "expect": [
+        {
+          "path": "/value",
+          "code": "type_mismatch",
+          "messageKey": "type_mismatch",
+          "meta": {
+            "actual": "string",
+            "expected": "long"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "expected long"
+        ],
+        "ja": [
+          "long型が必要です"
         ]
       }
     }

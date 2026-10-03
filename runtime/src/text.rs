@@ -57,3 +57,14 @@ pub unsafe fn put(bytes: &[u8]) {
 pub unsafe fn ended() -> (u32, u32) {
     (AT, WRITTEN)
 }
+
+/// How much of the run is written: a place in it that stays put however the run grows, which its
+/// address does not.
+pub unsafe fn so_far() -> u32 {
+    WRITTEN
+}
+
+/// Takes the run back to where it was `so_far` once, forgetting what was written after.
+pub unsafe fn back_to(written: u32) {
+    WRITTEN = written;
+}

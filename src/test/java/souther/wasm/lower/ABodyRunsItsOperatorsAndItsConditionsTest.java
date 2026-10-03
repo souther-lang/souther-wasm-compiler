@@ -1,7 +1,6 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
@@ -9,7 +8,6 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import souther.compiler.abort.AbortKind;
-import souther.compiler.program.CheckedProgram;
 import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.FailureCause;
@@ -115,25 +113,23 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
 
     /**
      * A quotient of two Ints is a Rational while its operands stay Ints, so the operands say
-     * nothing about it. What this witnesses is the refusal and nothing else: the helper takes the
-     * quotient and answers a constant, so no Rational kernel stands between the division and the
-     * refusal, and a compile that goes through is an Int division written for a Rational.
+     * nothing about it: seven over two is three and a half, and an Int division written for it
+     * would answer three.
      */
     @Test
-    void refusesAnExactQuotientUntilRationalsAreWritten() {
-        CheckedProgram program = Compiled.program(List.of("""
+    void dividesTwoIntsIntoTheirExactQuotient() {
+        Running module = compiled("""
                 module counting
 
-                behavior halved : (a: Int, b: Int) -> Int
+                behavior halved : (a: Int, b: Int) -> Decimal
 
-                let ignoring (exact: Rational): Int = 1
+                let halved (a, b) = Rational.toDecimal(1, HALF_EVEN, a / b)
+                """);
 
-                let halved (a, b) = ignoring(a / b)
-                """));
-
-        assertThatThrownBy(() -> Compiled.module(program))
-                .isInstanceOf(NotLowered.class)
-                .hasMessageContaining("Rational");
+        assertThat(answerOf(module, "counting.halved", "[7, 2]")).isEqualTo("{\"value\":3.5}");
+        assertThat(answerOf(module, "counting.halved", "[-7, 2]")).isEqualTo("{\"value\":-3.5}");
+        assertThat(abortOf(module, "counting.halved", "[7, 0]"))
+                .contains(new FailureCause.Language(AbortKind.DIVISION_BY_ZERO));
     }
 
     @Test

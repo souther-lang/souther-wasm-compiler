@@ -247,23 +247,23 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     @Test
     void saysWhichKindOfStopItWasWhenThisBackendIsTheOneRefusing(@TempDir Path room)
             throws IOException {
-        Path source = Files.writeString(room.resolve("halving.sou"), """
-                module halving
+        Path source = Files.writeString(room.resolve("quoting.sou"), """
+                module quoting
 
-                behavior halved : (a: Int, b: Int) -> Int
+                behavior price : (n: Int) -> Int
 
-                let ignoring (exact: Rational): Int = 1
-
-                let halved (a, b) = ignoring(a / b)
+                behavior quote : (n: Int) -> Int
+                    depends on price
                 """);
         Path into = room.resolve("out.wasm");
 
-        // A quotient of two Ints is a Rational, which this backend does not write yet. The
-        // language takes the program; this is the backend saying it cannot write it.
+        // A behavior with what it depends on and no body is one whose body nobody has written
+        // yet, which the language takes and this backend has nothing to write for.
         Ran ran = run(source.toString(), "-o", into.toString());
 
         assertThat(ran.status()).isEqualTo(1);
-        assertThat(ran.complained()).contains("this backend does not write that yet");
+        assertThat(ran.complained()).contains("this backend does not write that yet")
+                .contains("quote is not written");
         assertThat(into).doesNotExist();
     }
 

@@ -18,6 +18,7 @@
 
 use crate::value::TAG_DECIMAL;
 use crate::{abort, alloc, REASON_BACKEND_INVARIANT_BROKEN, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use souther_exact::{Dropped, Rounding};
 
 /// How many digits a limb holds. A limb is that many digits of the number and nothing else, so
 /// putting digits in and taking them out is a division by ten and never by a power of two.
@@ -297,6 +298,10 @@ unsafe fn copy(from: u32, length: u32) -> u32 {
 /// one of these bytes read back, so a zero there is this compiler's own bug and not the language's)
 /// — so the choice of what "could not be read" becomes belongs to whichever of those three is
 /// calling, and this stays total instead of making that choice on their behalf.
+/// An exponent further from nought than any scale an exponent and a run of digits can come to,
+/// which an exponent is held to while it is read so that reading more digits cannot overflow.
+const BEYOND_EVERY_SCALE: i64 = 1 << 40;
+
 pub unsafe fn parse(at: u32, length: u32) -> u32 {
     let mut i = 0;
     let negative = length > 0 && core::ptr::read(at as *const u8) == b'-';
@@ -354,11 +359,11 @@ pub unsafe fn parse(at: u32, length: u32) -> u32 {
             if !byte.is_ascii_digit() {
                 break;
             }
-            power = power * 10 + (byte - b'0') as i64;
-            if power > i32::MAX as i64 {
-                // Not this function's call to make — see the doc comment above.
-                return 0;
-            }
+            // Held short of overflowing, at a power no scale is near, and not refused here: what
+            // has a place is the scale the exponent comes to beside the digits after the point,
+            // which is decided below. `1E+2147483648` is the scale `i32::MIN`, a `Decimal` a JVM
+            // reads and this one writes, though its exponent alone is past `i32::MAX`.
+            power = (power * 10 + (byte - b'0') as i64).min(BEYOND_EVERY_SCALE);
             i += 1;
         }
         if i == start {
@@ -742,45 +747,28 @@ unsafe fn rounded(
     } else {
         (kept, kept_length)
     };
-    let twice = {
-        let two = alloc(1);
-        core::ptr::write(two as *mut u8, b'2');
-        product(rest, rest_length, two, 1)
-    };
-    let against = larger(twice.0, twice.1, over, over_length);
     let mut any = false;
     for i in 0..rest_length {
         if core::ptr::read((rest + i) as *const u8) != b'0' {
             any = true;
         }
     }
-    let up = if !any {
-        false
+    // What was dropped and whether what is kept is odd are read off the digits here; what a mode
+    // makes of them is the language's, and said once in `souther_exact` for every runtime.
+    let dropped = if !any {
+        Dropped::Nothing
     } else {
-        match mode {
-            MODE_UP => true,
-            MODE_DOWN => false,
-            MODE_CEILING => !negative,
-            MODE_FLOOR => negative,
-            MODE_HALF_UP => against >= 0,
-            MODE_HALF_DOWN => against > 0,
-            MODE_HALF_EVEN => {
-                if against > 0 {
-                    true
-                } else if against < 0 {
-                    false
-                } else {
-                    (core::ptr::read((digits_at + digits_length - 1) as *const u8) - b'0') % 2 == 1
-                }
-            }
-            // Nothing else is a mode the language declares: every `RoundingMode` case this
-            // module was compiled against is above, so an ordinal outside them is the
-            // compiler and this crate disagreeing about what the language declares, not a
-            // Souther program failing to hold anything.
-            _ => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, mode as u64, 0),
+        let two = alloc(1);
+        core::ptr::write(two as *mut u8, b'2');
+        let twice = product(rest, rest_length, two, 1);
+        match larger(twice.0, twice.1, over, over_length) {
+            ..0 => Dropped::BelowHalf,
+            0 => Dropped::Half,
+            _ => Dropped::AboveHalf,
         }
     };
-    if !up {
+    let odd = (core::ptr::read((digits_at + digits_length - 1) as *const u8) - b'0') % 2 == 1;
+    if !rounding(mode).rounds_away(negative, odd, dropped) {
         return of_digits(digits_at, digits_length, wanted, negative);
     }
     let one = alloc(1);
@@ -803,6 +791,26 @@ pub const MODE_DOWN: u32 = 4;
 pub const MODE_CEILING: u32 = 5;
 /// Towards the smaller.
 pub const MODE_FLOOR: u32 = 6;
+
+/// Which mode a `RoundingMode` is, from its place among the cases the language declares, which is
+/// what the compiler passes (`CASE_OF`). The one place an ordinal is read, for an amount's
+/// rounding and a `Rational`'s alike.
+pub unsafe fn rounding(mode: u32) -> Rounding {
+    match mode {
+        MODE_HALF_UP => Rounding::HalfUp,
+        MODE_HALF_EVEN => Rounding::HalfEven,
+        MODE_HALF_DOWN => Rounding::HalfDown,
+        MODE_UP => Rounding::Up,
+        MODE_DOWN => Rounding::Down,
+        MODE_CEILING => Rounding::Ceiling,
+        MODE_FLOOR => Rounding::Floor,
+        // Nothing else is a mode the language declares: every `RoundingMode` case this module was
+        // compiled against is above, so an ordinal outside them is the compiler and this crate
+        // disagreeing about what the language declares, not a Souther program failing to hold
+        // anything.
+        _ => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, mode as u64, 0),
+    }
+}
 
 /// One amount divided by another at a scale, rounded the way a mode says.
 pub unsafe fn divided(left: u32, right: u32, wanted: i32, mode: u32) -> u32 {
@@ -836,68 +844,12 @@ pub unsafe fn divided(left: u32, right: u32, wanted: i32, mode: u32) -> u32 {
     )
 }
 
-/// How many significant digits the `/` operator answers with, which matches what a fixed-size
-/// decimal on other platforms carries.
-const OPERATOR_DIGITS: i64 = 29;
-
-/// The `/` operator on `Decimal`: the quotient to that many significant digits, half away from
-/// nothing, and an end to the call on a zero divisor.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_decimal_divide_by(left: u32, right: u32) -> u32 {
-    if sign(right) == 0 {
-        abort(crate::REASON_DIVISION_BY_ZERO, 0, 0, 0);
-    }
-    if sign(left) == 0 {
-        return made(0, 0, 0);
-    }
-    let (_, a_length) = digits(left);
-    let (_, b_length) = digits(right);
-    // Where the point falls in the quotient, give or take one, which is what says how many places
-    // after it make up the significant digits asked for.
-    let places = (a_length as i64 - scale(left) as i64) - (b_length as i64 - scale(right) as i64);
-    let mut wanted = OPERATOR_DIGITS - places;
-    // Exact where it terminates: the same amount written with as few places as it needs, but no
-    // fewer than what dividing one scale by the other prefers.
-    let preferred = scale(left) as i64 - scale(right) as i64;
-    let generous = if wanted > preferred { wanted } else { preferred };
-    let held = divided(left, right, bounded(generous + 1), MODE_DOWN);
-    if exact(left, right, held) {
-        return toward(held, bounded(preferred));
-    }
-    // Where the point falls was worked out give or take a digit, so the scale is adjusted by
-    // however many the answer turned out to be short or over and asked again.
-    let mut answering = divided(left, right, bounded(wanted), MODE_HALF_UP);
-    for _ in 0..4 {
-        let held = precision(answering) as i64;
-        if held == OPERATOR_DIGITS {
-            break;
-        }
-        wanted += OPERATOR_DIGITS - held;
-        answering = divided(left, right, bounded(wanted), MODE_HALF_UP);
-    }
-    answering
-}
-
 fn bounded(held: i64) -> i32 {
     if held > i32::MAX as i64 || held < i32::MIN as i64 {
         // A scale outside what one can be is a model bug rather than an amount.
         unsafe { abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0) }
     }
     held as i32
-}
-
-/// Whether an amount times the divisor is the dividend, which is what makes a quotient exact.
-unsafe fn exact(left: u32, right: u32, held: u32) -> bool {
-    compare(__souther_decimal_multiply(held, right), left) == 0
-}
-
-/// The same amount written with as few places as it needs, and no fewer than a scale asks for.
-unsafe fn toward(cell: u32, preferred: i32) -> u32 {
-    let held = stripped(cell);
-    if scale(held) >= preferred {
-        return held;
-    }
-    __souther_decimal_at_scale(held, preferred, MODE_DOWN)
 }
 
 /// `Decimal.divide(dividend, divisor, scale, mode)`: the quotient at that scale, or the case a zero
