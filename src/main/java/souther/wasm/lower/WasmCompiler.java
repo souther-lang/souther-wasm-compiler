@@ -1416,9 +1416,7 @@ public final class WasmCompiler {
                 out.constant(shapes.of(call.type()));
             }
             if (PLACES_ITS_VALUES.contains(kernel)) {
-                // What orders the values: the order the checker settled, which the type they are
-                // held as does not say for cases held as a union of them.
-                out.constant(orderingOf(call));
+                placing(out, call);
             }
             TypeSymbol.LanguageCase absent = answeredCase(kernel);
             if (absent != null) {
@@ -1453,16 +1451,24 @@ public final class WasmCompiler {
             return ((Core.CallSettlement.AtKernel) call.settlement()).fact();
         }
 
-        /** What a sort, a max or a min places its values by, as the checker settled it: the type it
-         *  held them to — a {@code sortBy} block's result, not the list's element — and the order of
-         *  that type. Read off {@link Core.KernelFact.OrderingSubject} rather than re-derived from a
-         *  type here or from a value at run time, so this backend never disagrees with the checker. */
-        private int orderingOf(Core.Call call) {
+        /**
+         * What a sort, a max or a min places its values by, as the checker settled it, left as two
+         * arguments: how many newtypes each value is opened through, and the descriptor of the
+         * order the opened values are placed on. Two, because they are two answers — a
+         * {@code data BetaN = Beta} is opened to a case with no order of its own and placed by the
+         * sum listing it — and a comparison keeps them apart the same way.
+         *
+         * <p>Read off {@link Core.KernelFact.OrderingSubject}, whose type is what the values were
+         * held to — a {@code sortBy} block's result, not the list's element — rather than
+         * re-derived here or read off a value at run time.
+         */
+        private void placing(BodyWriter out, Core.Call call) {
             // CallElaborator cannot produce one of these applications without this settlement, so
             // a different one here is the checker's contract broken and not a capability this
             // backend lacks — the same distinction `recognised` draws for String.matches's pattern.
             Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
-            return shapes.orderOf(settled.type(), settled.ordering());
+            out.constant(shapes.layersOf(settled.type()))
+                    .constant(shapes.orderOf(settled.type(), settled.ordering()));
         }
 
         /**
@@ -1493,8 +1499,8 @@ public final class WasmCompiler {
          * site below that pushes it. What this set answers instead is a fact of this runtime's own
          * ABI: which operations were built to take that extra operand at all.
          */
-        /** The kernels that place values on an order, each taking the descriptor of that order
-         *  after everything else. */
+        /** The kernels that place values on an order, each taking how many newtypes a value is
+         *  opened through and the descriptor of the order, after everything else. */
         private static final Set<Kernel> PLACES_ITS_VALUES = Set.of(
                 Kernel.LIST_SORT, Kernel.LIST_SORT_BY, Kernel.LIST_MAX, Kernel.LIST_MIN);
 

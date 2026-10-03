@@ -507,32 +507,30 @@ final class Descriptors {
         return held;
     }
 
+    /** How many newtypes a type is, one inside the next: how many fields a value of it is opened
+     *  through before what it is made of is reached. */
+    int layersOf(Type type) {
+        int layers = 0;
+        for (var within = wrappedBy(type); within.isPresent(); within = wrappedBy(within.get())) {
+            layers++;
+        }
+        return layers;
+    }
+
     /**
-     * The descriptor that places values held as {@code held} on the order the checker settled for
-     * them ({@link Core.OrderingBasis}), which the type they are held as does not say.
+     * The descriptor of the order the checker settled for values of {@code held}
+     * ({@link Core.OrderingBasis}), for values already opened from every newtype they are
+     * ({@link #layersOf}).
      *
-     * <p>The two part company where cases of one sum are held as a union of them, or as one of
-     * them: the union keeps its cases in the order of their names, and a single case has no order
-     * of its own, while the sum listing them orders them as it declares them. A case's cell names
-     * its case, which the sum's descriptor finds among its own, so such values are placed by the
-     * sum's descriptor. Everywhere else what the values are made of is the basis, a newtype
-     * standing where what it wraps stands, and their own descriptor is the order. With no basis
-     * there was no value to order.
+     * <p>How a value is held and what orders it are two answers, and this is only the second.
+     * A newtype over a case — {@code data BetaN = Beta}, {@code Beta} one case of {@code Rising} —
+     * is opened to a {@code Beta}, which has no order of its own, and placed by {@code Rising}; a
+     * union of cases is placed by the sum listing them; a newtype over a number by the number. In
+     * every one of them what the opened value is placed by is the basis, so nothing here asks
+     * which of them it is. With no basis there was no value to order.
      */
     int orderOf(Type held, Optional<Core.OrderingBasis> ordering) {
-        if (ordering.isEmpty()) {
-            return of(held);
-        }
-        Type basis = madeOf(ordering.get().type());
-        Type made = madeOf(held);
-        if (made.equals(basis)) {
-            return of(held);
-        }
-        if (made.equals(held)) {
-            return of(basis);
-        }
-        throw new IllegalStateException("a " + held + " is ordered by " + basis
-                + ", which what it wraps is not and which no descriptor of it places");
+        return of(madeOf(ordering.map(Core.OrderingBasis::type).orElse(held)));
     }
 
     private CheckedData declared(TypeSymbol.AtModule name) {

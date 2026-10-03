@@ -686,17 +686,43 @@ pub unsafe extern "C" fn __souther_list_append(left: u32, right: u32, descriptor
     value::list_over(descriptor, both, into, 0)
 }
 
-/// `List.sort(xs)`: the elements in the order the checker settled for them, which `order` places
-/// and the list's own element type may not — cases held as a union of them are ordered by the sum
-/// listing them. `descriptor` is what the answer is a list of.
+/// A value opened through `layers` newtypes, one inside the next, to what it is made of.
+unsafe fn opened(cell: u32, layers: u32) -> u32 {
+    let mut held = cell;
+    for _ in 0..layers {
+        held = value::__souther_record_get(held, 0);
+    }
+    held
+}
+
+/// `List.sort(xs)`: the elements in the order the checker settled for them.
+///
+/// How an element is held and what orders it are two answers, so they come as two: each element is
+/// opened through `layers` newtypes, and what that leaves is placed by `order`, which the list's own
+/// element type may not be — a union of cases is placed by the sum listing them, and a newtype over
+/// one case by the sum that case is one of. `descriptor` is what the answer is a list of.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_sort(list: u32, descriptor: u32, order: u32) -> u32 {
+pub unsafe extern "C" fn __souther_list_sort(
+    list: u32,
+    descriptor: u32,
+    layers: u32,
+    order: u32,
+) -> u32 {
     let held = __souther_list_length(list);
     let out = __souther_list(descriptor, held);
     for i in 0..held {
         __souther_list_set(out, i, __souther_list_get(list, i));
     }
-    merge_sorted(out, out, order);
+    if layers == 0 {
+        merge_sorted(out, out, order);
+        return out;
+    }
+    // Each element opened once, beside it, and the two moved together.
+    let by = __souther_list(descriptor, held);
+    for i in 0..held {
+        __souther_list_set(by, i, opened(__souther_list_get(list, i), layers));
+    }
+    merge_sorted(out, by, order);
     out
 }
 
@@ -758,20 +784,23 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
     }
 }
 
-/// The furthest one either way on the order `order` places, or nothing where there is none: the
-/// greatest when `maximum`. The order is the one the checker settled and the compiler passes, not
-/// one read off the list, whose element type may not be what orders its elements.
-unsafe fn list_furthest(list: u32, order: u32, maximum: bool) -> u32 {
+/// The furthest one either way, or nothing where there is none: the greatest when `maximum`. Each
+/// element is opened through `layers` newtypes and placed by `order`, as `List.sort` does; both
+/// are what the checker settled and the compiler passes, not anything read off the list.
+unsafe fn list_furthest(list: u32, layers: u32, order: u32, maximum: bool) -> u32 {
     let held = __souther_list_length(list);
     if held == 0 {
         return value::__souther_none();
     }
     let mut best = __souther_list_get(list, 0);
+    let mut placed = opened(best, layers);
     for i in 1..held {
         let each = __souther_list_get(list, i);
-        let against = order::ranked(each, best, order);
+        let at = opened(each, layers);
+        let against = order::ranked(at, placed, order);
         if (maximum && against > 0) || (!maximum && against < 0) {
             best = each;
+            placed = at;
         }
     }
     value::__souther_some(best)
@@ -779,23 +808,25 @@ unsafe fn list_furthest(list: u32, order: u32, maximum: bool) -> u32 {
 
 /// `List.max(xs)`.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_max(list: u32, order: u32) -> u32 {
-    list_furthest(list, order, true)
+pub unsafe extern "C" fn __souther_list_max(list: u32, layers: u32, order: u32) -> u32 {
+    list_furthest(list, layers, order, true)
 }
 
 /// `List.min(xs)`.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_min(list: u32, order: u32) -> u32 {
-    list_furthest(list, order, false)
+pub unsafe extern "C" fn __souther_list_min(list: u32, layers: u32, order: u32) -> u32 {
+    list_furthest(list, layers, order, false)
 }
 
 /// `List.sortBy(key, xs)`: the elements in the order what the block answers of each places them.
+/// What it answers is opened through `layers` newtypes and placed by `order`, as `List.sort` does.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_sort_by(
     key: u32,
     list: u32,
     descriptor: u32,
-    keys: u32,
+    layers: u32,
+    order: u32,
 ) -> u32 {
     let held = __souther_list_length(list);
     let out = __souther_list(descriptor, held);
@@ -803,9 +834,9 @@ pub unsafe extern "C" fn __souther_list_sort_by(
     for i in 0..held {
         let each = __souther_list_get(list, i);
         __souther_list_set(out, i, each);
-        __souther_list_set(by, i, crate::__souther_call_block(key, each));
+        __souther_list_set(by, i, opened(crate::__souther_call_block(key, each), layers));
     }
-    merge_sorted(out, by, keys);
+    merge_sorted(out, by, order);
     out
 }
 

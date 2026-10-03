@@ -85,6 +85,35 @@ class APairIsComparedAsWhatTheCheckerReadItAsTest {
             let lowest (n) = match List.min([Junior, Senior]) with
                 | Some r -> r
                 | None -> Junior
+
+            data RankN = Rank
+
+            data RankNN = RankN
+
+            behavior wrappedSorted : (n: Int) -> List<RankNN>
+
+            let wrappedSorted (n) =
+                List.sort([RankNN(RankN(Junior)), RankNN(RankN(Senior)), RankNN(RankN(Junior))])
+
+            behavior wrappedHighest : (n: Int) -> RankN
+
+            let wrappedHighest (n) = match List.max([RankN(Senior), RankN(Junior)]) with
+                | Some r -> r
+                | None -> RankN(Senior)
+
+            data Rising = Alpha | Beta
+
+            data BetaN = Beta
+
+            behavior aloneOrdered : (n: Int) -> List<Int>
+
+            let aloneOrdered (n) =
+                [List.length(List.sort([BetaN(Beta), BetaN(Beta)])),
+                 List.length(List.sortBy(b -> b, [BetaN(Beta)])),
+                 match List.min([BetaN(Beta), BetaN(Beta)]) with
+                     | Some b -> 1
+                     | None -> 0,
+                 if BetaN(Beta) <= BetaN(Beta) then 1 else 0]
             """;
 
     @Test
@@ -146,6 +175,25 @@ class APairIsComparedAsWhatTheCheckerReadItAsTest {
         assertThat(answerOf(module, "reading.sortedBy", "[0]")).isEqualTo("{\"value\":[0,1,2]}");
         assertThat(answerOf(module, "reading.highest", "[0]")).isEqualTo("{\"value\":\"Junior\"}");
         assertThat(answerOf(module, "reading.lowest", "[0]")).isEqualTo("{\"value\":\"Senior\"}");
+    }
+
+    /**
+     * A value held under newtypes is opened through them and placed by the order the checker
+     * settled for it, which is two answers: a newtype over a sum is placed as the sum declares its
+     * cases however many names it wears, and a newtype over one case — {@code BetaN}, over
+     * {@code Beta}, one case of {@code Rising} — is opened to a case that has no order of its own and
+     * placed by the sum it is one of. The checker orders both, and every place that orders runs.
+     */
+    @Test
+    void opensANewtypeAndPlacesWhatItWrapsByTheOrderTheCheckerSettled() {
+        Running module = compiled();
+
+        assertThat(answerOf(module, "reading.wrappedSorted", "[0]"))
+                .isEqualTo("{\"value\":[\"Senior\",\"Junior\",\"Junior\"]}");
+        assertThat(answerOf(module, "reading.wrappedHighest", "[0]"))
+                .isEqualTo("{\"value\":\"Junior\"}");
+        assertThat(answerOf(module, "reading.aloneOrdered", "[0]"))
+                .isEqualTo("{\"value\":[2,1,1,1]}");
     }
 
     private static String truths(boolean... each) {
