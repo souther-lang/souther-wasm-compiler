@@ -1,5 +1,6 @@
 package souther.wasm.lower;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -20,10 +21,12 @@ import souther.compiler.core.Core;
 import souther.compiler.core.Kernel;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedHelper;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.Refinement;
@@ -35,6 +38,7 @@ import souther.wasm.abi.RuntimeAbi.Cell;
 import souther.wasm.abi.WasmAbortMapping;
 import souther.wasm.abi.WasmFault;
 import souther.wasm.emit.Type;
+import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
@@ -248,6 +252,19 @@ public final class WasmCompiler {
                 fragment.export(exportName(behavior.name()), fragment.define(stringToString, wrapper));
             }
         }
+        // Asking for each one's descriptor is what declares its check, so these are asked before
+        // the checks below are written, whether or not anything else here reaches the type.
+        List<TypeSymbol.AtModule> decodable = decodable(program);
+        ByteArrayOutputStream descriptors = new ByteArrayOutputStream();
+        WasmWriter writing = new WasmWriter(descriptors);
+        for (TypeSymbol.AtModule each : decodable) {
+            writing.writeLittleEndian4(shapes.ofDeclared(each));
+        }
+        int table = decodable.isEmpty() ? 0 : fragment.place(descriptors.toByteArray());
+        fragment.export(DECODE, fragment.define(
+                fragment.functionType(List.of(Type.I32, Type.I32, Type.I32),
+                        List.of(Type.I32, Type.I32)),
+                emitter.decoding(table, decodable.size())));
 
         // Last, because everything before it asks for descriptors and asking for one is what
         // declares a check. Writing a check asks for them too, so this goes round until a round
@@ -263,7 +280,7 @@ public final class WasmCompiler {
         if (lifted) {
             liftable(fragment, calls, program);
         }
-        fragment.offers(Surface.of(program));
+        fragment.offers(Surface.of(program, decodable));
         return Linker.link(fragment);
     }
 
@@ -353,6 +370,33 @@ public final class WasmCompiler {
     /** The name a caller reaches a behavior by. */
     public static String exportName(ValueName.Behavior behavior) {
         return behavior.module() + "." + behavior.name();
+    }
+
+    /**
+     * The export a caller reads a value of one type through, on its own and outside any behavior:
+     * {@code (number, pointer, length) -> (pointer, length)}, answering what a behavior's export
+     * answers, {@code {"value": ...}} or {@code {"issues": [...]}}.
+     */
+    public static final String DECODE = "__souther_decode";
+
+    /**
+     * The types a caller may read a value of on its own, in the order their numbers run.
+     *
+     * <p>What a module of this program declares and publishes, and nothing else. A type a module
+     * keeps is one no caller may make a value of, and one a module on the path declares is that
+     * build's to offer. The number is this module's own: a caller looks it up in
+     * {@code souther:surface} when it loads the module, and never carries it to another.
+     */
+    static List<TypeSymbol.AtModule> decodable(CheckedProgram program) {
+        List<TypeSymbol.AtModule> offered = new ArrayList<>();
+        for (CheckedModule module : program.modules()) {
+            for (CheckedData data : module.data()) {
+                if (module.publicationOf(data.name()) == Publication.PUBLISHED) {
+                    offered.add(data.name());
+                }
+            }
+        }
+        return List.copyOf(offered);
     }
 
     /** The runtime module this build carries. */
@@ -793,6 +837,79 @@ public final class WasmCompiler {
                     .wrap()
                     .body();
         }
+
+        /**
+         * What reads a value of one of the types a caller may read on its own, by its number.
+         *
+         * <p>The reading is the one a behavior's argument is read with, the rules a value is held
+         * to included, from the root of the document rather than from a place among the
+         * arguments; and what it answers is what a behavior's export answers, the value written
+         * back as the type writes it, or the issues found. A number naming no type is the caller
+         * misusing the module rather than writing a bad document, so it ends the call.
+         *
+         * @param table where the descriptors are, one four-byte address to a number
+         * @param count how many numbers there are
+         */
+        byte[] decoding(int table, int count) {
+            out = new BodyWriter(3, 1);
+            locals = new HashMap<>();
+            int packed = out.wide(0);
+            int document = out.narrow();
+            int descriptor = out.narrow();
+            int read = out.narrow();
+
+            out.localGet(DECODE_NUMBER).constant(0).compares(BodyWriter.Comparison.LESS)
+                    .localGet(DECODE_NUMBER).constant(count)
+                    .compares(BodyWriter.Comparison.AT_LEAST)
+                    .or()
+                    .ifNotZero()
+                    .constant(WasmFault.NO_SUCH_TYPE.code())
+                    .constant(0)
+                    .localGet(DECODE_NUMBER).extendToWide()
+                    .constant((long) count)
+                    .call(calls.of(RuntimeAbi.ABORT))
+                    .unreachable()
+                    .end();
+
+            out.localGet(DECODE_NUMBER).shiftLeft(2).constant(table).add().load(0)
+                    .localSet(descriptor)
+                    .call(calls.of(RuntimeAbi.ISSUES_BEGIN))
+                    .localGet(DECODE_POINTER)
+                    .localGet(DECODE_LENGTH)
+                    .call(calls.of(RuntimeAbi.JSON_PARSE))
+                    .localSet(document)
+                    .localGet(document)
+                    .localGet(descriptor)
+                    // The root, which a JSON pointer writes as nothing at all.
+                    .constant(0)
+                    .constant(0)
+                    .call(calls.of(RuntimeAbi.READ))
+                    .localSet(read);
+
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifNotZero()
+                    .call(calls.of(RuntimeAbi.ISSUES_WRITTEN))
+                    .localSet(packed)
+                    .otherwise()
+                    .localGet(read)
+                    .localGet(descriptor)
+                    .call(calls.of(RuntimeAbi.WRITE))
+                    .localSet(packed)
+                    .end();
+
+            return out.localGet(packed)
+                    .wrap()
+                    .localGet(packed)
+                    .shiftRight(32)
+                    .wrap()
+                    .body();
+        }
+
+        /** Which type a caller asks a value to be read as. */
+        private static final int DECODE_NUMBER = 0;
+        /** The pointer the caller's JSON is at, beside the number. */
+        private static final int DECODE_POINTER = 1;
+        /** How long the caller's JSON is, beside the number. */
+        private static final int DECODE_LENGTH = 2;
 
         /** The pointer the caller's JSON is at. */
         private static final int LOCAL_INPUT_POINTER = 0;

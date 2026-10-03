@@ -25,9 +25,11 @@ import souther.wasm.link.RuntimeLayout;
 public final class Running {
 
     private final Instance instance;
+    private final byte[] module;
 
-    private Running(Instance instance) {
+    private Running(Instance instance, byte[] module) {
         this.instance = instance;
+        this.module = module;
     }
 
     /**
@@ -36,7 +38,52 @@ public final class Running {
      * @param module the linked output
      */
     public static Running linked(byte[] module) {
-        return new Running(instantiate(module));
+        return new Running(instantiate(module), module);
+    }
+
+    /** What the custom section {@code name} of this module says, as text. */
+    public String customSection(String name) {
+        return customSection(module, name);
+    }
+
+    /**
+     * What the custom section {@code name} of {@code module} says, as text.
+     *
+     * @throws AssertionError where the module carries no such section
+     */
+    public static String customSection(byte[] module, String name) {
+        int at = 8;
+        while (at < module.length) {
+            int id = module[at++] & 0xff;
+            long[] size = leb(module, at);
+            at = (int) size[1];
+            int end = at + (int) size[0];
+            if (id == 0) {
+                long[] length = leb(module, at);
+                int nameAt = (int) length[1];
+                int from = nameAt + (int) length[0];
+                if (new String(module, nameAt, (int) length[0], StandardCharsets.UTF_8).equals(name)) {
+                    return new String(module, from, end - from, StandardCharsets.UTF_8);
+                }
+            }
+            at = end;
+        }
+        throw new AssertionError("the module carries no " + name);
+    }
+
+    /** An unsigned LEB128 at {@code at}: the value, and where what follows it starts. */
+    private static long[] leb(byte[] bytes, int at) {
+        long value = 0;
+        int shift = 0;
+        int next = at;
+        while (true) {
+            int b = bytes[next++] & 0xff;
+            value |= (long) (b & 0x7f) << shift;
+            if ((b & 0x80) == 0) {
+                return new long[] {value, next};
+            }
+            shift += 7;
+        }
     }
 
     /**
@@ -48,7 +95,7 @@ public final class Running {
      */
     public static Running bareRuntime() {
         byte[] module = runtimeModule();
-        Running running = new Running(instantiate(module));
+        Running running = new Running(instantiate(module), module);
         running.call(RuntimeAbi.RUNTIME_INIT, RuntimeLayout.of(module).heapBase(module));
         return running;
     }
@@ -104,6 +151,11 @@ public final class Running {
     /** Calls an export taking any numbers and answering nothing. */
     public void runWith(String export, long... arguments) {
         instance.export(export).apply(arguments);
+    }
+
+    /** Calls an export taking any numbers and answering what it answers. */
+    public long[] callWith(String export, long... arguments) {
+        return instance.export(export).apply(arguments);
     }
 
     /** Calls an export answering a pointer and a length packed into one number. */

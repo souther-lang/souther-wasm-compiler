@@ -2,11 +2,11 @@ package souther.wasm.link;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.Running;
 import souther.wasm.lower.WasmCompiler;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -219,38 +219,6 @@ class AModuleSaysWhatItOffersACallerTest {
 
     /** The custom section {@code souther:surface}, read as JSON. */
     private static JsonNode surfaceOf(byte[] module) {
-        int at = 8;
-        while (at < module.length) {
-            int id = module[at++] & 0xff;
-            long[] size = leb(module, at);
-            at = (int) size[1];
-            int end = at + (int) size[0];
-            if (id == 0) {
-                long[] length = leb(module, at);
-                int nameAt = (int) length[1];
-                String name = new String(module, nameAt, (int) length[0], StandardCharsets.UTF_8);
-                if (name.equals("souther:surface")) {
-                    int from = nameAt + (int) length[0];
-                    return new ObjectMapper().readTree(
-                            new String(module, from, end - from, StandardCharsets.UTF_8));
-                }
-            }
-            at = end;
-        }
-        throw new AssertionError("the module carries no souther:surface");
-    }
-
-    /** An unsigned LEB128 at {@code at}: the value, and where what follows it starts. */
-    private static long[] leb(byte[] bytes, int at) {
-        long value = 0;
-        int shift = 0;
-        while (true) {
-            int b = bytes[at++] & 0xff;
-            value |= (long) (b & 0x7f) << shift;
-            if ((b & 0x80) == 0) {
-                return new long[] {value, at};
-            }
-            shift += 7;
-        }
+        return new ObjectMapper().readTree(Running.customSection(module, "souther:surface"));
     }
 }

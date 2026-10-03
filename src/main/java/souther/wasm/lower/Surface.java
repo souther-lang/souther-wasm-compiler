@@ -47,6 +47,11 @@ import souther.compiler.types.TypeSymbol;
  * read on its own is what a module publishes, and anything that hands a caller a way to make a
  * value of a type reads that rather than taking this list as the answer.
  *
+ * <p>Which those are is said here as the module was built to offer them: a declaration a caller may
+ * read a value of on its own carries {@code "decode"}, the number {@link WasmCompiler#DECODE} reads
+ * it under, and no other does. The number is this module's: a caller looks it up here when it loads
+ * the module, by the declaration's module and name, and does not carry it to another module.
+ *
  * <p>{@link #VERSION} moves when what this says is read differently.
  */
 final class Surface {
@@ -55,16 +60,25 @@ final class Surface {
     static final int VERSION = 1;
 
     private final CheckedProgram program;
+    private final Map<TypeSymbol.AtModule, Integer> decodable = new LinkedHashMap<>();
     private final Map<TypeSymbol.AtModule, Declared> named = new LinkedHashMap<>();
     private final Deque<TypeSymbol.AtModule> pending = new ArrayDeque<>();
 
-    private Surface(CheckedProgram program) {
+    private Surface(CheckedProgram program, List<TypeSymbol.AtModule> decodable) {
         this.program = program;
+        for (int i = 0; i < decodable.size(); i++) {
+            this.decodable.put(decodable.get(i), i);
+        }
     }
 
-    /** The surface of {@code program}, as JSON. */
-    static String of(CheckedProgram program) {
-        return new Surface(program).written();
+    /**
+     * The surface of {@code program}, as JSON.
+     *
+     * @param decodable the types a caller may read a value of on its own, in the order their
+     *     numbers run, as the module was built with them
+     */
+    static String of(CheckedProgram program, List<TypeSymbol.AtModule> decodable) {
+        return new Surface(program, decodable).written();
     }
 
     private String written() {
@@ -127,7 +141,8 @@ final class Surface {
     private String declaration(TypeSymbol.AtModule name, Declared declared) {
         String identity = "{\"module\":" + quoted(name.module()) + ",\"name\":" + quoted(name.name())
                 + ",\"by\":" + quoted(by(declared.declaredBy()))
-                + ",\"published\":" + published(name, declared.declaredBy());
+                + ",\"published\":" + published(name, declared.declaredBy())
+                + (decodable.containsKey(name) ? ",\"decode\":" + decodable.get(name) : "");
         return switch (declared.data()) {
             case CheckedData.Product product -> {
                 StringJoiner fields = new StringJoiner(",", "[", "]");

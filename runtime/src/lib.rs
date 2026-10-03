@@ -317,8 +317,8 @@ const OFF_AUX1: usize = 20;
 // `souther.wasm.abi.WasmAbortMapping`, and repeated here as the same number under the same name so
 // that raising one and reading it agree; nothing here may raise a Souther program abort under a
 // name `WasmAbortMapping` does not also use for it (`TheTwoSidesOfAReasonAgreeOnItsNumberTest`
-// holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE` and
-// `BACKEND_INVARIANT_BROKEN` are this crate's own — a carrier failing to carry an answer through,
+// holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE`,
+// `BACKEND_INVARIANT_BROKEN` and `NO_SUCH_TYPE` are this crate's own — a carrier failing to carry an answer through,
 // or this backend's own machinery reaching a state the checker settled it never would — and are
 // this crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
@@ -370,6 +370,10 @@ pub const REASON_INVALID_BOUNDS: u32 = 10;
 /// lowered here emits an `ensures` check (see the Java `WasmCompiler`) — reserved here so the
 /// number is fixed before anything does. Represents `AbortKind::ENSURES_NOT_HELD`.
 pub const REASON_ENSURES_NOT_HELD: u32 = 11;
+/// A caller asked to read a value as a type under a number the module gives no type. `aux0` is
+/// the number, `aux1` how many the module gives. Raised by generated code, and an ABI failure by
+/// whoever calls this module, as `BAD_MARK` is: `WasmFault::NO_SUCH_TYPE`.
+pub const REASON_NO_SUCH_TYPE: u32 = 12;
 
 /// The arena, as what `alloc` allocates from: for 199x-notation, and for the text this crate
 /// builds to hand to it.

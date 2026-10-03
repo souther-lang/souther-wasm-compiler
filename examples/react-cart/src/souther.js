@@ -26,6 +26,7 @@ const REASONS = {
   9: "a position the program said gets no value",
   10: "bounds that did not name what they were asked to name",
   11: "what a behavior answered did not keep what it promised",
+  12: "a number the module gives no type under",
 };
 
 /** Where the module says what it reaches out for, and under which numbers. */
@@ -99,11 +100,17 @@ class Program {
   #supplied;
   #crossings;
   #surface;
+  #decodable;
 
   constructor(supplied, crossings, surface) {
     this.#supplied = supplied;
     this.#crossings = crossings;
     this.#surface = surface;
+    // Resolved once, by name: the numbers are this module's, and only its own surface says which
+    // type each one is.
+    this.#decodable = new Map((surface?.declarations ?? [])
+      .filter((declared) => declared.decode !== undefined)
+      .map((declared) => [`${declared.module}.${declared.name}`, declared.decode]));
     this.reachOut = this.reachOut.bind(this);
   }
 
@@ -151,10 +158,35 @@ class Program {
     if (reach === undefined) {
       throw new Error(`${behavior} is not a behavior this program offers`);
     }
+    return this.#crossed(args, reach);
+  }
+
+  /**
+   * Reads a value as a type the program publishes, on its own and not as a behavior's argument:
+   * what a form checks one field against before there is a whole call to make. The type's rules
+   * run, as they do for an argument.
+   *
+   * The module reads it under a number of its own, which is looked up here by the type's name in
+   * what the module says it offers. A number is never carried from one module to another.
+   *
+   * @param {string} type the type, module and all: `cart.Sku`
+   * @param {unknown} value what was written
+   * @returns `{ value }` where it reads as one, `{ issues }` where it does not
+   */
+  decode(type, value) {
+    const number = this.#decodable.get(type);
+    if (number === undefined) {
+      throw new Error(`${type} is not a type this program offers to read`);
+    }
+    return this.#crossed(value, (at, length) => this.#exports.__souther_decode(number, at, length));
+  }
+
+  /** Hands `document` to `reach` as JSON in the module's memory, and reads what it answers. */
+  #crossed(document, reach) {
     const generation = this.#exports.__souther_failure_generation();
     const mark = this.#exports.__ronto_alloc_mark();
     try {
-      const written = encoder.encode(write(args));
+      const written = encoder.encode(write(document));
       const at = this.#exports.__ronto_alloc(written.length);
       // After the allocation and not before: growing the memory replaces the buffer, and a view
       // made over the old one writes where nothing will read.
