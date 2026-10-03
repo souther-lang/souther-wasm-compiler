@@ -686,16 +686,17 @@ pub unsafe extern "C" fn __souther_list_append(left: u32, right: u32, descriptor
     value::list_over(descriptor, both, into, 0)
 }
 
-/// `List.sort(xs)`: the elements in the order their type places them.
+/// `List.sort(xs)`: the elements in the order the checker settled for them, which `order` places
+/// and the list's own element type may not — cases held as a union of them are ordered by the sum
+/// listing them. `descriptor` is what the answer is a list of.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_sort(list: u32, descriptor: u32) -> u32 {
-    let element = descriptor::member(descriptor, 0);
+pub unsafe extern "C" fn __souther_list_sort(list: u32, descriptor: u32, order: u32) -> u32 {
     let held = __souther_list_length(list);
     let out = __souther_list(descriptor, held);
     for i in 0..held {
         __souther_list_set(out, i, __souther_list_get(list, i));
     }
-    merge_sorted(out, out, element);
+    merge_sorted(out, out, order);
     out
 }
 
@@ -757,18 +758,18 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
     }
 }
 
-/// The furthest one either way, or nothing where there is none: the greatest when `maximum`.
-unsafe fn list_furthest(list: u32, maximum: bool) -> u32 {
+/// The furthest one either way on the order `order` places, or nothing where there is none: the
+/// greatest when `maximum`. The order is the one the checker settled and the compiler passes, not
+/// one read off the list, whose element type may not be what orders its elements.
+unsafe fn list_furthest(list: u32, order: u32, maximum: bool) -> u32 {
     let held = __souther_list_length(list);
     if held == 0 {
         return value::__souther_none();
     }
-    let descriptor = core::ptr::read_unaligned((list as usize + 4) as *const u32);
-    let element = descriptor::member(descriptor, 0);
     let mut best = __souther_list_get(list, 0);
     for i in 1..held {
         let each = __souther_list_get(list, i);
-        let against = order::ranked(each, best, element);
+        let against = order::ranked(each, best, order);
         if (maximum && against > 0) || (!maximum && against < 0) {
             best = each;
         }
@@ -778,14 +779,14 @@ unsafe fn list_furthest(list: u32, maximum: bool) -> u32 {
 
 /// `List.max(xs)`.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_max(list: u32) -> u32 {
-    list_furthest(list, true)
+pub unsafe extern "C" fn __souther_list_max(list: u32, order: u32) -> u32 {
+    list_furthest(list, order, true)
 }
 
 /// `List.min(xs)`.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_list_min(list: u32) -> u32 {
-    list_furthest(list, false)
+pub unsafe extern "C" fn __souther_list_min(list: u32, order: u32) -> u32 {
+    list_furthest(list, order, false)
 }
 
 /// `List.sortBy(key, xs)`: the elements in the order what the block answers of each places them.

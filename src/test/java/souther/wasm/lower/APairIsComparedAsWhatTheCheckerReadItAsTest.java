@@ -57,6 +57,34 @@ class APairIsComparedAsWhatTheCheckerReadItAsTest {
             behavior staffed : (r: Role) -> List<Bool>
 
             let staffed (r) = [r == Staff, Staff == r, r /= Staff]
+
+            data Rank = Senior | Junior
+
+            behavior unioned : (f: Bool) -> List<Bool>
+
+            let unioned (f) =
+                [(if f then Senior else Junior) < (if f then Junior else Senior),
+                 (if f then Junior else Senior) >= (if f then Senior else Junior)]
+
+            behavior sorted : (n: Int) -> List<Rank>
+
+            let sorted (n) = List.sort([Junior, Senior, Junior])
+
+            behavior sortedBy : (n: Int) -> List<Rank>
+
+            let sortedBy (n) = List.sortBy(r -> r, [Junior, Senior, Junior])
+
+            behavior highest : (n: Int) -> Rank
+
+            let highest (n) = match List.max([Senior, Junior]) with
+                | Some r -> r
+                | None -> Senior
+
+            behavior lowest : (n: Int) -> Rank
+
+            let lowest (n) = match List.min([Junior, Senior]) with
+                | Some r -> r
+                | None -> Junior
             """;
 
     @Test
@@ -98,6 +126,25 @@ class APairIsComparedAsWhatTheCheckerReadItAsTest {
                 .isEqualTo(truths(true, true, false));
         assertThat(answerOf(module, "reading.staffed", "[{\"type\":\"Lead\",\"team\":3}]"))
                 .isEqualTo(truths(false, false, true));
+    }
+
+    /**
+     * Cases of one sum held as a union of them are ordered by the sum, in the order it declares
+     * them, and not by the union, whose cases are kept in the order of their names. {@code Rank}
+     * declares its cases the other way round from their names, so an order taken from the union
+     * would answer every one of these the other way.
+     */
+    @Test
+    void ordersCasesHeldAsAUnionOfThemByTheSumListingThem() {
+        Running module = compiled();
+
+        assertThat(answerOf(module, "reading.unioned", "[true]")).isEqualTo(truths(true, true));
+        assertThat(answerOf(module, "reading.unioned", "[false]")).isEqualTo(truths(false, false));
+        String ranked = "{\"value\":[\"Senior\",\"Junior\",\"Junior\"]}";
+        assertThat(answerOf(module, "reading.sorted", "[0]")).isEqualTo(ranked);
+        assertThat(answerOf(module, "reading.sortedBy", "[0]")).isEqualTo(ranked);
+        assertThat(answerOf(module, "reading.highest", "[0]")).isEqualTo("{\"value\":\"Junior\"}");
+        assertThat(answerOf(module, "reading.lowest", "[0]")).isEqualTo("{\"value\":\"Senior\"}");
     }
 
     private static String truths(boolean... each) {

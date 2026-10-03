@@ -6,7 +6,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.ToIntFunction;
+import souther.compiler.core.Core;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedAlternativesForm;
 import souther.compiler.program.CheckedBehavior;
@@ -487,13 +489,50 @@ final class Descriptors {
      * What a newtype is a name for, or nothing where the type is no newtype. A value of one is
      * laid out as the one field it is made of, so what it is a name for is that field's.
      */
-    java.util.Optional<Type> wrappedBy(Type type) {
+    Optional<Type> wrappedBy(Type type) {
         if (type instanceof Type.Ref reference
                 && reference.name() instanceof TypeSymbol.AtModule named
                 && declared(named) instanceof CheckedData.Newtype newtype) {
-            return java.util.Optional.of(newtype.fields().getFirst().type());
+            return Optional.of(newtype.fields().getFirst().type());
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
+    }
+
+    /** What a type is made of under every newtype it is, which is the type itself for none. */
+    Type madeOf(Type type) {
+        Type held = type;
+        for (var within = wrappedBy(held); within.isPresent(); within = wrappedBy(held)) {
+            held = within.get();
+        }
+        return held;
+    }
+
+    /**
+     * The descriptor that places values held as {@code held} on the order the checker settled for
+     * them ({@link Core.OrderingBasis}), which the type they are held as does not say.
+     *
+     * <p>The two part company where cases of one sum are held as a union of them, or as one of
+     * them: the union keeps its cases in the order of their names, and a single case has no order
+     * of its own, while the sum listing them orders them as it declares them. A case's cell names
+     * its case, which the sum's descriptor finds among its own, so such values are placed by the
+     * sum's descriptor. Everywhere else what the values are made of is the basis, a newtype
+     * standing where what it wraps stands, and their own descriptor is the order. With no basis
+     * there was no value to order.
+     */
+    int orderOf(Type held, Optional<Core.OrderingBasis> ordering) {
+        if (ordering.isEmpty()) {
+            return of(held);
+        }
+        Type basis = madeOf(ordering.get().type());
+        Type made = madeOf(held);
+        if (made.equals(basis)) {
+            return of(held);
+        }
+        if (made.equals(held)) {
+            return of(basis);
+        }
+        throw new IllegalStateException("a " + held + " is ordered by " + basis
+                + ", which what it wraps is not and which no descriptor of it places");
     }
 
     private CheckedData declared(TypeSymbol.AtModule name) {

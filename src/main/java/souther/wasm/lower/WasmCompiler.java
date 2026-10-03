@@ -1415,11 +1415,10 @@ public final class WasmCompiler {
                 // say, so it is taken from the type rather than from a value.
                 out.constant(shapes.of(call.type()));
             }
-            if (kernel == Kernel.LIST_SORT_BY) {
-                // Sorting by what a block answers wants the type of what it answers, which is the
-                // block's own result and not the list's element — the checker already checked the
-                // ordering requirement against this Type and settled it on the call.
-                out.constant(shapes.of(orderingSubject(call)));
+            if (PLACES_ITS_VALUES.contains(kernel)) {
+                // What orders the values: the order the checker settled, which the type they are
+                // held as does not say for cases held as a union of them.
+                out.constant(orderingOf(call));
             }
             TypeSymbol.LanguageCase absent = answeredCase(kernel);
             if (absent != null) {
@@ -1454,16 +1453,16 @@ public final class WasmCompiler {
             return ((Core.CallSettlement.AtKernel) call.settlement()).fact();
         }
 
-        /** The Type a {@code sortBy} call's ordering requirement was checked against — the key
-         *  block's result, not the list's element. Read off {@link Core.KernelFact.OrderingSubject}
-         *  rather than re-derived from the block's declared type, so this backend never disagrees with
-         *  what the checker settled. */
-        private souther.compiler.types.Type orderingSubject(Core.Call call) {
-            // CallElaborator cannot produce a sortBy application without this settlement, so a
-            // different one here is the checker's contract broken and not a capability this backend
-            // lacks — the same distinction `recognised` draws for String.matches's settled pattern.
+        /** What a sort, a max or a min places its values by, as the checker settled it: the type it
+         *  held them to — a {@code sortBy} block's result, not the list's element — and the order of
+         *  that type. Read off {@link Core.KernelFact.OrderingSubject} rather than re-derived from a
+         *  type here or from a value at run time, so this backend never disagrees with the checker. */
+        private int orderingOf(Core.Call call) {
+            // CallElaborator cannot produce one of these applications without this settlement, so
+            // a different one here is the checker's contract broken and not a capability this
+            // backend lacks — the same distinction `recognised` draws for String.matches's pattern.
             Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
-            return settled.type();
+            return shapes.orderOf(settled.type(), settled.ordering());
         }
 
         /**
@@ -1494,6 +1493,11 @@ public final class WasmCompiler {
          * site below that pushes it. What this set answers instead is a fact of this runtime's own
          * ABI: which operations were built to take that extra operand at all.
          */
+        /** The kernels that place values on an order, each taking the descriptor of that order
+         *  after everything else. */
+        private static final Set<Kernel> PLACES_ITS_VALUES = Set.of(
+                Kernel.LIST_SORT, Kernel.LIST_SORT_BY, Kernel.LIST_MAX, Kernel.LIST_MIN);
+
         private static final Set<Kernel> TAKES_RESULT_DESCRIPTOR = Set.of(
                 Kernel.STRING_SPLIT, Kernel.STRING_CHARACTERS, Kernel.STRING_CODE_POINTS,
                 Kernel.STRING_WORDS, Kernel.STRING_LINES,
@@ -1872,10 +1876,13 @@ public final class WasmCompiler {
          * one side, the descriptor reads the other side's cell as what it is not, and the answer
          * turns on which side was written first.
          *
-         * <p>A newtype is a name for the value it is made of and stands where that value stands,
-         * so every name either operand wears is opened and the pair compared as what the type it
-         * is read in is made of. Nothing is built for a literal, and neither side is picked: both
-         * are opened the same way, to the one type the reading names.
+         * <p>What the operands are read as and what orders them are two answers, and the checker
+         * gives both. The reading says how each operand is taken — at its exact value, or opened
+         * from every newtype it wears, which stands where the value it wraps stands — and which
+         * type sameness is asked in. The order of {@code <} and the others is the
+         * {@link Core.OrderingBasis}, which no reading says: cases of one sum held as a union of
+         * them read as they stand, and the union keeps its cases in the order of their names while
+         * the sum orders them as it declares them.
          */
         private void compared(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
             Core left = binary.left();
@@ -1886,10 +1893,14 @@ public final class WasmCompiler {
                 ordered(out, souther.compiler.types.Type.Prim.RATIONAL, how);
                 return;
             }
-            souther.compiler.types.Type in = madeOf(switch (binary.reading()) {
-                case Core.BinaryReading.In read -> read.type();
-                default -> left.type();
-            });
+            souther.compiler.types.Type in = shapes.madeOf(binary.op().ordersItsOperands()
+                    ? binary.ordering().orElseThrow(() -> new IllegalStateException(writing
+                            + " orders a " + left.type() + " and a " + right.type()
+                            + " by nothing the checker settled")).type()
+                    : switch (binary.reading()) {
+                        case Core.BinaryReading.In read -> read.type();
+                        default -> left.type();
+                    });
             // Two whole numbers stand as their numbers do, which is one instruction.
             if (in == souther.compiler.types.Type.Prim.INT) {
                 wholeOpened(out, left);
@@ -1909,16 +1920,6 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.COMPARE))
                     .constant(0)
                     .compares(how);
-        }
-
-        /** What a type is made of under every newtype it is, which is the type itself for none. */
-        private souther.compiler.types.Type madeOf(souther.compiler.types.Type type) {
-            souther.compiler.types.Type held = type;
-            for (var within = shapes.wrappedBy(held); within.isPresent();
-                    within = shapes.wrappedBy(held)) {
-                held = within.get();
-            }
-            return held;
         }
 
         /** Leaves an operand as what it is made of, opening each newtype it wears. */
