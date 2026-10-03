@@ -4,7 +4,8 @@
  *
  * Changed from the original: the package name am.ik.wasm was rewritten to souther.wasm.emit,
  * wherever it appears; the bulk memory and table instructions of the misc prefix are read, since
- * a runtime built by rustc writes memory.copy and memory.fill; and a table and the active element
+ * a runtime built by rustc writes memory.copy and memory.fill, and the data segment memory.init
+ * and data.drop name is recorded as a reference of its own kind; and a table and the active element
  * segments filling it with functions are read and written, for the tree shaker and the folder.
  */
 package souther.wasm.emit;
@@ -56,7 +57,12 @@ public final class WasmSections {
 		/** A type index encoded as an unsigned LEB (an instruction's {@code typeidx}). */
 		TYPE_U,
 		/** A type index encoded as a signed s33 (a {@code heaptype} or a blocktype). */
-		TYPE_S
+		TYPE_S,
+		/**
+		 * A data segment index (unsigned LEB): a {@code memory.init} / {@code data.drop}
+		 * operand. Recorded because a pass dropping or splitting segments renumbers them.
+		 */
+		DATA
 
 	}
 
@@ -385,8 +391,10 @@ public final class WasmSections {
 	static List<CallSite> scanCallSites(byte[] entry) {
 		List<CallSite> sites = new ArrayList<>();
 		for (Ref r : scanBody(entry)) {
-			if (r.kind() == RefKind.FUNC) {
-				sites.add(new CallSite(r.start(), r.end(), r.index()));
+			switch (r.kind()) {
+				case FUNC -> sites.add(new CallSite(r.start(), r.end(), r.index()));
+				case TYPE_U, TYPE_S, DATA -> {
+				}
 			}
 		}
 		return sites;
@@ -458,16 +466,22 @@ public final class WasmSections {
 			case 0x43 -> p[0] += 4; // f32.const
 			case 0x44 -> p[0] += 8; // f64.const
 			case 0xFB -> scanGc(buf, p, refs); // wasm-GC prefix
-			// Misc prefix: the saturating truncations (0x00-0x07) carry no immediate; the bulk
-			// memory and table instructions carry one or two indices, none of a function or
-			// a type. A data or element index is skipped: this pass renumbers neither.
+			// Misc prefix: the saturating truncations (0x00-0x07) carry no immediate. Of the
+			// bulk memory and table instructions, memory.init and data.drop name a data
+			// segment, which is recorded like any index a pass may renumber; the rest name a
+			// memory, a table or an element segment, which no pass here renumbers.
 			case 0xFC -> {
 				int sub = readU(buf, p);
 				switch (sub) {
 					case 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 -> {
 					}
-					case 0x09, 0x0B, 0x0D, 0x0F, 0x10, 0x11 -> skipLeb(buf, p);
-					case 0x08, 0x0A, 0x0C, 0x0E -> {
+					case 0x08 -> { // memory.init: dataidx, memidx
+						recordDataIdx(buf, p, refs);
+						skipLeb(buf, p);
+					}
+					case 0x09 -> recordDataIdx(buf, p, refs); // data.drop: dataidx
+					case 0x0B, 0x0D, 0x0F, 0x10, 0x11 -> skipLeb(buf, p);
+					case 0x0A, 0x0C, 0x0E -> {
 						skipLeb(buf, p);
 						skipLeb(buf, p);
 					}
@@ -484,6 +498,13 @@ public final class WasmSections {
 		int start = p[0];
 		int target = readU(buf, p);
 		refs.add(new Ref(start, p[0], target, RefKind.FUNC));
+	}
+
+	// An unsigned-LEB dataidx immediate.
+	private static void recordDataIdx(byte[] buf, int[] p, List<Ref> refs) {
+		int start = p[0];
+		int index = readU(buf, p);
+		refs.add(new Ref(start, p[0], index, RefKind.DATA));
 	}
 
 	// An unsigned-LEB typeidx immediate.

@@ -3,9 +3,11 @@
  * licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 and NOTICE.
  *
  * Changed from the original: the package name am.ik.wasm was rewritten to souther.wasm.emit,
- * wherever it appears; and a table and active element segments of function indices are read
- * rather than refused, every function a segment puts in a table counting as a root and each
- * index being renumbered with the rest.
+ * wherever it appears; a table and active element segments of function indices are read rather
+ * than refused, every function a segment puts in a table counting as a root and each index being
+ * renumbered with the rest; and the data segment index space is renumbered wherever it is named,
+ * in a memory.init or data.drop and in the data count section, with a segment an instruction
+ * names kept whole.
  */
 package souther.wasm.emit;
 
@@ -83,6 +85,8 @@ public final class WasmTreeShaker {
 	private static final int SEC_CODE = 10;
 
 	private static final int SEC_DATA = 11;
+
+	private static final int SEC_DATA_COUNT = 12;
 
 	private static final int SEC_TAG = 13;
 
@@ -374,17 +378,40 @@ public final class WasmTreeShaker {
 			}
 		}
 
+		// A segment a surviving memory.init or data.drop names by index is kept, and kept
+		// whole: the instruction is a use of it whatever a caller claimed about who owns
+		// it, and cutting it into runs would leave the index naming one of them.
+		List<DataSegment> dataSegments = dataSec == null ? List.of() : parseDataSection(dataSec.payload());
+		boolean[] namedData = new boolean[dataSegments.size()];
+		for (int i = 0; i < numDefined; i++) {
+			if (!reachable[numImportedFuncs + i]) {
+				continue;
+			}
+			for (Ref r : bodyRefs.get(i)) {
+				if (r.kind() == RefKind.DATA) {
+					if (r.index() < 0 || r.index() >= namedData.length) {
+						throw new IllegalStateException(
+								"WasmTreeShaker: a body names data segment " + r.index() + ", which is not defined");
+					}
+					namedData[r.index()] = true;
+				}
+			}
+		}
+
 		// Data segments whose owners all died go with them.
 		List<Integer> deadSegments = new ArrayList<>();
 		for (OwnedDataSegment owned : ownedDataSegments) {
-			if (!anyOwnerAlive(owned.ownerFuncIndices(), reachable, totalFuncs)) {
+			if (!namedData[owned.segmentIndex()]
+					&& !anyOwnerAlive(owned.ownerFuncIndices(), reachable, totalFuncs)) {
 				deadSegments.add(owned.segmentIndex());
 			}
 		}
 		// ... and so do the ranges inside a surviving segment that no survivor addresses.
-		List<DataSegment> dataSegments = dataSec == null ? List.of() : parseDataSection(dataSec.payload());
-		List<DroppableDataRange> deadRanges = deadRanges(droppableDataRanges, dataSegments, deadSegments, reachable,
-				numImportedFuncs, bodyConstants, globalConstants(globalSec));
+		List<DroppableDataRange> deadRanges = new ArrayList<>(deadRanges(droppableDataRanges, dataSegments,
+				deadSegments, reachable, numImportedFuncs, bodyConstants, globalConstants(globalSec)));
+		deadRanges.removeIf(r -> namedData[r.segmentIndex()]);
+		DataRebuild data = rebuildDataSection(dataSegments, deadSegments, deadRanges);
+		Remaps remaps = new Remaps(funcRemap, typeRemap, data.remap());
 
 		if (next == totalFuncs && nextType == totalTypes && deadSegments.isEmpty() && deadRanges.isEmpty()) {
 			return new ShakeResult(module, numImportedFuncs, null); // nothing to drop
@@ -399,16 +426,16 @@ public final class WasmTreeShaker {
 		for (Section s : sections) {
 			switch (s.id()) {
 				case SEC_TYPE -> addVector(rebuilt, SEC_TYPE,
-						rebuildTypeSection(s.payload(), typeEntries, typeUsed, funcRemap, typeRemap));
+						rebuildTypeSection(s.payload(), typeEntries, typeUsed, remaps));
 				case SEC_IMPORT ->
-					addVector(rebuilt, SEC_IMPORT, rebuildImports(imports, reachable, funcRemap, typeRemap));
+					addVector(rebuilt, SEC_IMPORT, rebuildImports(imports, reachable, remaps));
 				case SEC_FUNCTION -> addVector(rebuilt, SEC_FUNCTION,
 						rebuildFunctionSection(defTypeIdx, numImportedFuncs, reachable, typeRemap));
 				case SEC_GLOBAL ->
-					addVector(rebuilt, SEC_GLOBAL, applyRefs(s.payload(), globalRefs, funcRemap, typeRemap));
-				case SEC_TAG -> addVector(rebuilt, SEC_TAG, applyRefs(s.payload(), tagRefs, funcRemap, typeRemap));
+					addVector(rebuilt, SEC_GLOBAL, applyRefs(s.payload(), globalRefs, remaps));
+				case SEC_TAG -> addVector(rebuilt, SEC_TAG, applyRefs(s.payload(), tagRefs, remaps));
 				case SEC_CODE -> addVector(rebuilt, SEC_CODE,
-						rebuildCodeSection(codeEntries, bodyRefs, numImportedFuncs, reachable, funcRemap, typeRemap));
+						rebuildCodeSection(codeEntries, bodyRefs, numImportedFuncs, reachable, remaps));
 				case SEC_EXPORT ->
 					addVector(rebuilt, SEC_EXPORT, WasmSections.rebuildExportSection(s.payload(), funcRemap));
 				case SEC_START ->
@@ -419,8 +446,14 @@ public final class WasmTreeShaker {
 						rebuilt.add(s);
 					}
 					else {
-						addVector(rebuilt, SEC_DATA, rebuildDataSection(dataSegments, deadSegments, deadRanges));
+						addVector(rebuilt, SEC_DATA, data.payload());
 					}
+				}
+				// How many segments the data section holds, which dropping and cutting change.
+				case SEC_DATA_COUNT -> {
+					ByteArrayOutputStream count = new ByteArrayOutputStream();
+					WasmSections.writeU(count, data.count());
+					rebuilt.add(new Section(SEC_DATA_COUNT, count.toByteArray()));
 				}
 				case SEC_CUSTOM -> {
 					// The `name` section maps FUNCTION AND TYPE INDICES to names, and
@@ -459,10 +492,14 @@ public final class WasmTreeShaker {
 	}
 
 	// Splices a buffer, replacing each recorded immediate with its remapped value. The
+	/** What each index space a reference may name is renumbered to; -1 where it was dropped. */
+	private record Remaps(int[] func, int[] type, int[] data) {
+	}
+
 	// refs must be ascending and non-overlapping (they come from one forward walk), and
 	// the replacement's LEB length may differ from the original's -- exactly as the
 	// function renumbering already relies on.
-	private static byte[] applyRefs(byte[] buf, List<Ref> refs, int[] funcRemap, int[] typeRemap) {
+	private static byte[] applyRefs(byte[] buf, List<Ref> refs, Remaps remaps) {
 		if (refs.isEmpty()) {
 			return buf;
 		}
@@ -470,7 +507,15 @@ public final class WasmTreeShaker {
 		int cursor = 0;
 		for (Ref r : refs) {
 			WasmSections.writeRaw(out, WasmSections.slice(buf, cursor, r.start()));
-			int[] remap = r.kind() == RefKind.FUNC ? funcRemap : typeRemap;
+			int[] remap = switch (r.kind()) {
+				case FUNC -> remaps.func();
+				case TYPE_U, TYPE_S -> remaps.type();
+				case DATA -> remaps.data();
+			};
+			if (r.index() < 0 || r.index() >= remap.length) {
+				throw new IllegalStateException(
+						"WasmTreeShaker: " + r.kind() + " reference to index " + r.index() + ", which is not defined");
+			}
 			// A kept site naming a dropped definition means the reachability walk missed
 			// an edge; -1 would encode as a five-byte index and validate as nothing.
 			if (remap[r.index()] < 0) {
@@ -478,7 +523,7 @@ public final class WasmTreeShaker {
 						"WasmTreeShaker: surviving " + r.kind() + " reference to dropped index " + r.index());
 			}
 			switch (r.kind()) {
-				case FUNC, TYPE_U -> WasmSections.writeU(out, remap[r.index()]);
+				case FUNC, TYPE_U, DATA -> WasmSections.writeU(out, remap[r.index()]);
 				case TYPE_S -> WasmSections.writeS(out, remap[r.index()]);
 			}
 			cursor = r.end();
@@ -542,8 +587,10 @@ public final class WasmTreeShaker {
 
 	private static void seed(List<Ref> refs, boolean[] used, Deque<Integer> work, int totalTypes) {
 		for (Ref r : refs) {
-			if (r.kind() != RefKind.FUNC) {
-				seedIndex(r.index(), used, work, totalTypes);
+			switch (r.kind()) {
+				case TYPE_U, TYPE_S -> seedIndex(r.index(), used, work, totalTypes);
+				case FUNC, DATA -> {
+				}
 			}
 		}
 	}
@@ -556,7 +603,7 @@ public final class WasmTreeShaker {
 	}
 
 	private static byte[] rebuildTypeSection(byte[] payload, List<TypeEntry> entries, boolean[] typeUsed,
-			int[] funcRemap, int[] typeRemap) {
+			Remaps remaps) {
 		List<byte[]> kept = new ArrayList<>();
 		for (TypeEntry e : entries) {
 			if (!typeUsed[e.firstTypeIndex()]) {
@@ -567,7 +614,7 @@ public final class WasmTreeShaker {
 			for (Ref r : e.refs()) {
 				refs.add(new Ref(r.start() - e.start(), r.end() - e.start(), r.index(), r.kind()));
 			}
-			kept.add(applyRefs(raw, refs, funcRemap, typeRemap));
+			kept.add(applyRefs(raw, refs, remaps));
 		}
 		ByteArrayOutputStream body = new ByteArrayOutputStream();
 		WasmSections.writeU(body, kept.size());
@@ -579,8 +626,7 @@ public final class WasmTreeShaker {
 
 	// --- Import section ---
 
-	private static byte[] rebuildImports(List<ImportEntry> imports, boolean[] reachable, int[] funcRemap,
-			int[] typeRemap) {
+	private static byte[] rebuildImports(List<ImportEntry> imports, boolean[] reachable, Remaps remaps) {
 		ByteArrayOutputStream body = new ByteArrayOutputStream();
 		List<ImportEntry> kept = new ArrayList<>();
 		int funcOrdinal = 0;
@@ -597,7 +643,7 @@ public final class WasmTreeShaker {
 		}
 		WasmSections.writeU(body, kept.size());
 		for (ImportEntry e : kept) {
-			WasmSections.writeRaw(body, applyRefs(e.raw(), e.refs(), funcRemap, typeRemap));
+			WasmSections.writeRaw(body, applyRefs(e.raw(), e.refs(), remaps));
 		}
 		return body.toByteArray();
 	}
@@ -623,12 +669,12 @@ public final class WasmTreeShaker {
 	// --- Code section ---
 
 	private static byte[] rebuildCodeSection(List<byte[]> codeEntries, List<List<Ref>> bodyRefs, int numImportedFuncs,
-			boolean[] reachable, int[] funcRemap, int[] typeRemap) {
+			boolean[] reachable, Remaps remaps) {
 		ByteArrayOutputStream body = new ByteArrayOutputStream();
 		List<byte[]> kept = new ArrayList<>();
 		for (int i = 0; i < codeEntries.size(); i++) {
 			if (reachable[numImportedFuncs + i]) {
-				kept.add(applyRefs(codeEntries.get(i), bodyRefs.get(i), funcRemap, typeRemap));
+				kept.add(applyRefs(codeEntries.get(i), bodyRefs.get(i), remaps));
 			}
 		}
 		WasmSections.writeU(body, kept.size());
@@ -731,14 +777,24 @@ public final class WasmTreeShaker {
 		return constants;
 	}
 
+	/**
+	 * The rebuilt data section, how many segments it holds, and what each old segment's
+	 * index became: -1 for one dropped, and for one cut into runs, which is no longer one
+	 * segment and which nothing names (a named segment is never cut).
+	 */
+	private record DataRebuild(byte[] payload, int count, int[] remap) {
+	}
+
 	// Rebuilds the data section without the segments listed in deadSegments and without
 	// the byte ranges listed in deadRanges (a segment carrying one keeps its surviving
 	// runs, each re-emitted as its own active segment at the address it already had).
-	private static byte[] rebuildDataSection(List<DataSegment> segments, List<Integer> deadSegments,
+	private static DataRebuild rebuildDataSection(List<DataSegment> segments, List<Integer> deadSegments,
 			List<DroppableDataRange> deadRanges) {
 		List<byte[]> kept = new ArrayList<>();
+		int[] remap = new int[segments.size()];
 		for (int i = 0; i < segments.size(); i++) {
 			DataSegment segment = segments.get(i);
+			remap[i] = -1;
 			if (deadSegments.contains(i)) {
 				continue;
 			}
@@ -749,6 +805,7 @@ public final class WasmTreeShaker {
 				}
 			}
 			if (cuts.isEmpty()) {
+				remap[i] = kept.size();
 				kept.add(segment.raw());
 				continue;
 			}
@@ -771,7 +828,7 @@ public final class WasmTreeShaker {
 		for (byte[] segment : kept) {
 			WasmSections.writeRaw(body, segment);
 		}
-		return body.toByteArray();
+		return new DataRebuild(body.toByteArray(), kept.size(), remap);
 	}
 
 	// One active mode-0 data segment: flags 0, an i32.const offset expression, then the

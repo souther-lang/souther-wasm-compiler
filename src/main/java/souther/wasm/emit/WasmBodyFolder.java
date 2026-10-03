@@ -234,13 +234,18 @@ final class WasmBodyFolder {
 		return body.toByteArray();
 	}
 
-	// Splices only the FUNCTION references; type immediates keep their bytes verbatim
-	// (folding drops no type, so there is nothing to renumber there).
+	// Splices only the FUNCTION references; type and data immediates keep their bytes
+	// verbatim (folding drops no type and no data segment, so there is nothing to
+	// renumber there).
 	private static byte[] redirectFuncRefs(byte[] buf, List<WasmSections.Ref> refs, int[] remap) {
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
 		int cursor = 0;
 		for (WasmSections.Ref r : refs) {
-			if (r.kind() != WasmSections.RefKind.FUNC) {
+			boolean renumbered = switch (r.kind()) {
+				case FUNC -> true;
+				case TYPE_U, TYPE_S, DATA -> false;
+			};
+			if (!renumbered) {
 				continue;
 			}
 			WasmSections.writeRaw(out, WasmSections.slice(buf, cursor, r.start()));
