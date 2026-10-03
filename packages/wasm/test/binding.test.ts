@@ -255,7 +255,7 @@ export async function doubled(bytes: Uint8Array): Promise<unknown> {
   // parts, a type called what the runtime calls its types or what another type is written as once
   // its module is put before it, a parameter called what TypeScript reserves.
   it("writes whatever a model names without one name standing for another", async () => {
-    const { at, bytes } = await generated([`module a exposing ( X, Reading, Numeric, Program, Bound, Record, Promise, souther )
+    const { at, bytes } = await generated([`module a exposing ( X, Reading, Numeric, Program, Bound, Record, Promise, Readonly, souther )
 
 data X = { n: Int }
 data Reading = { n: Int }
@@ -264,6 +264,7 @@ data Program = String
 data Bound = { b: Bool }
 data Record = { r: Int }
 data Promise = { p: Int }
+data Readonly = { q: Int }
 data souther = { s: Int }
 `, `module b exposing ( X )
 
@@ -291,7 +292,8 @@ let program (souther) = souther + 1
 behavior load : (argument1: Int, FINGERPRINT: Int) -> Int
 
 let load (argument1, FINGERPRINT) = argument1 + FINGERPRINT
-`], `import { load, type AX, type AX_2, type BX, type Bound, type Bound_2 } from "./binding.ts";
+`], `import { load, type AX, type AX_2, type BX, type Bound, type Bound_2,
+  type Promise as Promised, type Readonly as Held, type Record as Recorded } from "./binding.ts";
 
 export async function all(bytes: Uint8Array): Promise<unknown[]> {
   const bound: Bound = await load(bytes);
@@ -299,6 +301,9 @@ export async function all(bytes: Uint8Array): Promise<unknown[]> {
   const flag: Bound_2 = { b: true };
   const other: BX = { m: 2 };
   const ax: AX = { k: 3 };
+  // The binding names none of TypeScript's own types, so the model's keep their names there; the
+  // page, which does name Promise, calls them otherwise.
+  const kept: [Recorded, Promised, Held] = [{ r: 3 }, { p: 4 }, { q: 5 }];
   return [
     bound.modules.decode.program(1).value,
     bound.modules.decode.load(2, 3).value,
@@ -308,13 +313,14 @@ export async function all(bytes: Uint8Array): Promise<unknown[]> {
     bound.decode.b.X(other).value,
     bound.decode.c.AX(ax).value,
     bound.decode.a.souther({ s: 1 }).value,
+    bound.decode.a.Record(kept[0]).value,
   ];
 }
 `);
     assert.equal(await checked(at), "");
     const page = await import(join(at, "page.ts"));
     assert.deepEqual(await page.all(bytes),
-      [2, 5, 6, 6, { b: true }, { m: 2 }, { k: 3 }, { s: 1 }]);
+      [2, 5, 6, 6, { b: true }, { m: 2 }, { k: 3 }, { s: 1 }, { r: 3 }]);
   });
 
   it("refuses a module it was not generated from", async () => {

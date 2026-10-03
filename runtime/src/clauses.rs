@@ -269,6 +269,8 @@ unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bo
     if n < 2 {
         return false;
     }
+    // Where the elements are is asked once: the comparison below runs n log n times.
+    let elements = value::__souther_list_elements(held);
     // The places, in order of value, and of place among equal values.
     let places = crate::alloc(4 * n);
     let spare = crate::alloc(4 * n);
@@ -276,8 +278,8 @@ unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bo
         put(places, i, i);
     }
     let before = |left: u32, right: u32| {
-        let order = crate::order::compare(value::__souther_list_get(held, left),
-            value::__souther_list_get(held, right), element);
+        let order = crate::order::compare(value::element_at(elements, left),
+            value::element_at(elements, right), element);
         order < 0 || (order == 0 && left < right)
     };
     sorted(places, spare, n, &before);
@@ -288,8 +290,8 @@ unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bo
     let mut at = 0;
     while at < n {
         let mut end = at + 1;
-        while end < n && crate::order::compare(value::__souther_list_get(held, get(places, at)),
-            value::__souther_list_get(held, get(places, end)), element) == 0 {
+        while end < n && crate::order::compare(value::element_at(elements, get(places, at)),
+            value::element_at(elements, get(places, end)), element) == 0 {
             end += 1;
         }
         if end - at > 1 {
@@ -310,7 +312,7 @@ unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bo
         if k > 0 {
             crate::text::put(b",");
         }
-        value::written(value::__souther_list_get(held, get(seconds, k)), element);
+        value::written(value::element_at(elements, get(seconds, k)), element);
     }
     crate::text::put(b"]");
     let (written_at, length) = crate::text::ended();

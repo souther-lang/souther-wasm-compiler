@@ -15,10 +15,11 @@ use crate::json;
 use crate::notation::{self, canonical, holds, made, str_of, LONGEST_TEXT};
 use crate::order;
 use crate::temporal;
+use crate::tree;
 use crate::value::{
-    self, __souther_int, __souther_int_value, __souther_list, __souther_list_get,
-    __souther_list_length, __souther_list_set, __souther_string, __souther_string_bytes,
-    __souther_string_length,
+    self, __souther_int, __souther_int_value, __souther_list, __souther_list_elements,
+    __souther_list_get, __souther_list_length, __souther_list_set, __souther_string,
+    __souther_string_bytes, __souther_string_length,
 };
 use crate::{
     abort, alloc, next_free, REASON_BACKEND_INVARIANT_BROKEN, REASON_INVALID_BOUNDS,
@@ -648,17 +649,41 @@ pub unsafe extern "C" fn __souther_list_find(kept: u32, list: u32) -> u32 {
 /// `List.append(xs, ys)`, and `xs ++ ys` on two lists: the elements of the one and then of the
 /// other, as a list of the type the descriptor names. Always a new cell, since a side handed back as
 /// it is would carry its own descriptor and not the answer's.
+///
+/// Where `xs` ends where its array's held places do and the array has room for `ys`, `ys` is written
+/// there and the answer is a cell over the same array (see the list cell in `value`). Otherwise the
+/// two go into an array of twice the room they take, so the next one joined on fits.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_append(left: u32, right: u32, descriptor: u32) -> u32 {
     let (a, b) = (__souther_list_length(left), __souther_list_length(right));
-    let out = __souther_list(descriptor, a + b);
-    for i in 0..a {
-        __souther_list_set(out, i, __souther_list_get(left, i));
+    if b == 0 {
+        return value::list_over(descriptor, a, __souther_list_elements(left), 0);
     }
-    for i in 0..b {
-        __souther_list_set(out, a + i, __souther_list_get(right, i));
+    if a == 0 {
+        return value::list_over(descriptor, b, __souther_list_elements(right), 0);
     }
-    out
+    let Some(both) = a.checked_add(b) else {
+        abort(crate::REASON_OUT_OF_MEMORY, 0, a as u64, b as u64)
+    };
+    let from = __souther_list_elements(left);
+    let added = __souther_list_elements(right);
+    if value::elements_held(from) == a && value::elements_room(from) - a >= b {
+        core::ptr::copy_nonoverlapping(
+            added as usize as *const u8,
+            (from + 4 * a) as usize as *mut u8,
+            4 * b as usize,
+        );
+        value::elements_now_hold(from, both);
+        return value::list_over(descriptor, both, from, 0);
+    }
+    let into = value::elements_of_room(both.saturating_mul(2), both);
+    core::ptr::copy_nonoverlapping(from as usize as *const u8, into as usize as *mut u8, 4 * a as usize);
+    core::ptr::copy_nonoverlapping(
+        added as usize as *const u8,
+        (into + 4 * a) as usize as *mut u8,
+        4 * b as usize,
+    );
+    value::list_over(descriptor, both, into, 0)
 }
 
 /// `List.sort(xs)`: the elements in the order their type places them.
@@ -689,6 +714,8 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
         return;
     }
     let room = alloc(8 * held);
+    let elements = __souther_list_elements(list);
+    let ranks = __souther_list_elements(by);
     let mut width = 1;
     while width < held {
         let mut at = 0;
@@ -704,7 +731,7 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
                 } else if right == end {
                     true
                 } else {
-                    order::ranked(__souther_list_get(by, left), __souther_list_get(by, right),
+                    order::ranked(value::element_at(ranks, left), value::element_at(ranks, right),
                             element) <= 0
                 };
                 let taken = if take_left {
@@ -715,16 +742,16 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
                     right - 1
                 };
                 core::ptr::write_unaligned(
-                    (room + into * 8) as *mut u32, __souther_list_get(list, taken));
+                    (room + into * 8) as *mut u32, value::element_at(elements, taken));
                 core::ptr::write_unaligned(
-                    (room + into * 8 + 4) as *mut u32, __souther_list_get(by, taken));
+                    (room + into * 8 + 4) as *mut u32, value::element_at(ranks, taken));
                 into += 1;
             }
             at += 2 * width;
         }
         for i in 0..held {
-            __souther_list_set(list, i, core::ptr::read_unaligned((room + i * 8) as *const u32));
-            __souther_list_set(by, i, core::ptr::read_unaligned((room + i * 8 + 4) as *const u32));
+            value::put_element_at(elements, i, core::ptr::read_unaligned((room + i * 8) as *const u32));
+            value::put_element_at(ranks, i, core::ptr::read_unaligned((room + i * 8 + 4) as *const u32));
         }
         width *= 2;
     }
@@ -902,8 +929,10 @@ unsafe fn same(left: u32, right: u32, length: u32) -> bool {
 
 /// `Set.empty`, `Set.singleton(value)` and the rest of what a set is asked for.
 ///
-/// A set is the array of its members in the order they are written, each held once, so every one
-/// of these keeps that: what comes out is sorted and has no member twice, whatever went in.
+/// A set is its members in the order they are written, each held once, so every one of these keeps
+/// that: what comes out is sorted and has no member twice, whatever went in. They are an array,
+/// or, for a set a member was put into or taken out of, a tree laid out as that array when it is
+/// read (`value`'s list cell, and `tree`).
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_empty(descriptor: u32) -> u32 {
     __souther_list(descriptor, 0)
@@ -920,11 +949,12 @@ pub unsafe extern "C" fn __souther_set_singleton(value: u32, descriptor: u32) ->
 /// Where a value stands in a set, or where it would go: a set's members are in ascending order,
 /// so this halves rather than walks.
 unsafe fn place_in(set: u32, value: u32, element: u32) -> Result<u32, u32> {
+    let members = __souther_list_elements(set);
     let mut low = 0;
     let mut high = __souther_list_length(set);
     while low < high {
         let middle = low + (high - low) / 2;
-        let held = order::compare(__souther_list_get(set, middle), value, element);
+        let held = order::compare(value::element_at(members, middle), value, element);
         if held == 0 {
             return Ok(middle);
         }
@@ -937,54 +967,48 @@ unsafe fn place_in(set: u32, value: u32, element: u32) -> Result<u32, u32> {
     Err(low)
 }
 
-/// A set's members with one put in at a place, or taken out of one.
-unsafe fn spliced(set: u32, at: u32, put: Option<u32>, descriptor: u32) -> u32 {
-    let held = __souther_list_length(set);
-    let out = __souther_list(descriptor, if put.is_some() { held + 1 } else { held - 1 });
-    let mut into = 0;
-    for i in 0..held {
-        if i == at {
-            if let Some(value) = put {
-                __souther_list_set(out, into, value);
-                into += 1;
-            } else {
-                continue;
-            }
-        }
-        __souther_list_set(out, into, __souther_list_get(set, i));
-        into += 1;
-    }
-    if at == held {
-        if let Some(value) = put {
-            __souther_list_set(out, into, value);
-        }
-    }
-    out
-}
-
 /// `Set.insert(value, s)`. A value the set already holds leaves it as it is.
+///
+/// Put into the tree the set is held as, which shares all but one path with the set's own: the set
+/// it was put into is still the set it was, for whoever holds it, and the walk that puts a member in
+/// at every element takes as long as it is long times how deep the tree is.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_insert(value: u32, set: u32, descriptor: u32) -> u32 {
-    match place_in(set, value, descriptor::member(descriptor, 0)) {
-        Ok(_) => set,
-        Err(at) => spliced(set, at, Some(value), descriptor),
+    let held = value::set_tree(set);
+    let order = tree::Order::Members(descriptor::member(descriptor, 0));
+    let grown = tree::inserted(held, value, 0, order, false);
+    if grown == held {
+        return set;
     }
+    value::list_over(descriptor, tree::size(grown), 0, grown)
 }
 
 /// `Set.remove(value, s)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_remove(value: u32, set: u32, descriptor: u32) -> u32 {
-    match place_in(set, value, descriptor::member(descriptor, 0)) {
-        Ok(at) => spliced(set, at, None, descriptor),
-        Err(_) => set,
+    let held = value::set_tree(set);
+    let order = tree::Order::Members(descriptor::member(descriptor, 0));
+    let shrunk = tree::removed(held, value, order);
+    if shrunk == held {
+        return set;
     }
+    if shrunk == 0 {
+        return __souther_list(descriptor, 0);
+    }
+    value::list_over(descriptor, tree::size(shrunk), 0, shrunk)
 }
 
-/// `Set.contains(value, s)`.
+/// `Set.contains(value, s)`: down the tree where the set is held as one, and by halving its array
+/// where it is not.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_contains(value: u32, set: u32) -> u32 {
     let descriptor = core::ptr::read_unaligned((set as usize + 4) as *const u32);
-    let held = place_in(set, value, descriptor::member(descriptor, 0)).is_ok();
+    let element = descriptor::member(descriptor, 0);
+    let held = if value::held_as_tree(set) {
+        tree::found(value::set_tree(set), value, tree::Order::Members(element)) != 0
+    } else {
+        place_in(set, value, element).is_ok()
+    };
     value::__souther_bool(u32::from(held))
 }
 
@@ -994,6 +1018,8 @@ pub unsafe extern "C" fn __souther_set_contains(value: u32, set: u32) -> u32 {
 unsafe fn merged(left: u32, right: u32, descriptor: u32, keep: Keep) -> u32 {
     let element = descriptor::member(descriptor, 0);
     let (a, b) = (__souther_list_length(left), __souther_list_length(right));
+    let lefts = __souther_list_elements(left);
+    let rights = __souther_list_elements(right);
     let room = alloc(4 * (a + b));
     let (mut i, mut j, mut kept) = (0, 0, 0);
     let mut take = |member: u32| {
@@ -1006,21 +1032,21 @@ unsafe fn merged(left: u32, right: u32, descriptor: u32, keep: Keep) -> u32 {
         } else if j == b {
             -1
         } else {
-            order::compare(__souther_list_get(left, i), __souther_list_get(right, j), element)
+            order::compare(value::element_at(lefts, i), value::element_at(rights, j), element)
         };
         if held < 0 {
             if keep != Keep::Both {
-                take(__souther_list_get(left, i));
+                take(value::element_at(lefts, i));
             }
             i += 1;
         } else if held > 0 {
             if keep == Keep::Either {
-                take(__souther_list_get(right, j));
+                take(value::element_at(rights, j));
             }
             j += 1;
         } else {
             if keep != Keep::LeftOnly {
-                take(__souther_list_get(left, i));
+                take(value::element_at(lefts, i));
             }
             i += 1;
             j += 1;
@@ -1074,15 +1100,12 @@ pub unsafe extern "C" fn __souther_size_of(collection: u32) -> u32 {
     __souther_int(sized(collection) as i64)
 }
 
-/// `Set.toList(s)`: the members in the order the set holds them.
+/// `Set.toList(s)`: the members in the order the set holds them — the set's own array, under a
+/// cell that says it is a list. Nothing writes to what a list holds, and a list grown from this one
+/// writes past it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_set_to_list(set: u32, descriptor: u32) -> u32 {
-    let held = __souther_list_length(set);
-    let out = __souther_list(descriptor, held);
-    for i in 0..held {
-        __souther_list_set(out, i, __souther_list_get(set, i));
-    }
-    out
+    value::list_over(descriptor, __souther_list_length(set), __souther_list_elements(set), 0)
 }
 
 /// `Set.fromList(xs)`: sorted once, the first of members that are one kept, as putting them in
@@ -1150,7 +1173,10 @@ pub unsafe extern "C" fn __souther_map_singleton(key: u32, held: u32, descriptor
     out
 }
 
-/// `Map.insert(key, value, m)`: the map with that key standing over that value.
+/// `Map.insert(key, value, m)`: the map with that key standing over that value. A key it already
+/// holds keeps the key it was first put in under.
+///
+/// Put into the tree the map is held as, as a set's member is (`__souther_set_insert`).
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_insert(
     key: u32,
@@ -1158,38 +1184,10 @@ pub unsafe extern "C" fn __souther_map_insert(
     map: u32,
     descriptor: u32,
 ) -> u32 {
-    let entries = value::__souther_map_length(map);
-    match place_of(key, map) {
-        Ok(at) => {
-            let out = value::__souther_map(descriptor, entries);
-            for i in 0..entries {
-                let value_of = if i == at { held } else { value::__souther_map_value(map, i) };
-                value::__souther_map_set(out, i, value::__souther_map_key(map, i), value_of);
-            }
-            out
-        }
-        Err(at) => {
-            let out = value::__souther_map(descriptor, entries + 1);
-            let mut into = 0;
-            for i in 0..entries {
-                if i == at {
-                    value::__souther_map_set(out, into, key, held);
-                    into += 1;
-                }
-                value::__souther_map_set(
-                    out,
-                    into,
-                    value::__souther_map_key(map, i),
-                    value::__souther_map_value(map, i),
-                );
-                into += 1;
-            }
-            if at == entries {
-                value::__souther_map_set(out, into, key, held);
-            }
-            out
-        }
-    }
+    value::__souther_map_length(map);
+    let order = tree::Order::Keys(value::map_keys(map));
+    let grown = tree::inserted(value::map_tree(map), key, held, order, true);
+    value::map_over(descriptor, tree::size(grown), 0, grown)
 }
 
 /// A map for a walk to grow, holding nothing yet.
@@ -1442,7 +1440,7 @@ unsafe fn held_under(key: u32, map: u32) -> Option<u32> {
         let keys = descriptor::member(builder_get(map, B_DESCRIPTOR), 0);
         entry_under(map, key, key_hash(key, keys)).map(|entry| entry_word(map, entry, 1))
     } else {
-        entry_of(key, map).map(|at| value::__souther_map_value(map, at))
+        entry_value(key, map)
     }
 }
 
@@ -1501,31 +1499,26 @@ pub unsafe extern "C" fn __souther_map_from_list(list: u32, descriptor: u32) -> 
 /// `Map.remove(key, m)`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_remove(key: u32, map: u32, descriptor: u32) -> u32 {
-    let entries = value::__souther_map_length(map);
-    let gone = entry_of(key, map);
-    if gone.is_none() {
+    value::__souther_map_length(map);
+    let held = value::map_tree(map);
+    let shrunk = tree::removed(held, key, tree::Order::Keys(value::map_keys(map)));
+    if shrunk == held {
         return map;
     }
-    let out = value::__souther_map(descriptor, entries - 1);
-    let mut at = 0;
-    for i in 0..entries {
-        if Some(i) == gone {
-            continue;
-        }
-        value::__souther_map_set(
-            out,
-            at,
-            value::__souther_map_key(map, i),
-            value::__souther_map_value(map, i),
-        );
-        at += 1;
+    if shrunk == 0 {
+        return value::__souther_map(descriptor, 0);
     }
-    out
+    value::map_over(descriptor, tree::size(shrunk), 0, shrunk)
 }
 
-/// Where a key stands in a map, or nowhere.
-unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
-    place_of(key, map).ok()
+/// What a map holds under a key: down the tree where the map is held as one, and by halving its
+/// entries where it is not.
+unsafe fn entry_value(key: u32, map: u32) -> Option<u32> {
+    if value::map_held_as_tree(map) {
+        let node = tree::found(value::map_tree(map), key, tree::Order::Keys(value::map_keys(map)));
+        return if node == 0 { None } else { Some(tree::value_of(node)) };
+    }
+    place_of(key, map).ok().map(|at| value::__souther_map_value(map, at))
 }
 
 /// Where a key stands in a map, or where it would go.
@@ -1536,12 +1529,13 @@ unsafe fn entry_of(key: u32, map: u32) -> Option<u32> {
 /// Halved rather than walked: a map's entries stand in the order their keys are written, so
 /// whether a key is there is answered by asking the middle one and dropping the half it is not in.
 unsafe fn place_of(key: u32, map: u32) -> Result<u32, u32> {
+    let entries = value::map_entries(map);
     let keys = value::map_keys(map);
     let mut low = 0;
     let mut high = value::__souther_map_length(map);
     while low < high {
         let middle = low + (high - low) / 2;
-        let held = value::key_order(value::__souther_map_key(map, middle), key, keys);
+        let held = value::key_order(value::entry_key(entries, middle), key, keys);
         if held == 0 {
             return Ok(middle);
         }
