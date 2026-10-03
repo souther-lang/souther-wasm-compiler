@@ -73,6 +73,19 @@ const READS_NUMBERS_AS_WRITTEN = typeof raw === "function"
   && JSON.parse("1.0", (_key, _value, context?: { source?: string }) => context?.source) === "1.0";
 
 /**
+ * Refuses an engine that cannot, wherever this package is about to read or write a number as it was
+ * written: loading a program, and making an amount. Asked in each, since either can be the first
+ * thing a page does, and one asked only in `load` left `amount` to fail as a missing function.
+ */
+function requireNumbersAsWritten(): void {
+  if (!READS_NUMBERS_AS_WRITTEN) {
+    throw new Error("this engine cannot read a number as it was written (JSON.parse source text "
+      + "access and JSON.rawJSON), so an amount wider than a JavaScript number would be rounded "
+      + "without a word");
+  }
+}
+
+/**
  * A number as the model holds one, handed over or handed back: a JavaScript number where one holds
  * it, and an `Amount` where one does not. Never a string — an answer handed back as one would be
  * handed over again as a string, and a string is not a number to the model.
@@ -87,8 +100,10 @@ export type Numeric = number | Amount;
  * rounded again coming back. Handing this over instead carries the digits.
  *
  * @throws RangeError where `written` is not a number as JSON writes one
+ * @throws Error where this engine cannot write a number as it was written
  */
 export function amount(written: string | number | bigint): Amount {
+  requireNumbersAsWritten();
   const text = String(written);
   if (partsOf(text) === undefined) {
     throw new RangeError(`${JSON.stringify(text)} is not a number as JSON writes one`);
@@ -132,11 +147,7 @@ export async function load(
   supplied: Supplied = {},
   fingerprint?: string,
 ): Promise<Program> {
-  if (!READS_NUMBERS_AS_WRITTEN) {
-    throw new Error("this engine cannot read a number as it was written (JSON.parse source text "
-      + "access and JSON.rawJSON), so an amount wider than a JavaScript number would be rounded "
-      + "without a word");
-  }
+  requireNumbersAsWritten();
   const module = await WebAssembly.compile(await asBytes(source));
   const [surface, held] = surfaceOf(module);
   if (fingerprint !== undefined) {
