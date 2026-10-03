@@ -1,5 +1,5 @@
 {
-  "model": "module forms\n\ndata Point = { x: Int, label: String, note: String? }\n\ndata Red\ndata Green\ndata Colour = Red | Green\n\ndata Circle = { radius: Int }\ndata Square = { side: Int }\ndata Shape = Circle | Square\n\ndata Day = Date\n\ndata At = Time\n\ndata Stamp = DateTime\n\ndata Moment = Instant\n\ndata Amount = Decimal\n\ndata Flag = Bool\n\ndata Points = List<Point>\n\ndata Counts = Map<String, Int>\n\ndata Unique = Set<Int>\n\ndata ByDay = Map<Date, Int>\n\ndata ByColour = Map<Colour, Int>\n\ndata Tracking = Int\ndata Untracked\ndata Shipment = Tracking | Untracked\n",
+  "model": "module forms\n\ndata Point = { x: Int, label: String, note: String? }\n\ndata Red\ndata Green\ndata Colour = Red | Green\n\ndata Circle = { radius: Int }\ndata Square = { side: Int }\ndata Shape = Circle | Square\n\ndata Day = Date\n\ndata At = Time\n\ndata Stamp = DateTime\n\ndata Moment = Instant\n\ndata Amount = Decimal\n\ndata Flag = Bool\n\ndata Points = List<Point>\n\ndata Counts = Map<String, Int>\n\ndata Unique = Set<Int>\n\ndata ByDay = Map<Date, Int>\n\ndata ByColour = Map<Colour, Int>\n\ndata Tracking = Int\ndata Untracked\ndata Shipment = Tracking | Untracked\n\ndata Wire = { iban: String }\ndata Card = { last4: String }\ndata Payment = Wire | Card\n",
   "cases": [
     {
       "about": "a field of the wrong kind",
@@ -202,20 +202,52 @@
       "expect": [
         {
           "path": "",
-          "code": "invalid_format",
-          "messageKey": "invalid_format",
+          "code": "not_allowed",
+          "messageKey": "not_allowed",
           "meta": {
-            "type": "Colour"
+            "allowed": [
+              "Green",
+              "Red"
+            ],
+            "actual": "Blue"
           }
         }
       ],
-      "note": "Raoh's enum reader folds ASCII case and says invalid_format.enum with allowed; Souther's enumerations are case-sensitive, and the JVM says invalid_format with type. Held here to the JVM until the language says which.",
+      "note": "Raoh's oneOf over strings, which states the rule an enumeration's name is held to: compared exactly, case and all. The names are in code point order, not the order the cases are declared in.",
       "messages": {
         "en": [
-          "invalid format"
+          "must be one of [Green, Red]"
         ],
         "ja": [
-          "形式が不正です"
+          "[Green, Red]のいずれかで入力してください"
+        ]
+      }
+    },
+    {
+      "about": "a name of a case written in another case",
+      "type": "forms.Colour",
+      "input": "red",
+      "expect": [
+        {
+          "path": "",
+          "code": "not_allowed",
+          "messageKey": "not_allowed",
+          "meta": {
+            "allowed": [
+              "Green",
+              "Red"
+            ],
+            "actual": "red"
+          }
+        }
+      ],
+      "note": "Raoh's enum would fold ASCII case and read it as Red; an enumeration's name is compared exactly.",
+      "messages": {
+        "en": [
+          "must be one of [Green, Red]"
+        ],
+        "ja": [
+          "[Green, Red]のいずれかで入力してください"
         ]
       }
     },
@@ -269,6 +301,35 @@
         ],
         "ja": [
           "[Circle, Square]のいずれかで入力してください"
+        ]
+      }
+    },
+    {
+      "about": "a tag no case of a sum has, where the cases are declared out of code point order",
+      "type": "forms.Payment",
+      "input": {
+        "type": "Cash"
+      },
+      "expect": [
+        {
+          "path": "/type",
+          "code": "not_allowed",
+          "messageKey": "not_allowed",
+          "meta": {
+            "allowed": [
+              "Card",
+              "Wire"
+            ]
+          }
+        }
+      ],
+      "note": "Raoh's discriminate lists the names in code point order, not the order the cases are declared in.",
+      "messages": {
+        "en": [
+          "must be one of [Card, Wire]"
+        ],
+        "ja": [
+          "[Card, Wire]のいずれかで入力してください"
         ]
       }
     },
@@ -585,19 +646,23 @@
       "expect": [
         {
           "path": "/Purple",
-          "code": "invalid_format",
-          "messageKey": "invalid_format",
+          "code": "not_allowed",
+          "messageKey": "not_allowed",
           "meta": {
-            "type": "Colour"
+            "allowed": [
+              "Green",
+              "Red"
+            ],
+            "actual": "Purple"
           }
         }
       ],
       "messages": {
         "en": [
-          "invalid format"
+          "must be one of [Green, Red]"
         ],
         "ja": [
-          "形式が不正です"
+          "[Green, Red]のいずれかで入力してください"
         ]
       }
     },
