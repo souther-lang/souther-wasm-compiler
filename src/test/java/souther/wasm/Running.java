@@ -101,6 +101,11 @@ public final class Running {
         return (int) instance.export(export).apply(first, second, third, fourth)[0];
     }
 
+    /** Calls an export taking any numbers and answering nothing. */
+    public void runWith(String export, long... arguments) {
+        instance.export(export).apply(arguments);
+    }
+
     /** Calls an export answering a pointer and a length packed into one number. */
     public long callPacked(String export, long... arguments) {
         return instance.export(export).apply(arguments)[0];

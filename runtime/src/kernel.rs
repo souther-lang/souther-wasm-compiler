@@ -100,20 +100,15 @@ pub unsafe extern "C" fn __souther_string_contains(part: u32, text: u32) -> u32 
 ///
 /// Reading an image costs about what the image is long, and one call often matches many strings
 /// against one pattern, so the last pattern read is kept with what its matches worked out. It
-/// lives in the arena, so it is kept only until the arena is popped, and read again after that.
+/// lives in the arena, so popping the arena forgets it ([`forget_kept_pattern`]).
 #[no_mangle]
 pub unsafe extern "C" fn __souther_string_matches(text: u32, image: u32) -> u32 {
-    let epoch = crate::arena_epoch();
     let kept = &mut *core::ptr::addr_of_mut!(KEPT_PATTERN);
-    let current = match kept.as_ref() {
-        Some(held) => held.image == image && held.epoch == epoch,
-        None => false,
-    };
-    if !current {
-        // What was kept may lie in arena memory handed out again since, so it is let go without
-        // being dropped: dropping it would read whatever is there now.
-        if let Some(stale) = kept.take() {
-            core::mem::forget(stale);
+    if kept.as_ref().map_or(true, |held| held.image != image) {
+        // Another pattern, read into this same arena: dropping the one kept gives nothing back,
+        // since the arena takes nothing back but by being popped.
+        if let Some(other) = kept.take() {
+            core::mem::forget(other);
         }
         let length = core::ptr::read_unaligned(image as usize as *const u32);
         let pattern = match notation199x::Pattern::from_image(notation::str_at(image + 4, length)) {
@@ -122,7 +117,6 @@ pub unsafe extern "C" fn __souther_string_matches(text: u32, image: u32) -> u32 
         };
         *kept = Some(KeptPattern {
             image,
-            epoch,
             matcher: notation199x::OwnedMatcher::new(pattern),
         });
     }
@@ -130,14 +124,21 @@ pub unsafe extern "C" fn __souther_string_matches(text: u32, image: u32) -> u32 
     value::__souther_bool(u32::from(held.matcher.matches(str_of(text))))
 }
 
-/// The pattern `String.matches` read last, where its image is, and the arena it was read into.
+/// The pattern `String.matches` read last, and where its image is.
 struct KeptPattern {
     image: u32,
-    epoch: u32,
     matcher: notation199x::OwnedMatcher,
 }
 
 static mut KEPT_PATTERN: Option<KeptPattern> = None;
+
+/// Forgets the kept pattern as the arena it lives in is popped. Not dropped: dropping it would read
+/// memory the arena may already have handed out again.
+pub(crate) unsafe fn forget_kept_pattern() {
+    if let Some(gone) = (*core::ptr::addr_of_mut!(KEPT_PATTERN)).take() {
+        core::mem::forget(gone);
+    }
+}
 
 /// A moment a body wrote down, read from the text it was written as.
 #[no_mangle]

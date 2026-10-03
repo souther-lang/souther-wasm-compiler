@@ -73,6 +73,50 @@ class AWalkOverAListRunsItsStepTest {
     }
 
     @Test
+    void goesBackToTheTopFromEveryWayAnAttemptedConstructionTakes() {
+        // Each way an attempt goes on is the answer of the recursion it is in, so a recursion
+        // through any of them goes back to the top like one through a condition does.
+        Running module = compiled("""
+                module counting
+
+                data Positive = { n: Int }
+                    invariant kept = n > 0
+
+                data Small = { n: Int }
+                    invariant small = n < 10
+
+                behavior down : (n: Int, acc: Int) -> Int constructs Positive
+
+                partial let summed (n: Int, acc: Int): Int =
+                    if Positive { n = n } as p then summed(p.n - 1, acc + p.n) else acc
+
+                let down (n, acc) = summed(n, acc)
+
+                behavior named : (n: Int, steps: Int) -> Int constructs Small
+
+                partial let shrunk (n: Int, steps: Int): Int =
+                    if Small { n = n } as s then steps
+                    else | small -> shrunk(n - 1, steps + 1)
+
+                let named (n, steps) = shrunk(n, steps)
+
+                behavior any : (n: Int, steps: Int) -> Int constructs Small
+
+                partial let lowered (n: Int, steps: Int): Int =
+                    if Small { n = n } as s then steps else lowered(n - 1, steps + 1)
+
+                let any (n, steps) = lowered(n, steps)
+                """);
+
+        assertThat(answerOf(module, "counting.down", "[20000,0]"))
+                .isEqualTo("{\"value\":200010000}");
+        assertThat(answerOf(module, "counting.named", "[20009,0]"))
+                .isEqualTo("{\"value\":20000}");
+        assertThat(answerOf(module, "counting.any", "[20009,0]"))
+                .isEqualTo("{\"value\":20000}");
+    }
+
+    @Test
     void keepsWhatTheStepHeldFor() {
         Running module = compiled("""
                 module counting

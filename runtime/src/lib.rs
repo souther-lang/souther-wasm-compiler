@@ -67,10 +67,6 @@ static mut ARENA_BASE: usize = 0;
 /// The first byte the arena has not handed out.
 static mut ARENA_TOP: usize = 0;
 
-/// How many times the arena has been popped. Anything kept across calls that lives in the arena
-/// remembers the number it was made under, and is not read once this has moved on.
-static mut ARENA_EPOCH: u32 = 0;
-
 /// The failure record's width in bytes: generation, reason, descriptor, aux0, aux1.
 const FAILURE_BYTES: usize = 4 + 4 + 4 + 8 + 8;
 
@@ -135,7 +131,7 @@ pub unsafe extern "C" fn __ronto_alloc_reset(mark: u32) {
         __souther_abort(REASON_BAD_MARK, 0, mark as u64, ARENA_TOP as u64);
     }
     ARENA_TOP = mark;
-    ARENA_EPOCH = ARENA_EPOCH.wrapping_add(1);
+    arena_popped();
 }
 
 /// Where a string a call answered with is, in the one place a component reads a result from.
@@ -166,12 +162,21 @@ pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_arena_rewind() {
     ARENA_TOP = ARENA_BASE;
-    ARENA_EPOCH = ARENA_EPOCH.wrapping_add(1);
+    arena_popped();
 }
 
-/// How many times the arena has been popped, for what keeps something of it across calls.
-pub(crate) unsafe fn arena_epoch() -> u32 {
-    ARENA_EPOCH
+/// Forgets everything this crate keeps between calls that lives in the arena, as the arena is
+/// popped.
+///
+/// The one place such state ends, and the only two ways the arena is popped both come here, so
+/// what is kept is never read after the memory under it has been handed out again. Not left to the
+/// next call to set straight: a caller that pops and then reaches the runtime some other way than
+/// through an export's start would otherwise read, or write through, memory that is something
+/// else's by then.
+unsafe fn arena_popped() {
+    kernel::forget_kept_pattern();
+    issues::forget();
+    text::forget();
 }
 
 /// What the canonical ABI allocates and reallocates with.
