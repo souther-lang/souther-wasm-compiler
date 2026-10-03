@@ -1,8 +1,6 @@
 package souther.wasm;
 
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.lower.WasmCompiler;
 
@@ -26,25 +24,29 @@ import souther.wasm.lower.WasmCompiler;
  */
 public final class Compiled {
 
-    private static final Map<List<String>, CheckedProgram> PROGRAMS = new ConcurrentHashMap<>();
-    private static final Map<CheckedProgram, byte[]> MODULES = new ConcurrentHashMap<>();
-    private static final Map<CheckedProgram, byte[]> COMPONENTS = new ConcurrentHashMap<>();
+    /** As many as a test class asks for in turn; what was asked longer ago is asked again rarely
+     *  enough that keeping it would cost more than checking it again. */
+    private static final int KEPT = 8;
+
+    private static final Recent<List<String>, CheckedProgram> PROGRAMS = new Recent<>(KEPT);
+    private static final Recent<CheckedProgram, byte[]> MODULES = new Recent<>(KEPT);
+    private static final Recent<CheckedProgram, byte[]> COMPONENTS = new Recent<>(KEPT);
 
     private Compiled() {
     }
 
     /** {@code CheckedProgram.of(sources)}, checked once. A program refused is refused every time. */
     public static CheckedProgram program(List<String> sources) {
-        return PROGRAMS.computeIfAbsent(List.copyOf(sources), CheckedProgram::of);
+        return PROGRAMS.of(List.copyOf(sources), kept -> kept, CheckedProgram::of);
     }
 
     /** {@code WasmCompiler.compile(program)}, written once for each program. */
     public static byte[] module(CheckedProgram program) {
-        return MODULES.computeIfAbsent(program, WasmCompiler::compile).clone();
+        return MODULES.of(program, kept -> kept, WasmCompiler::compile).clone();
     }
 
     /** {@code WasmCompiler.compileAsComponent(program)}, written once for each program. */
     public static byte[] component(CheckedProgram program) {
-        return COMPONENTS.computeIfAbsent(program, WasmCompiler::compileAsComponent).clone();
+        return COMPONENTS.of(program, kept -> kept, WasmCompiler::compileAsComponent).clone();
     }
 }

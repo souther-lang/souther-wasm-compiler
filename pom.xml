@@ -111,6 +111,12 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.4</version>
+                <configuration>
+                    <!-- A heap the suite fits twice over, so that what a test keeps alive for good
+                         — a cache with no bound, a module held after its test — fails the build
+                         rather than growing with every test added. The suite fits in 128 MB. -->
+                    <argLine>-Xmx256m</argLine>
+                </configuration>
             </plugin>
             <!-- One jar that runs, because a command line is how this is reached from outside a
                  build. Bound to package rather than to a profile: a build that produced a jar

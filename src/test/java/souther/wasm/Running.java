@@ -13,8 +13,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.link.RuntimeLayout;
@@ -218,10 +216,13 @@ public final class Running {
      * <p>Reading a module is most of what making an instance of one costs, and it is a question of
      * the bytes alone: what an instance holds of its own — its memory, its globals, its table — is
      * made when it is built, so every test still runs on an instance nothing else has touched.
+     * Only the last few are kept, which is where the same bytes come back: the next test of a class
+     * running the program the last one did.
      */
     private static WasmModule parsed(byte[] module) {
-        return PARSED.computeIfAbsent(ByteBuffer.wrap(module.clone()), held -> Parser.parse(module));
+        return PARSED.of(ByteBuffer.wrap(module),
+                asked -> ByteBuffer.wrap(module.clone()), asked -> Parser.parse(module));
     }
 
-    private static final Map<ByteBuffer, WasmModule> PARSED = new ConcurrentHashMap<>();
+    private static final Recent<ByteBuffer, WasmModule> PARSED = new Recent<>(8);
 }
