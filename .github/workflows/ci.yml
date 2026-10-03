@@ -108,6 +108,7 @@ jobs:
         run: |
           npm ci
           npm run typecheck
+          npm run build
           npm test
       - name: Build the example
         working-directory: examples/react-cart

@@ -5,21 +5,29 @@
   "license": "EPL-2.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./generate": "./src/generate.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./generate": {
+      "types": "./dist/generate.d.ts",
+      "default": "./dist/generate.js"
+    }
   },
   "bin": {
-    "souther-wasm-bindings": "./src/cli.ts"
+    "souther-wasm-bindings": "./dist/cli.js"
   },
   "files": [
-    "src",
+    "dist",
     "NOTICE",
     "README.md"
   ],
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
   },

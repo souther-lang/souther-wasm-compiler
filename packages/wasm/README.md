@@ -67,10 +67,22 @@ else.
 What each value comes to, and what is read of it, is held for the JVM, the wasm module and this
 package alike to the fixtures in the repository's `conformance/issues`.
 
+## Where it runs
+
+What is installed is JavaScript and its declarations, built from `src` into `dist`; Node runs no
+TypeScript under `node_modules`. It needs Node 22 or later, or a browser that has both
+`JSON.parse` source text access and `JSON.rawJSON`: an amount wider than a JavaScript number is
+read and written through those two, and without them it would be rounded without a word, so
+`load` refuses to run there.
+
 ## Developing
 
     npm install
     npm run typecheck
+    npm run build   # what a project installing this, and the example beside it, reads
     npm test        # needs the compiler built: mvn package at the repository's root
+
+The tests read `src` directly, except `test/installed.test.ts`, which packs the package as it would
+be published, installs it into a project of its own, and writes, type-checks and runs a page there.
 
 `src/catalog.ts` is generated from raoh-specification by `scripts/catalog.py`.
