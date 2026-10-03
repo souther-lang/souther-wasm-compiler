@@ -56,8 +56,12 @@ class AModuleSaysWhatItOffersACallerTest {
             behavior rate : (code: Sku) -> Decimal
             """;
 
+    /** The cart's surface, compiled once: every test here only reads it. */
+    private static final JsonNode CARTS =
+            surfaceOf(WasmCompiler.compile(CheckedProgram.of(List.of(CODES, CART))));
+
     private static JsonNode surface() {
-        return surfaceOf(WasmCompiler.compile(CheckedProgram.of(List.of(CODES, CART))));
+        return CARTS;
     }
 
     @Test
