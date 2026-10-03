@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.emit.WasmTreeShaker;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.LayoutReader.RawSection;
 import souther.wasm.link.WasmFragment.Segment;
@@ -80,7 +81,8 @@ public final class Linker {
 
         sections.put(SEC_TYPE, appendEntries(sections.get(SEC_TYPE), fragment.typeEntries()));
         sections.put(SEC_FUNCTION, appendEntries(sections.get(SEC_FUNCTION), functionEntries(fragment)));
-        sections.put(SEC_EXPORT, appendEntries(sections.get(SEC_EXPORT), exportEntries(fragment)));
+        sections.put(SEC_EXPORT, appendEntries(
+                shownToTheHost(sections.get(SEC_EXPORT)), exportEntries(fragment)));
         sections.put(SEC_CODE, appendEntries(sections.get(SEC_CODE), codeEntries(fragment)));
         sections.put(SEC_DATA, appendEntries(sections.get(SEC_DATA), dataEntries(fragment)));
         sections.put(SEC_MEMORY, memoryHolding(sections.get(SEC_MEMORY), fragment.staticEnd()));
@@ -96,7 +98,31 @@ public final class Linker {
                     layout.dataSegmentCount() + fragment.dataSegments().size()));
         }
 
-        return assemble(sections, crossings(fragment));
+        // What no export, no start and no table reaches is left out: the runtime carries every
+        // kernel, and a program calls a few of them.
+        return WasmTreeShaker.shake(assemble(sections, crossings(fragment)));
+    }
+
+    /**
+     * The runtime's exports a host calls, and none of the rest.
+     *
+     * <p>Read entry by entry and kept by name, so an export the runtime adds is left out of a
+     * linked module until {@link RuntimeAbi#HOST_EXPORTS} says a host calls it.
+     */
+    private static byte[] shownToTheHost(byte[] section) {
+        Reading reading = new Reading(section);
+        int count = reading.unsigned();
+        List<byte[]> kept = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            int start = reading.position;
+            byte[] name = reading.bytes(reading.unsigned());
+            reading.next();
+            reading.unsigned();
+            if (RuntimeAbi.HOST_EXPORTS.contains(new String(name, StandardCharsets.UTF_8))) {
+                kept.add(Arrays.copyOfRange(section, start, reading.position));
+            }
+        }
+        return appendEntries(new byte[] {0}, kept);
     }
 
     /**
@@ -362,6 +388,12 @@ public final class Linker {
                 }
                 shift += 7;
             }
+        }
+
+        byte[] bytes(int length) {
+            byte[] held = Arrays.copyOfRange(payload, position, position + length);
+            position += length;
+            return held;
         }
 
         byte[] remaining() {

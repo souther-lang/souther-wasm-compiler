@@ -3,7 +3,9 @@
  * licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 and NOTICE.
  *
  * Changed from the original: the package name am.ik.wasm was rewritten to souther.wasm.emit,
- * wherever it appears. Nothing else was changed.
+ * wherever it appears; and a table and active element segments of function indices are read
+ * rather than refused, every function a segment puts in a table counting as a root and each
+ * index being renumbered with the rest.
  */
 package souther.wasm.emit;
 
@@ -268,15 +270,16 @@ public final class WasmTreeShaker {
 		@Nullable Section dataSec = WasmSections.find(sections, SEC_DATA);
 		@Nullable Section exportSec = WasmSections.find(sections, SEC_EXPORT);
 		@Nullable Section startSec = WasmSections.find(sections, SEC_START);
-		// A table or element section would carry reference types and function indices
-		// this pass does not renumber. The backend emits neither (first-class calls go
-		// through dispatch functions), so their presence means the module is not the
-		// shape this pass verifies by construction.
-		for (Section s : sections) {
-			if (s.id() == SEC_TABLE || s.id() == SEC_ELEMENT) {
-				throw new IllegalStateException("WasmTreeShaker: unhandled section id " + s.id());
-			}
+		// A table holds what an element segment puts in it, and a call_indirect reaches
+		// whichever slot it is handed, which no immediate says. So every function a
+		// segment places is a root. Only the shape a table of functions filled by active
+		// segments has is read; anything else is refused rather than renumbered wrongly.
+		@Nullable Section tableSec = WasmSections.find(sections, SEC_TABLE);
+		@Nullable Section elementSec = WasmSections.find(sections, SEC_ELEMENT);
+		if (tableSec != null) {
+			WasmSections.requirePlainTables(tableSec.payload());
 		}
+		List<WasmSections.ElementSegment> elements = elementSec == null ? List.of() : WasmSections.parseElements(elementSec.payload());
 
 		// Imports: record each entry's raw span and, for function imports, their order.
 		List<ImportEntry> imports = importSec == null ? List.of() : WasmSections.parseImports(importSec.payload());
@@ -321,6 +324,14 @@ public final class WasmTreeShaker {
 			if (root >= 0 && root < totalFuncs && !reachable[root]) {
 				reachable[root] = true;
 				work.push(root);
+			}
+		}
+		for (WasmSections.ElementSegment segment : elements) {
+			for (int root : segment.functions()) {
+				if (root >= 0 && root < totalFuncs && !reachable[root]) {
+					reachable[root] = true;
+					work.push(root);
+				}
 			}
 		}
 		while (!work.isEmpty()) {
@@ -402,6 +413,7 @@ public final class WasmTreeShaker {
 					addVector(rebuilt, SEC_EXPORT, WasmSections.rebuildExportSection(s.payload(), funcRemap));
 				case SEC_START ->
 					rebuilt.add(new Section(SEC_START, WasmSections.rebuildStartSection(s.payload(), funcRemap)));
+				case SEC_ELEMENT -> rebuilt.add(new Section(SEC_ELEMENT, WasmSections.rebuildElements(elements, funcRemap)));
 				case SEC_DATA -> {
 					if (deadSegments.isEmpty() && deadRanges.isEmpty()) {
 						rebuilt.add(s);

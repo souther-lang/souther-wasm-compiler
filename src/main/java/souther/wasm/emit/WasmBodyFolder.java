@@ -3,7 +3,8 @@
  * licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 and NOTICE.
  *
  * Changed from the original: the package name am.ik.wasm was rewritten to souther.wasm.emit,
- * wherever it appears. Nothing else was changed.
+ * wherever it appears; and the function indices active element segments put in a table are
+ * renumbered with the rest rather than refused.
  */
 package souther.wasm.emit;
 
@@ -119,10 +120,10 @@ final class WasmBodyFolder {
 		WasmSections.@Nullable Section functionSec = null;
 		WasmSections.@Nullable Section codeSec = null;
 		for (WasmSections.Section s : sections) {
-			// A table or element section holds function references this pass does not
-			// rewrite (same guard, same reason as the tree shaker's).
-			if (s.id() == SEC_TABLE || s.id() == SEC_ELEMENT) {
-				throw new IllegalStateException("WasmBodyFolder: unhandled section id " + s.id());
+			// A table holds what element segments put in it, which are function indices
+			// renumbered below; the table itself names none.
+			if (s.id() == SEC_TABLE) {
+				WasmSections.requirePlainTables(s.payload());
 			}
 			if (s.id() == SEC_TYPE) {
 				typeSec = s;
@@ -181,6 +182,8 @@ final class WasmBodyFolder {
 					.add(new WasmSections.Section(SEC_EXPORT, WasmSections.rebuildExportSection(s.payload(), remap)));
 				case SEC_START -> rebuilt
 					.add(new WasmSections.Section(SEC_START, WasmSections.rebuildStartSection(s.payload(), remap)));
+				case SEC_ELEMENT -> rebuilt.add(new WasmSections.Section(SEC_ELEMENT,
+						WasmSections.rebuildElements(WasmSections.parseElements(s.payload()), remap)));
 				case SEC_GLOBAL -> rebuilt.add(new WasmSections.Section(SEC_GLOBAL,
 						redirectFuncRefs(s.payload(), WasmSections.scanGlobalSection(s.payload()), remap)));
 				case SEC_CUSTOM -> {

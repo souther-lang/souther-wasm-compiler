@@ -3,7 +3,9 @@
  * licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 and NOTICE.
  *
  * Changed from the original: the package name am.ik.wasm was rewritten to souther.wasm.emit,
- * wherever it appears. Nothing else was changed.
+ * wherever it appears; the bulk memory and table instructions of the misc prefix are read, since
+ * a runtime built by rustc writes memory.copy and memory.fill; and a table and the active element
+ * segments filling it with functions are read and written, for the tree shaker and the folder.
  */
 package souther.wasm.emit;
 
@@ -456,11 +458,20 @@ public final class WasmSections {
 			case 0x43 -> p[0] += 4; // f32.const
 			case 0x44 -> p[0] += 8; // f64.const
 			case 0xFB -> scanGc(buf, p, refs); // wasm-GC prefix
-			// Misc prefix: the saturating truncations (0x00-0x07) carry no immediate.
+			// Misc prefix: the saturating truncations (0x00-0x07) carry no immediate; the bulk
+			// memory and table instructions carry one or two indices, none of a function or
+			// a type. A data or element index is skipped: this pass renumbers neither.
 			case 0xFC -> {
 				int sub = readU(buf, p);
-				if (sub > 0x07) {
-					throw new IllegalStateException(
+				switch (sub) {
+					case 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 -> {
+					}
+					case 0x09, 0x0B, 0x0D, 0x0F, 0x10, 0x11 -> skipLeb(buf, p);
+					case 0x08, 0x0A, 0x0C, 0x0E -> {
+						skipLeb(buf, p);
+						skipLeb(buf, p);
+					}
+					default -> throw new IllegalStateException(
 							String.format("WasmSections: unhandled misc opcode 0xFC 0x%02X", sub));
 				}
 			}
@@ -718,6 +729,77 @@ public final class WasmSections {
 
 	static void writeRaw(ByteArrayOutputStream out, byte[] bytes) {
 		out.write(bytes, 0, bytes.length);
+	}
+
+
+	// --- Table and element sections ---
+
+	/** An active segment putting functions in table zero, from where its offset says. */
+	record ElementSegment(byte[] offset, int[] functions) {
+	}
+
+	// Every table holds functions and starts empty: a table with an initializer would be
+	// one more place a function index lives.
+	static void requirePlainTables(byte[] payload) {
+		int[] p = { 0 };
+		int count = readU(payload, p);
+		for (int i = 0; i < count; i++) {
+			int holds = payload[p[0]++] & 0xff;
+			if (holds != 0x70) {
+				throw new IllegalStateException("WasmSections: a table holding other than functions");
+			}
+			int flags = readU(payload, p);
+			readU(payload, p);
+			if ((flags & 1) != 0) {
+				readU(payload, p);
+			}
+		}
+	}
+
+	// Segments of the one form a link writes: active, in table zero, at a constant or a
+	// global's offset, holding function indices.
+	static List<ElementSegment> parseElements(byte[] payload) {
+		int[] p = { 0 };
+		int count = readU(payload, p);
+		List<ElementSegment> segments = new ArrayList<>(count);
+		for (int i = 0; i < count; i++) {
+			int flags = readU(payload, p);
+			if (flags != 0) {
+				throw new IllegalStateException("WasmSections: an element segment of form " + flags);
+			}
+			int start = p[0];
+			int opcode = payload[p[0]++] & 0xff;
+			switch (opcode) {
+				case 0x41 -> readS(payload, p); // i32.const
+				case 0x23 -> readU(payload, p); // global.get
+				default -> throw new IllegalStateException(
+						"WasmTreeShaker: an element segment offset starting with " + opcode);
+			}
+			if ((payload[p[0]++] & 0xff) != 0x0B) {
+				throw new IllegalStateException("WasmSections: an element segment offset of more than one instruction");
+			}
+			byte[] offset = slice(payload, start, p[0]);
+			int[] functions = new int[readU(payload, p)];
+			for (int k = 0; k < functions.length; k++) {
+				functions[k] = readU(payload, p);
+			}
+			segments.add(new ElementSegment(offset, functions));
+		}
+		return segments;
+	}
+
+	static byte[] rebuildElements(List<ElementSegment> segments, int[] funcRemap) {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		writeU(out, segments.size());
+		for (ElementSegment segment : segments) {
+			writeU(out, 0);
+			writeRaw(out, segment.offset());
+			writeU(out, segment.functions().length);
+			for (int function : segment.functions()) {
+				writeU(out, funcRemap[function]);
+			}
+		}
+		return out.toByteArray();
 	}
 
 }

@@ -50,6 +50,19 @@ public final class RuntimeAbi {
      */
     public static final int VERSION = 6;
 
+    /**
+     * What of the runtime a linked module still shows its host: the memory, and what the steps
+     * above and the canonical ABI call.
+     *
+     * <p>Everything else the runtime exports is there for the link to call, and a linked module
+     * keeps only what its own bodies reach of it. A runtime export left showing would be a root the
+     * link could not leave out, and every kernel would be carried by every program.
+     */
+    public static final java.util.List<String> HOST_EXPORTS = java.util.List.of(
+            RuntimeAbi.MEMORY, RuntimeAbi.ALLOC, RuntimeAbi.ALLOC_MARK, RuntimeAbi.ALLOC_RESET,
+            RuntimeAbi.FAILURE_ADDR, RuntimeAbi.FAILURE_GENERATION, RuntimeAbi.ABI_VERSION,
+            RuntimeAbi.CANONICAL_REALLOC);
+
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";
 
