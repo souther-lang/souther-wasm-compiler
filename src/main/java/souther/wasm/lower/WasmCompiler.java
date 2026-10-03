@@ -547,11 +547,17 @@ public final class WasmCompiler {
         case MAP_REMOVE -> RuntimeAbi.Kernels.MAP_REMOVE;
         case MAP_TO_LIST -> RuntimeAbi.Kernels.MAP_TO_LIST;
         case MAP_FROM_LIST -> RuntimeAbi.Kernels.MAP_FROM_LIST;
-        case RATIONAL_FROM_INT, RATIONAL_FROM_DECIMAL, RATIONAL_TO_WHOLE_NUMBER,
-                RATIONAL_TO_FINITE_DECIMAL, RATIONAL_TO_INT, RATIONAL_TO_DECIMAL, RATIONAL_ADD,
-                RATIONAL_SUBTRACT, RATIONAL_MULTIPLY, RATIONAL_DIVIDE, RATIONAL_COMPARE ->
-                throw new NotLowered(kernel + " is a Rational operation, which this backend does"
-                        + " not write yet");
+        case RATIONAL_FROM_INT -> RuntimeAbi.Kernels.RATIONAL_FROM_INT;
+        case RATIONAL_FROM_DECIMAL -> RuntimeAbi.Kernels.RATIONAL_FROM_DECIMAL;
+        case RATIONAL_TO_WHOLE_NUMBER -> RuntimeAbi.Kernels.RATIONAL_TO_WHOLE_NUMBER;
+        case RATIONAL_TO_FINITE_DECIMAL -> RuntimeAbi.Kernels.RATIONAL_TO_FINITE_DECIMAL;
+        case RATIONAL_TO_INT -> RuntimeAbi.Kernels.RATIONAL_TO_INT;
+        case RATIONAL_TO_DECIMAL -> RuntimeAbi.Kernels.RATIONAL_TO_DECIMAL;
+        case RATIONAL_ADD -> RuntimeAbi.Kernels.RATIONAL_ADD;
+        case RATIONAL_SUBTRACT -> RuntimeAbi.Kernels.RATIONAL_SUBTRACT;
+        case RATIONAL_MULTIPLY -> RuntimeAbi.Kernels.RATIONAL_MULTIPLY;
+        case RATIONAL_DIVIDE -> RuntimeAbi.Kernels.RATIONAL_DIVIDE;
+        case RATIONAL_COMPARE -> RuntimeAbi.Kernels.RATIONAL_COMPARE;
         default -> throw new NotLowered(kernel + " is an intrinsic this backend does not"
                 + " write yet, which the library declared after this switch was last read");
     };
@@ -1051,15 +1057,18 @@ public final class WasmCompiler {
                     }
                 }
                 case Core.Neg opposite -> {
-                    boolean amount = amountsAreWorkedOut(
-                            opposite.operand().type(), opposite.type());
                     if (worksOutAWholeNumber(opposite)) {
                         wide(out, opposite);
                         out.call(calls.of(RuntimeAbi.INT));
                     } else {
                         value(out, opposite.operand());
-                        out.call(calls.of(amount
-                                ? RuntimeAbi.Kernels.DECIMAL_NEGATE : RuntimeAbi.NEGATE));
+                        out.call(calls.of(switch (opposite.type()) {
+                            case souther.compiler.types.Type.Prim.DECIMAL ->
+                                    RuntimeAbi.Kernels.DECIMAL_NEGATE;
+                            case souther.compiler.types.Type.Prim.RATIONAL ->
+                                    RuntimeAbi.Kernels.RATIONAL_NEGATE;
+                            default -> RuntimeAbi.NEGATE;
+                        }));
                     }
                 }
                 case Core.Binary binary -> binary(out, binary);
@@ -1375,6 +1384,15 @@ public final class WasmCompiler {
         private void kernel(BodyWriter out, Core.Call call, Kernel kernel) {
             if (kernel == Kernel.STRING_MATCHES) {
                 recognised(out, call);
+                return;
+            }
+            // A total of exact quotients is an entry of its own, so that the total every program
+            // reaches carries no exact arithmetic into one that has none.
+            if ((kernel == Kernel.LIST_SUM || kernel == Kernel.LIST_PRODUCT)
+                    && call.type() == souther.compiler.types.Type.Prim.RATIONAL) {
+                value(out, call.args().get(0));
+                out.call(calls.of(kernel == Kernel.LIST_SUM
+                        ? RuntimeAbi.RATIONAL_SUM : RuntimeAbi.RATIONAL_PRODUCT));
                 return;
             }
             String operation = abiNameOf(kernel);
@@ -1701,13 +1719,13 @@ public final class WasmCompiler {
         private void binary(BodyWriter out, Core.Binary binary) {
             switch (binary.op()) {
                 case ADD -> arithmetic(out, binary, RuntimeAbi.ADD,
-                        RuntimeAbi.Kernels.DECIMAL_ADD);
+                        RuntimeAbi.Kernels.DECIMAL_ADD, RuntimeAbi.Kernels.RATIONAL_ADD);
                 case SUB -> arithmetic(out, binary, RuntimeAbi.SUBTRACT,
-                        RuntimeAbi.Kernels.DECIMAL_SUBTRACT);
+                        RuntimeAbi.Kernels.DECIMAL_SUBTRACT, RuntimeAbi.Kernels.RATIONAL_SUBTRACT);
                 case MUL -> arithmetic(out, binary, RuntimeAbi.MULTIPLY,
-                        RuntimeAbi.Kernels.DECIMAL_MULTIPLY);
-                case DIV -> arithmetic(out, binary, RuntimeAbi.DIVIDE,
-                        RuntimeAbi.Kernels.DECIMAL_DIVIDE_BY);
+                        RuntimeAbi.Kernels.DECIMAL_MULTIPLY, RuntimeAbi.Kernels.RATIONAL_MULTIPLY);
+                // An exact quotient, over two Ints and over two Decimals alike.
+                case DIV -> arithmetic(out, binary, null, null, RuntimeAbi.Kernels.RATIONAL_DIVIDE);
                 case CONCAT -> concatenation(out, binary);
                 // Decided as one or zero, and answered as whichever of the two cells that is.
                 case EQ, NE, LT, LE, GT, GE, AND, OR -> {
@@ -1847,10 +1865,18 @@ public final class WasmCompiler {
 
         /** Leaves whether the two operands of a comparison stand that way, as one or zero. */
         private void compared(BodyWriter out, Core.Binary binary, BodyWriter.Comparison how) {
-            // Both sides, because a comparison across Int and Rational is one the language allows
-            // and the descriptor below is only the left one's.
-            refuseWhatIsNotWritten("compares", binary.left().type());
-            refuseWhatIsNotWritten("compares", binary.right().type());
+            // A pair the checker read at its exact value is two Rationals, whatever either operand
+            // is: an Int beside a Rational is compared as the Rational it is, and the descriptor
+            // of either operand alone would read the other as what it is not.
+            if (binary.reading() instanceof Core.BinaryReading.ExactNumbers) {
+                exactly(out, binary.left());
+                exactly(out, binary.right());
+                out.constant(shapes.of(souther.compiler.types.Type.Prim.RATIONAL))
+                        .call(calls.of(RuntimeAbi.COMPARE))
+                        .constant(0)
+                        .compares(how);
+                return;
+            }
             // Two whole numbers stand as their numbers do, which is one instruction.
             if (isWhole(binary.left()) && isWhole(binary.right())) {
                 wide(out, binary.left());
@@ -1867,43 +1893,63 @@ public final class WasmCompiler {
         }
 
         /**
-         * Whether arithmetic over these types is the runtime's on amounts, and not on whole
-         * numbers.
+         * An arithmetic operator, worked out over what it answers.
          *
-         * <p>Asked of the operand and of the answer, because they part company: a quotient of two
-         * Ints is a Rational while its operands stay Ints. Deciding on the operand alone reads a
-         * Rational as the Int it does not hold. What this backend knows it does not write is
-         * refused here, before the choice between the two things it does, so it can never be the
-         * else of that choice.
+         * <p>Decided by the answer and not by an operand, because the two part company: a quotient
+         * of two Ints is a Rational while its operands stay Ints, and an Int beside a Rational is
+         * read at its exact value. An operator answering a Rational is exact arithmetic over both
+         * operands read that way, whatever each was; one answering a whole number or an amount
+         * was handed two of what it answers, newtype arithmetic having been opened to the numbers
+         * it wraps before it reached here.
+         *
+         * @param whole the runtime's operator on two whole numbers, or null where the operator
+         *     answers none
+         * @param amount the runtime's operator on two amounts, or null where it answers none
+         * @param exact the runtime's operator on two exact quotients
          */
-        private boolean amountsAreWorkedOut(souther.compiler.types.Type operand,
-                souther.compiler.types.Type answer) {
-            refuseWhatIsNotWritten("works out", operand);
-            refuseWhatIsNotWritten("works out", answer);
-            return operand == souther.compiler.types.Type.Prim.DECIMAL;
-        }
-
-        private void refuseWhatIsNotWritten(String doing, souther.compiler.types.Type type) {
-            if (type == souther.compiler.types.Type.Prim.RATIONAL) {
-                throw new NotLowered(writing + " " + doing + " a Rational, which this backend does"
-                        + " not write yet");
-            }
-        }
-
-        private void arithmetic(
-                BodyWriter out, Core.Binary binary, String whole, String amount) {
-            boolean amounts = amountsAreWorkedOut(binary.left().type(), binary.type());
-            if (amounts && amount == null) {
-                throw new NotLowered(writing + " works out an amount with " + binary.op());
+        private void arithmetic(BodyWriter out, Core.Binary binary, String whole, String amount,
+                String exact) {
+            souther.compiler.types.Type answer = binary.type();
+            if (answer == souther.compiler.types.Type.Prim.RATIONAL) {
+                exactly(out, binary.left());
+                exactly(out, binary.right());
+                out.call(calls.of(exact));
+                return;
             }
             if (worksOutAWholeNumber(binary)) {
                 wide(out, binary);
                 out.call(calls.of(RuntimeAbi.INT));
                 return;
             }
+            String operation = answer == souther.compiler.types.Type.Prim.DECIMAL ? amount : whole;
+            if (operation == null) {
+                // The checker answers every `/` with a Rational, so a quotient of another type is
+                // its contract broken and not something this backend lacks.
+                throw new IllegalStateException(writing + " answers " + binary.op()
+                        + " with a " + answer + ", which the operator does not answer");
+            }
             value(out, binary.left());
             value(out, binary.right());
-            out.call(calls.of(amounts ? amount : whole));
+            out.call(calls.of(operation));
+        }
+
+        /**
+         * Leaves an operand read at its exact value: a Rational as it is, and an Int or a Decimal
+         * as the Rational it is. A reading of the operator and not a conversion the language
+         * offers, so it is written here, where the operator is, and nowhere a value is placed.
+         */
+        private void exactly(BodyWriter out, Core operand) {
+            value(out, operand);
+            souther.compiler.types.Type type = operand.type();
+            if (type == souther.compiler.types.Type.Prim.INT) {
+                out.call(calls.of(RuntimeAbi.Kernels.RATIONAL_FROM_INT));
+            } else if (type == souther.compiler.types.Type.Prim.DECIMAL) {
+                out.call(calls.of(RuntimeAbi.Kernels.RATIONAL_FROM_DECIMAL));
+            } else if (type != souther.compiler.types.Type.Prim.RATIONAL) {
+                // Only a number has an exact value, and the checker reads nothing else as one.
+                throw new IllegalStateException(writing + " reads a " + type
+                        + " at its exact value, which only a number has");
+            }
         }
 
         /**

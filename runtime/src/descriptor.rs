@@ -69,6 +69,21 @@ pub const KIND_INSTANT: u32 = 16;
 /// it crosses: a value of it is written as the type it is a name for is written, so what reads and
 /// writes one asks the field's own descriptor and nothing here says `{"value": ...}`.
 pub const KIND_NEWTYPE: u32 = 17;
+/// An exact quotient. It has no external form, so nothing reads one from a document or writes one
+/// into one: a descriptor of one is what a collection holding them, or a comparison of them, asks.
+///
+/// Not 18, which the compiler gives the elements of a list nothing said the type of, so that no
+/// reader here handles it.
+///
+/// ```text
+/// +4  u32 the slot of what orders two of them
+/// ```
+///
+/// Ordered through a slot and not by a call, because what orders two of them is exact arithmetic
+/// and the order of every other kind is reached from the same function: a call would carry that
+/// arithmetic into every module that compares anything. A descriptor of one is written only where a
+/// program holds one, so only that program's module holds what the slot names.
+pub const KIND_RATIONAL: u32 = 19;
 /// A type with one value.
 pub const KIND_UNIT: u32 = 3;
 /// A type written as fields.
@@ -113,6 +128,13 @@ pub unsafe fn member(descriptor: u32, index: u32) -> u32 {
 pub unsafe fn own_name(descriptor: u32) -> (u32, u32) {
     let at = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
     (read(at), read(at + 4))
+}
+
+/// Where two exact quotients stand, by the function the slot their descriptor holds names.
+pub unsafe fn ordered_exactly(descriptor: u32, left: u32, right: u32) -> i32 {
+    let order: extern "C" fn(u32, u32) -> i32 =
+        core::mem::transmute(read(descriptor as usize + 4) as usize);
+    order(left, right)
 }
 
 /// The table slot of what checks a product's invariants, or zero where it has none.

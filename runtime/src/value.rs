@@ -32,8 +32,8 @@ use crate::decimal;
 use crate::descriptor::{
     self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
     KIND_INT, KIND_NEWTYPE,
-    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
-    KIND_TUPLE, KIND_UNIT,
+    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING, KIND_SUM,
+    KIND_TIME, KIND_TUPLE, KIND_UNIT,
 };
 use crate::temporal;
 use crate::order;
@@ -45,7 +45,7 @@ use crate::json;
 use crate::notation;
 use crate::text;
 use crate::tree;
-use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use crate::{abort, alloc, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
 
 /// The one value a type with a single value has. `+4` is which type.
 pub const TAG_UNIT: u32 = 0;
@@ -328,6 +328,7 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
         KIND_BOOL => tag == TAG_BOOL,
         KIND_STRING => tag == TAG_STRING,
         KIND_DECIMAL => tag == TAG_DECIMAL,
+        KIND_RATIONAL => tag == TAG_RATIONAL,
         KIND_DATE => tag == TAG_DATE,
         KIND_TIME => tag == TAG_TIME,
         KIND_DATE_TIME => tag == TAG_DATE_TIME,
@@ -422,22 +423,6 @@ pub unsafe extern "C" fn __souther_subtract(left: u32, right: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_multiply(left: u32, right: u32) -> u32 {
     __souther_int(__souther_int_product(__souther_int_value(left), __souther_int_value(right)))
-}
-
-/// The `/` operator on `Int`: truncating, and ending the call on a zero divisor.
-///
-/// A zero divisor is a model bug here rather than a case. Code that means it as a case asks
-/// `Int.divide`, whose type says so.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_divide(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    if b == 0 {
-        abort(REASON_DIVISION_BY_ZERO, 0, a as u64, 0);
-    }
-    match a.checked_div(b) {
-        Some(quotient) => __souther_int(quotient),
-        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
-    }
 }
 
 /// Where one value stands relative to another of its type, as a whole number.
@@ -676,6 +661,9 @@ pub const TAG_INSTANT: u32 = 17;
 /// table of their keys' hashes, so a reader taking it for a map would read past what is there. See
 /// `kernel::__souther_map_builder` for its layout.
 pub const TAG_MAP_BUILDER: u32 = 18;
+
+/// An exact quotient. See `rational` for what it holds.
+pub const TAG_RATIONAL: u32 = 19;
 
 /// Values written together, with nothing in them yet.
 #[no_mangle]

@@ -836,68 +836,12 @@ pub unsafe fn divided(left: u32, right: u32, wanted: i32, mode: u32) -> u32 {
     )
 }
 
-/// How many significant digits the `/` operator answers with, which matches what a fixed-size
-/// decimal on other platforms carries.
-const OPERATOR_DIGITS: i64 = 29;
-
-/// The `/` operator on `Decimal`: the quotient to that many significant digits, half away from
-/// nothing, and an end to the call on a zero divisor.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_decimal_divide_by(left: u32, right: u32) -> u32 {
-    if sign(right) == 0 {
-        abort(crate::REASON_DIVISION_BY_ZERO, 0, 0, 0);
-    }
-    if sign(left) == 0 {
-        return made(0, 0, 0);
-    }
-    let (_, a_length) = digits(left);
-    let (_, b_length) = digits(right);
-    // Where the point falls in the quotient, give or take one, which is what says how many places
-    // after it make up the significant digits asked for.
-    let places = (a_length as i64 - scale(left) as i64) - (b_length as i64 - scale(right) as i64);
-    let mut wanted = OPERATOR_DIGITS - places;
-    // Exact where it terminates: the same amount written with as few places as it needs, but no
-    // fewer than what dividing one scale by the other prefers.
-    let preferred = scale(left) as i64 - scale(right) as i64;
-    let generous = if wanted > preferred { wanted } else { preferred };
-    let held = divided(left, right, bounded(generous + 1), MODE_DOWN);
-    if exact(left, right, held) {
-        return toward(held, bounded(preferred));
-    }
-    // Where the point falls was worked out give or take a digit, so the scale is adjusted by
-    // however many the answer turned out to be short or over and asked again.
-    let mut answering = divided(left, right, bounded(wanted), MODE_HALF_UP);
-    for _ in 0..4 {
-        let held = precision(answering) as i64;
-        if held == OPERATOR_DIGITS {
-            break;
-        }
-        wanted += OPERATOR_DIGITS - held;
-        answering = divided(left, right, bounded(wanted), MODE_HALF_UP);
-    }
-    answering
-}
-
 fn bounded(held: i64) -> i32 {
     if held > i32::MAX as i64 || held < i32::MIN as i64 {
         // A scale outside what one can be is a model bug rather than an amount.
         unsafe { abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, held as u64, 0) }
     }
     held as i32
-}
-
-/// Whether an amount times the divisor is the dividend, which is what makes a quotient exact.
-unsafe fn exact(left: u32, right: u32, held: u32) -> bool {
-    compare(__souther_decimal_multiply(held, right), left) == 0
-}
-
-/// The same amount written with as few places as it needs, and no fewer than a scale asks for.
-unsafe fn toward(cell: u32, preferred: i32) -> u32 {
-    let held = stripped(cell);
-    if scale(held) >= preferred {
-        return held;
-    }
-    __souther_decimal_at_scale(held, preferred, MODE_DOWN)
 }
 
 /// `Decimal.divide(dividend, divisor, scale, mode)`: the quotient at that scale, or the case a zero

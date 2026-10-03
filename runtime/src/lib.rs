@@ -35,6 +35,7 @@ mod kernel;
 mod json;
 mod notation;
 mod order;
+mod rational;
 mod temporal;
 mod text;
 mod tree;
@@ -76,7 +77,12 @@ const PAGE: usize = 65536;
 /// Raised to 10 when a list came to point at its elements rather than hold them, read through
 /// `__souther_list_elements`, and a set and a map changed one member at a time came to be held as a
 /// tree, so that changing one from a walk costs as much as the JVM's persistent collections do.
-const ABI_VERSION: u32 = 10;
+///
+/// Raised to 11 when a `Rational` came to be a value here, held in a cell of its own and read
+/// through the `__souther_rational_*` functions, and `/` came to answer one: `__souther_divide` and
+/// `__souther_decimal_divide_by`, which answered `/` as a truncated `Int` and a rounded `Decimal`,
+/// are gone, the language having answered an exact quotient since before either was reachable.
+const ABI_VERSION: u32 = 11;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.

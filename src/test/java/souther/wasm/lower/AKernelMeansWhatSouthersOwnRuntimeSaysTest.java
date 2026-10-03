@@ -1,7 +1,6 @@
 package souther.wasm.lower;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -536,25 +535,11 @@ class AKernelMeansWhatSouthersOwnRuntimeSaysTest {
         }
     }
 
-    /** The operations this backend knows it does not write, so a new kernel is still noticed. */
-    private static final java.util.Set<Kernel> NOT_LOWERED = java.util.Set.of(
-            Kernel.RATIONAL_FROM_INT, Kernel.RATIONAL_FROM_DECIMAL,
-            Kernel.RATIONAL_TO_WHOLE_NUMBER, Kernel.RATIONAL_TO_FINITE_DECIMAL,
-            Kernel.RATIONAL_TO_INT, Kernel.RATIONAL_TO_DECIMAL, Kernel.RATIONAL_ADD,
-            Kernel.RATIONAL_SUBTRACT, Kernel.RATIONAL_MULTIPLY, Kernel.RATIONAL_DIVIDE,
-            Kernel.RATIONAL_COMPARE);
-
     @Test
     void writesEveryIntrinsicTheLibraryDeclaresAsSomethingTheRuntimeExports() {
         LinkPlan runtime = LinkPlan.reading(WasmCompiler.runtimeModule());
 
         for (Kernel kernel : Kernel.values()) {
-            if (NOT_LOWERED.contains(kernel)) {
-                assertThatThrownBy(() -> WasmCompiler.abiNameOf(kernel))
-                        .describedAs(kernel + " is known not to be written")
-                        .isInstanceOf(NotLowered.class);
-                continue;
-            }
             String named = WasmCompiler.abiNameOf(kernel);
             assertThat(runtime.layout().export(named))
                     .describedAs(kernel + " is written as " + named)

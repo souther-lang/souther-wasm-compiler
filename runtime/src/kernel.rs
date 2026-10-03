@@ -819,7 +819,8 @@ pub unsafe extern "C" fn __souther_list_reverse(list: u32, descriptor: u32) -> u
     out
 }
 
-/// `List.sum` over whole numbers.
+/// `List.sum` over whole numbers or amounts. Over exact quotients it is
+/// `rational::__souther_rational_sum`, which the compiler calls instead.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_sum(list: u32, descriptor: u32) -> u32 {
     // What a total of nothing is, and what every step of it is worked out in, are the same
@@ -839,7 +840,8 @@ pub unsafe extern "C" fn __souther_list_sum(list: u32, descriptor: u32) -> u32 {
     total
 }
 
-/// `List.product` over whole numbers.
+/// `List.product` over whole numbers or amounts. Over exact quotients it is
+/// `rational::__souther_rational_product`, which the compiler calls instead.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_product(list: u32, descriptor: u32) -> u32 {
     if descriptor::kind(descriptor) == descriptor::KIND_DECIMAL {

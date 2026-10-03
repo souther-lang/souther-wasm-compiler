@@ -17,6 +17,7 @@ import souther.compiler.program.CheckedProgram;
 import souther.compiler.types.Type;
 import souther.compiler.types.TypeKey;
 import souther.compiler.types.TypeSymbol;
+import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
 
@@ -62,6 +63,11 @@ final class Descriptors {
      * number no reader handles on purpose, rather than a stand-in for a type that would answer.
      */
     private static final int KIND_NOTHING = 18;
+    /**
+     * An exact quotient, which nothing reads from a document or writes into one: what a collection
+     * of them is ordered by, and what a comparison of them asks.
+     */
+    private static final int KIND_RATIONAL = 19;
 
     private final CheckedProgram program;
     private final WasmFragment fragment;
@@ -155,6 +161,7 @@ final class Descriptors {
             case Type.Prim.BOOL -> scalar(KIND_BOOL);
             case Type.Prim.STRING -> scalar(KIND_STRING);
             case Type.Prim.DECIMAL -> scalar(KIND_DECIMAL);
+            case Type.Prim.RATIONAL -> rational();
             case Type.Prim.DATE -> scalar(KIND_DATE);
             case Type.Prim.TIME -> scalar(KIND_TIME);
             case Type.Prim.DATETIME -> scalar(KIND_DATE_TIME);
@@ -374,6 +381,20 @@ final class Descriptors {
     private int scalar(int kind) {
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         new WasmWriter(table).writeLittleEndian4(kind);
+        return fragment.place(table.toByteArray());
+    }
+
+    /**
+     * A descriptor of an exact quotient, with the slot of what orders two of them after its kind.
+     *
+     * <p>The order of every kind is reached from one runtime function, and the order of these is
+     * exact arithmetic. Reached by a call, it would be in every module that compares anything; put
+     * in a slot here, it is in the modules that hold one, which are the ones that write this.
+     */
+    private int rational() {
+        int order = fragment.slot(fragment.plan().functionIndexOf(RuntimeAbi.RATIONAL_ORDER));
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        new WasmWriter(table).writeLittleEndian4(KIND_RATIONAL).writeLittleEndian4(order);
         return fragment.place(table.toByteArray());
     }
 

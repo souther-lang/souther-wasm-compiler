@@ -14,10 +14,11 @@ use crate::decimal;
 use crate::descriptor::{
     self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
     KIND_INT, KIND_NEWTYPE,
-    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
-    KIND_TUPLE, KIND_UNIT,
+    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING, KIND_SUM,
+    KIND_TIME, KIND_TUPLE, KIND_UNIT,
 };
 use crate::notation;
+use crate::rational;
 use crate::temporal;
 use crate::value;
 use crate::{abort, REASON_BACKEND_INVARIANT_BROKEN};
@@ -143,6 +144,12 @@ pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
             let (at, length) = decimal::written(decimal::canonical(cell));
             bytes(HASH_START, at, length)
         }
+        // Its parts, which are one value's own, so two cells holding one value hash alike. Read
+        // off the cell and not worked out, so no arithmetic comes with it.
+        KIND_RATIONAL => {
+            let (at, length) = rational::parts(cell);
+            bytes(HASH_START, at, length)
+        }
         KIND_STRING => bytes(
             HASH_START,
             value::__souther_string_bytes(cell),
@@ -266,6 +273,11 @@ pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
                 // collection holding one of them cannot be told to hold the other beside it.
                 return decimal::compare(left, right);
             }
+            if descriptor::kind(descriptor) == KIND_RATIONAL {
+                // By exact value. Nothing writes one, so this is the order a set and a sort of them
+                // stand in, which is the order the language states for them.
+                return descriptor::ordered_exactly(descriptor, left, right);
+            }
             let x = value::__souther_int_value(left);
             let y = value::__souther_int_value(right);
             if x < y {
@@ -319,7 +331,7 @@ unsafe fn rank(cell: u32, descriptor: u32) -> i32 {
                 RANK_FALSE
             }
         }
-        KIND_INT | KIND_DECIMAL => RANK_NUMBER,
+        KIND_INT | KIND_DECIMAL | KIND_RATIONAL => RANK_NUMBER,
         // A day and a time of day cross as the text a calendar and a clock write them as.
         KIND_STRING | KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => RANK_STRING,
         KIND_LIST | KIND_SET => RANK_ARRAY,
