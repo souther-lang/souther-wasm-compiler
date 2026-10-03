@@ -31,6 +31,9 @@ const REASONS = {
 /** Where the module says what it reaches out for, and under which numbers. */
 const CROSSINGS = "souther:crossings";
 
+/** Where the module says what it offers a caller. */
+const SURFACE = "souther:surface";
+
 /**
  * An amount, as it was written.
  *
@@ -55,7 +58,7 @@ export function amount(written) {
  */
 export async function load(source, supplied = {}) {
   const module = await WebAssembly.compile(await asBytes(source));
-  const program = new Program(supplied, crossingsIn(module));
+  const program = new Program(supplied, crossingsIn(module), surfaceOf(module));
   program.ready(await WebAssembly.instantiate(module, {
     souther: { host_call: program.reachOut },
   }));
@@ -82,15 +85,32 @@ function crossingsIn(module) {
   return held.length === 0 ? [] : JSON.parse(decoder.decode(held[0]));
 }
 
+/**
+ * What the module offers a caller: its behaviors and what each takes and answers, and what a value
+ * of each type they name looks like. Carried in the module for the reason the crossings are.
+ */
+function surfaceOf(module) {
+  const held = WebAssembly.Module.customSections(module, SURFACE);
+  return held.length === 0 ? null : JSON.parse(decoder.decode(held[0]));
+}
+
 class Program {
   #exports;
   #supplied;
   #crossings;
+  #surface;
 
-  constructor(supplied, crossings) {
+  constructor(supplied, crossings, surface) {
     this.#supplied = supplied;
     this.#crossings = crossings;
+    this.#surface = surface;
     this.reachOut = this.reachOut.bind(this);
+  }
+
+  /** What this program offers a caller, as the module says it, or null for a module that does
+   *  not say. */
+  get surface() {
+    return this.#surface;
   }
 
   ready(instance) {

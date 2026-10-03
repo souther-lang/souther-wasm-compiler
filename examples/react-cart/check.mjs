@@ -22,6 +22,17 @@ function same(what, held, wanted) {
 
 same("what it offers", program.behaviors, ["cart.price"]);
 
+same("what the module says it offers",
+  program.surface.modules.map((module) => module.behaviors.map((it) => it.export)),
+  [["cart.price"]]);
+
+same("what a product code is written as",
+  program.surface.declarations.find((it) => it.name === "Sku"),
+  {
+    module: "cart", name: "Sku", by: "module", published: true, is: "newtype",
+    wraps: { is: "scalar", scalar: "string" }, rules: [{ name: "written" }],
+  });
+
 same("a basket with something in it",
   program.call("cart.price", [{
     lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: 1500 }], member: "Standard",

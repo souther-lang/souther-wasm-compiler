@@ -164,6 +164,24 @@ public final class WasmFragment {
     private final List<Crossing> crossings = new ArrayList<>();
 
     /**
+     * Says what the program offers a caller: its behaviors, what they take and answer, and what a
+     * value of each type it names looks like as it crosses. Carried in the module for the reason
+     * the crossings are.
+     *
+     * @param written the surface, as the JSON a caller reads it as
+     */
+    public void offers(String written) {
+        surface = written;
+    }
+
+    /** What the program offers a caller, or null where nothing said. */
+    String surface() {
+        return surface;
+    }
+
+    private String surface;
+
+    /**
      * Which function a name reaches, for a body that means to call what a caller would.
      *
      * @param name a name {@link #export} was given
