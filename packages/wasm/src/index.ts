@@ -65,6 +65,14 @@ export interface Amount {
 const raw = (JSON as unknown as { rawJSON(text: string): Amount }).rawJSON;
 
 /**
+ * Whether this engine reads a number's text as well as its value and writes a number from its
+ * text: without both, a wide amount would be rounded on the way in or out and nothing would say so,
+ * so a program is not loaded at all.
+ */
+const READS_NUMBERS_AS_WRITTEN = typeof raw === "function"
+  && JSON.parse("1.0", (_key, _value, context?: { source?: string }) => context?.source) === "1.0";
+
+/**
  * A number as the model holds one, handed over or handed back: a JavaScript number where one holds
  * it, and an `Amount` where one does not. Never a string — an answer handed back as one would be
  * handed over again as a string, and a string is not a number to the model.
@@ -124,6 +132,11 @@ export async function load(
   supplied: Supplied = {},
   fingerprint?: string,
 ): Promise<Program> {
+  if (!READS_NUMBERS_AS_WRITTEN) {
+    throw new Error("this engine cannot read a number as it was written (JSON.parse source text "
+      + "access and JSON.rawJSON), so an amount wider than a JavaScript number would be rounded "
+      + "without a word");
+  }
   const module = await WebAssembly.compile(await asBytes(source));
   const [surface, held] = surfaceOf(module);
   if (fingerprint !== undefined) {
@@ -349,11 +362,24 @@ export class Program {
 }
 
 /**
+ * Whether a document may hold a number no JavaScript number holds: one written with sixteen digits
+ * or more, or with a power of ten. A number of fifteen significant digits or fewer and no power of
+ * ten comes back from a JavaScript number as the amount it was, so a document with neither is read
+ * without asking after each number — which is most of what reading one otherwise costs. Digits in
+ * a string can only make this say yes where the answer is no, and that costs the slower read and
+ * nothing else.
+ */
+const WIDE = /\d[\d.]{15}|\d[eE]/;
+
+/**
  * A document, read with every number kept as it was written where a number cannot hold it: an
  * `Amount` of the digits wherever the nearest JavaScript number is a different amount, which is
  * handed over again as the number it is.
  */
 function read(text: string): unknown {
+  if (!WIDE.test(text)) {
+    return JSON.parse(text);
+  }
   return JSON.parse(text, function (_key, value, context?: { source?: string }) {
     // Most numbers are written as a JavaScript number writes them, and those it holds exactly.
     if (typeof value !== "number" || context?.source === undefined
