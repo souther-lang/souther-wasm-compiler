@@ -4,6 +4,7 @@ import com.dylibso.chicory.runtime.HostFunction;
 import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
 import com.dylibso.chicory.wasm.Parser;
+import com.dylibso.chicory.wasm.WasmModule;
 import com.dylibso.chicory.wasm.types.ValType;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,6 +13,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.link.RuntimeLayout;
@@ -204,8 +207,21 @@ public final class Running {
                 List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32, ValType.I32),
                 List.of(ValType.I32),
                 (instance, arguments) -> new long[] {0});
-        return Instance.builder(Parser.parse(module))
+        return Instance.builder(parsed(module))
                 .withImportValues(ImportValues.builder().addFunction(hostCall).build())
                 .build();
     }
+
+    /**
+     * {@code module}, parsed once for every instance made of the same bytes.
+     *
+     * <p>Reading a module is most of what making an instance of one costs, and it is a question of
+     * the bytes alone: what an instance holds of its own — its memory, its globals, its table — is
+     * made when it is built, so every test still runs on an instance nothing else has touched.
+     */
+    private static WasmModule parsed(byte[] module) {
+        return PARSED.computeIfAbsent(ByteBuffer.wrap(module.clone()), held -> Parser.parse(module));
+    }
+
+    private static final Map<ByteBuffer, WasmModule> PARSED = new ConcurrentHashMap<>();
 }
