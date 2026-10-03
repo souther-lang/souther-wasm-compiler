@@ -6,6 +6,24 @@ A behavior becomes an export that takes JSON and answers JSON. The values in bet
 linear memory, in an arena the caller pops after every call, so the output runs wherever core wasm
 runs rather than only where a garbage collector and a component runtime do.
 
+## What stays compatible
+
+Compatibility is kept at the boundaries this compiler offers the ones who use what it makes:
+
+- the command line: its arguments, its exit status, and the files it writes (below, under
+  "Running it");
+- the JavaScript package `@souther/wasm` (`packages/wasm`);
+- what a module it writes holds a host to: the host contract and its ABI version, the
+  `souther:surface` section and its version, and the interfaces a component exports and imports
+  (`souther:program/*`, `souther:decode/*`, `souther:reached/*`).
+
+Each of these that has a version moves it when it changes, and its tests fail where it changes
+without moving.
+
+The Java classes here are how this compiler is written, and none of them is offered to a caller. A
+`public` declaration is one another package of this compiler uses; it is not a Java API, and
+changing or removing it breaks nothing anyone was offered.
+
 ## What it reads
 
 `CheckedProgram` and what is reachable from it, and nothing else of the Souther compiler. Anything
@@ -123,7 +141,7 @@ rather than trusting the writing.
 
 ## As a component
 
-`WasmCompiler.compileAsComponent` wraps the same core module as a WebAssembly component. A Souther
+`--component` wraps the same core module as a WebAssembly component. A Souther
 module becomes an interface and a behavior a function of it:
 
     world root {
