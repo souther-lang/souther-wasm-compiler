@@ -1316,19 +1316,10 @@ unsafe fn entry_under(cell: u32, key: u32, hash: u32) -> Option<u32> {
     }
 }
 
-/// A hash of what a key is written as.
-///
-/// Of the text and not of how the key is held, because two keys are one key exactly where their
-/// texts are one text — which is what `value::key_order` answers nothing for — so two keys that are
-/// one have one hash whatever kind of key they are.
+/// A hash of a key, the same for two keys that are one: two keys are one where `==` says they are
+/// one value, and the hash is the one `order` keeps beside what `==` asks.
 unsafe fn key_hash(key: u32, keys: u32) -> u32 {
-    let (at, length) = value::key_text(key, keys);
-    let mut hash: u32 = 0x811c_9dc5;
-    for i in 0..length {
-        hash ^= u32::from(core::ptr::read((at + i) as usize as *const u8));
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    hash
+    order::hash_of(key, keys)
 }
 
 /// Whether a cell is a map a walk is growing.

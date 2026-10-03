@@ -1089,15 +1089,20 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
     }
 }
 
-/// Where one key of a map stands relative to another, which is the order their texts are written
-/// in.
+/// Where one key of a map stands relative to another, and whether they are one key.
 ///
-/// Worked out from what the keys hold where that order is the same one, so that finding an entry
-/// does not write a key out per comparison. A time of day is written as two digits per part, the
-/// seconds left off where there are none, so its text and its number stand in one order. A day is
-/// written that way while its year has four digits; a year before the first or past the ten
-/// thousandth is written with a sign and more digits, which is not the order of the days, so such
-/// a key is compared as text as before.
+/// Two keys are one key where `==` says they are one value (ADR-0009), which is `order::ranked`
+/// answering nothing between them. A key a map can cross with is written as text, and a map is
+/// written in the order its keys' texts sort, so such a key stands in that order here as well —
+/// and two of them are one text exactly where they are one value. Any other key is a key of a map a
+/// body holds and no boundary writes, and stands where `ranked` puts it.
+///
+/// A key written as text is compared from what it holds where that is the order of its text, so
+/// that finding an entry does not write a key out per comparison. A time of day is written as two
+/// digits per part, the seconds left off where there are none, so its text and its number stand in
+/// one order. A day is written that way while its year has four digits; a year before the first or
+/// past the ten thousandth is written with a sign and more digits, which is not the order of the
+/// days, so such a key is compared as text.
 pub(crate) unsafe fn key_order(left: u32, right: u32, descriptor: u32) -> i32 {
     match descriptor::kind(descriptor) {
         KIND_NEWTYPE => key_order(
@@ -1121,11 +1126,12 @@ pub(crate) unsafe fn key_order(left: u32, right: u32, descriptor: u32) -> i32 {
             }
             sign_of(temporal::second(left) as i64 - temporal::second(right) as i64)
         }
-        _ => {
+        KIND_DATE | KIND_DATE_TIME | KIND_INSTANT | KIND_ENUMERATION => {
             let (a, a_length) = key_text(left, descriptor);
             let (b, b_length) = key_text(right, descriptor);
             order::compare_runs(a, a_length, b, b_length)
         }
+        _ => order::ranked(left, right, descriptor),
     }
 }
 

@@ -114,6 +114,93 @@ pub unsafe fn ranked(left: u32, right: u32, descriptor: u32) -> i32 {
     }
 }
 
+/// A hash of a value, the same for any two that `ranked` answers nothing between.
+///
+/// Read off what `ranked` and `compare` compare and off nothing else, part by part, so two values
+/// that stand in one place have one hash whatever cells hold them: an amount by how much it is and
+/// not by its scale, a moment by when it is and not by how it was spelt, a case by which case it is.
+/// Where reading a part would be a second account of what `compare` does with it, the part is left
+/// out — a map is hashed by how many entries it holds — which makes more values share a hash and
+/// none that are one have two.
+pub unsafe fn hash_of(cell: u32, descriptor: u32) -> u32 {
+    match descriptor::kind(descriptor) {
+        KIND_NEWTYPE => hash_of(value::__souther_record_get(cell, 0), descriptor::member(descriptor, 0)),
+        KIND_OPTION => match held(cell) {
+            0 => mixed(HASH_START, 0),
+            inner => mixed(mixed(HASH_START, 1), hash_of(inner, descriptor::member(descriptor, 0))),
+        },
+        KIND_BOOL => mixed(HASH_START, value::__souther_bool_value(cell)),
+        KIND_INT => wide(HASH_START, value::__souther_int_value(cell)),
+        KIND_DECIMAL => {
+            let (at, length) = decimal::written(decimal::canonical(cell));
+            bytes(HASH_START, at, length)
+        }
+        KIND_STRING => bytes(
+            HASH_START,
+            value::__souther_string_bytes(cell),
+            value::__souther_string_length(cell),
+        ),
+        KIND_DATE | KIND_TIME | KIND_DATE_TIME => wide(HASH_START, temporal::moment(cell)),
+        KIND_INSTANT => mixed(
+            wide(HASH_START, temporal::moment_second(cell)),
+            temporal::moment_nano(cell) as u32,
+        ),
+        KIND_ENUMERATION => mixed(HASH_START, case_of(cell, descriptor)),
+        KIND_SUM => {
+            let case = case_of(cell, descriptor);
+            mixed(mixed(HASH_START, case), hash_of(cell, descriptor::member(descriptor, case)))
+        }
+        KIND_PRODUCT => {
+            let mut hash = HASH_START;
+            for i in 0..descriptor::arity(descriptor) {
+                hash = mixed(hash, hash_of(value::__souther_record_get(cell, i), descriptor::member(descriptor, i)));
+            }
+            hash
+        }
+        KIND_TUPLE => {
+            let mut hash = HASH_START;
+            for i in 0..descriptor::arity(descriptor) {
+                hash = mixed(hash, hash_of(value::__souther_tuple_get(cell, i), descriptor::member(descriptor, i)));
+            }
+            hash
+        }
+        KIND_LIST | KIND_SET => {
+            let element = descriptor::member(descriptor, 0);
+            let held = value::__souther_list_length(cell);
+            let mut hash = mixed(HASH_START, held);
+            for i in 0..held {
+                hash = mixed(hash, hash_of(value::__souther_list_get(cell, i), element));
+            }
+            hash
+        }
+        KIND_MAP => mixed(HASH_START, value::__souther_map_length(cell)),
+        _ => HASH_START,
+    }
+}
+
+const HASH_START: u32 = 0x811c_9dc5;
+
+/// One more word into a hash.
+fn mixed(hash: u32, word: u32) -> u32 {
+    let mut out = hash;
+    for byte in word.to_le_bytes() {
+        out = (out ^ u32::from(byte)).wrapping_mul(0x0100_0193);
+    }
+    out
+}
+
+fn wide(hash: u32, word: i64) -> u32 {
+    mixed(mixed(hash, word as u32), (word >> 32) as u32)
+}
+
+unsafe fn bytes(hash: u32, at: u32, length: u32) -> u32 {
+    let mut out = mixed(hash, length);
+    for i in 0..length {
+        out = (out ^ u32::from(core::ptr::read((at + i) as usize as *const u8))).wrapping_mul(0x0100_0193);
+    }
+    out
+}
+
 /// Where a value is written relative to another of the same type.
 pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
     // What an optional is written as is what it holds, or nothing at all — so what it is compared
