@@ -99,6 +99,11 @@ jobs:
             examples/react-cart/package-lock.json
             packages/wasm/package-lock.json
 
+      # A lockfile copies what a package.json says of the repository's own packages, and npm ci
+      # installs one whose copy of a command or of the Node it needs has gone stale.
+      - name: Require every lockfile to say what its packages say
+        run: node scripts/lockfiles-agree.mjs
+
       # What a TypeScript caller is handed: the runtime, the binding generated from a module, and the
       # sentences Raoh's catalog writes of an issue — each held to what the compiler built above
       # writes, the binding to a page that stops compiling when the model it reads changes, and the
