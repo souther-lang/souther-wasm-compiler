@@ -64,11 +64,6 @@ class AModuleSaysWhatItOffersACallerTest {
         return CARTS;
     }
 
-    @Test
-    void saysItsVersion() {
-        assertThat(surface().get("version").asInt()).isEqualTo(1);
-    }
-
     /** A behavior: what it is exported as, who answers it, what it takes and what it answers. */
     @Test
     void saysWhatEachBehaviorTakesAndAnswers() {

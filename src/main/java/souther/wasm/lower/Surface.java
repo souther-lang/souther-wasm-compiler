@@ -56,8 +56,16 @@ import souther.compiler.types.TypeSymbol;
  */
 final class Surface {
 
-    /** Which version of the surface this writes. */
-    static final int VERSION = 1;
+    /**
+     * Which version of the surface this writes.
+     *
+     * <p>Version 1 said each module's behaviors and the declarations they name. Version 2 says, of
+     * a declaration a caller may read a value of on its own, the number it is read under
+     * ({@code "decode"}). What each version says is held to a file named for it by
+     * {@code TheSurfaceChangesOnlyWithItsVersionTest}, so what it says cannot change while this
+     * stays where it is.
+     */
+    static final int VERSION = 2;
 
     private final CheckedProgram program;
     private final Map<TypeSymbol.AtModule, Integer> decodable = new LinkedHashMap<>();
