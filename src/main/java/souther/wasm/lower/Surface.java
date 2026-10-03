@@ -42,6 +42,11 @@ import souther.compiler.types.TypeSymbol;
  * program makes is there too, whether or not a behavior names it, because a caller may want to read
  * a value of one on its own.
  *
+ * <p>Being here is not being offered. A declaration its module keeps is here with
+ * {@code "published":false}, as a fact about what the module declares; what a caller may build or
+ * read on its own is what a module publishes, and anything that hands a caller a way to make a
+ * value of a type reads that rather than taking this list as the answer.
+ *
  * <p>{@link #VERSION} moves when what this says is read differently.
  */
 final class Surface {
@@ -182,6 +187,15 @@ final class Surface {
         };
     }
 
+    /**
+     * What a behavior answers, as the model says it.
+     *
+     * <p>A union nobody named is two answers, and both are written. Its members are the union as it
+     * was written, {@code Signal | Missing}; how a value of it crosses is the leaves those descend to,
+     * {@code Red}, {@code Green} and {@code Missing}, and the form they travel in. Neither is
+     * recovered from the other: the leaves alone are a union nobody wrote, and the members alone
+     * leave a reader to descend and to decide the form again.
+     */
     private String output(CheckedBoundaryOutput output) {
         return switch (output) {
             case CheckedBoundaryOutput.Scalar scalar -> scalar(scalar.scalar());
@@ -190,8 +204,10 @@ final class Surface {
             case CheckedBoundaryOutput.SetOf set -> "{\"is\":\"set\",\"of\":" + output(set.element()) + "}";
             case CheckedBoundaryOutput.MapOf map -> "{\"is\":\"map\",\"key\":" + key(map.key())
                     + ",\"value\":" + output(map.value()) + "}";
-            case CheckedBoundaryOutput.Cases cases -> "{\"is\":\"cases\",\"cases\":"
-                    + symbols(cases.cases()) + ",\"form\":" + form(cases.representation()) + "}";
+            case CheckedBoundaryOutput.Cases cases -> "{\"is\":\"union\",\"members\":"
+                    + symbols(List.copyOf(cases.type().members()))
+                    + ",\"crossing\":{\"cases\":" + symbols(cases.cases())
+                    + ",\"form\":" + form(cases.representation()) + "}}";
         };
     }
 

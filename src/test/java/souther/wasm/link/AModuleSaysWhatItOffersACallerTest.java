@@ -77,15 +77,47 @@ class AModuleSaysWhatItOffersACallerTest {
                 "[{\"name\":\"cart\",\"type\":{\"is\":\"declared\",\"module\":\"cart\","
                         + "\"name\":\"Cart\"}}]");
         JsonNode answers = price.get("answers");
-        assertThat(answers.get("is").asString()).isEqualTo("cases");
-        assertThat(names(answers.get("cases"))).containsExactlyInAnyOrder("Priced", "EmptyCart");
-        assertThat(answers.get("form").toString())
+        assertThat(answers.get("is").asString()).isEqualTo("union");
+        assertThat(names(answers.get("members"))).containsExactlyInAnyOrder("Priced", "EmptyCart");
+        assertThat(names(answers.get("crossing").get("cases")))
+                .containsExactlyInAnyOrder("Priced", "EmptyCart");
+        assertThat(answers.get("crossing").get("form").toString())
                 .isEqualTo("{\"is\":\"discriminated\",\"tag\":\"type\",\"contents\":\"value\"}");
 
         JsonNode rate = behavior(surface(), "cart", "rate");
         assertThat(rate.get("implementation").asString()).isEqualTo("injected");
         assertThat(rate.get("answers").toString())
                 .isEqualTo("{\"is\":\"scalar\",\"scalar\":\"decimal\"}");
+    }
+
+    /**
+     * An answer nobody named is said as both of what it is: the members as they were written, and
+     * the leaves those descend to with the form they cross in. With a sum among the members the two
+     * differ, and neither can be had from the other — the leaves are a union nobody wrote.
+     */
+    @Test
+    void saysAnAnswersMembersApartFromHowItCrosses() {
+        JsonNode said = surfaceOf(WasmCompiler.compile(CheckedProgram.of(List.of("""
+                module signals
+
+                data Red
+                data Green
+                data Signal = Red | Green
+                data Missing
+
+                behavior units : (n: Int) -> Signal | Missing
+                let units (n) = if n > 1 then Red else if n > 0 then Green else Missing
+                """))));
+
+        JsonNode answers = behavior(said, "signals", "units").get("answers");
+        assertThat(names(answers.get("members"))).containsExactly("Missing", "Signal");
+        assertThat(names(answers.get("crossing").get("cases")))
+                .containsExactlyInAnyOrder("Red", "Green", "Missing");
+        assertThat(answers.get("crossing").get("form").toString())
+                .isEqualTo("{\"is\":\"enumeration\"}");
+        // A member is named onto the surface as a case is, so a reader writing the answer's type
+        // has the sum it names.
+        assertThat(declaration(said, "signals", "Signal").get("is").asString()).isEqualTo("sum");
     }
 
     /** A shape's fields, an optional among them, and its rules by name and nothing more. */
@@ -147,9 +179,12 @@ class AModuleSaysWhatItOffersACallerTest {
                 let halved (a, b) = if b == 0 then Undivided else a + b
                 """))));
 
-        assertThat(behavior(said, "dividing", "halved").get("answers").get("cases").toString())
-                .contains("{\"is\":\"scalar\",\"scalar\":\"int\"}")
-                .contains("{\"is\":\"declared\",\"module\":\"dividing\",\"name\":\"Undivided\"}");
+        JsonNode answers = behavior(said, "dividing", "halved").get("answers");
+        for (JsonNode named : List.of(answers.get("members"), answers.get("crossing").get("cases"))) {
+            assertThat(named.toString())
+                    .contains("{\"is\":\"scalar\",\"scalar\":\"int\"}")
+                    .contains("{\"is\":\"declared\",\"module\":\"dividing\",\"name\":\"Undivided\"}");
+        }
         assertThat(said.get("declarations")).hasSize(1);
     }
 

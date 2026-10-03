@@ -64,7 +64,10 @@ one cannot be handed the wrong other.
 
 What a caller writes code against is in the module too. `souther:surface` is one JSON object: each
 module's behaviors, with the export each is called through, who answers it (`here`, `injected`,
-`unwritten` or `elsewhere`), the names and types of what it takes and the type it answers; and every
+`unwritten` or `elsewhere`), the names and types of what it takes and the type it answers — an
+answer nobody named as both its `members`, the union as it was written, and its `crossing`, the
+leaves those descend to and the form they travel in, because the leaves alone are a union nobody
+wrote; and every
 declaration those name, with every one the program's modules declare whether or not a behavior names
 it. A product says its fields, a newtype the type it is written as, a sum its cases and the form they
 travel in (a bare tag, or the tag under one key and a wrapped case under another), and the first two
