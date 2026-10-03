@@ -194,6 +194,32 @@ export async function twice(bytes: Uint8Array): Promise<string[]> {
       ["49382715604938271562", "3.000000000000000000003"]);
   });
 
+  // A number written with a power of ten however large is compared as written and never raised to:
+  // what it costs to read is its text, and not a number of a billion digits.
+  it("reads an amount written with a vast power of ten as the amount it is", async () => {
+    const { at, bytes } = await generated(MODEL, `import { amount, numeral } from ${JSON.stringify(RUNTIME)};
+import { load } from "./binding.ts";
+
+export async function tiny(bytes: Uint8Array): Promise<string> {
+  const shop = await load(bytes, { "shop.rate": () => 1 });
+  const read = shop.modules.shop.doubled(amount("1e-1000000000"));
+  return read.issues === undefined ? numeral(read.value) : read.issues.map((it) => it.code).join();
+}
+`);
+    const page = await import(join(at, "page.ts"));
+    const started = performance.now();
+    assert.match(await page.tiny(bytes), /^2(\.0*)?[eE]-1000000000$/);
+    assert.ok(performance.now() - started < 1000, "read without raising ten to the power");
+  });
+
+  it("refuses to make an amount of what JSON does not write as a number", async () => {
+    const { amount } = await import(RUNTIME);
+    for (const written of ["01", "-01", "1.", ".5", "+1", "NaN", "1e", ""]) {
+      assert.throws(() => amount(written), RangeError, written);
+    }
+    assert.equal(amount("-0.10e+3").rawJSON, "-0.10e+3");
+  });
+
   it("stops a page compiling where it hands over a number as a string", async () => {
     const { at } = await generated(MODEL, `import { load } from "./binding.ts";
 

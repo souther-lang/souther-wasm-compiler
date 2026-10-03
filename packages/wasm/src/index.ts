@@ -390,24 +390,42 @@ function read(text: string): unknown {
   });
 }
 
-/** Whether two texts written as JSON numbers are the same amount, however each is written. */
+/**
+ * Whether two texts written as JSON numbers are the same amount, however each is written.
+ *
+ * Compared in the one form each amount has, and never by lining the two up: lining up `0` and
+ * `1e-1000000000` would write out a number a billion digits long, for a text of fourteen bytes.
+ */
 function sameAmount(left: string, right: string): boolean {
   const a = partsOf(left);
   const b = partsOf(right);
   if (a === undefined || b === undefined) {
     return left === right;
   }
-  const under = a.scale < b.scale ? b.scale : a.scale;
-  return a.digits * 10n ** BigInt(under - a.scale) === b.digits * 10n ** BigInt(under - b.scale);
+  return a.negative === b.negative && a.digits === b.digits && a.power === b.power;
 }
 
-/** A number as it was written, taken apart into whole digits and how far the point moved. */
-function partsOf(written: string): { digits: bigint; scale: number } | undefined {
-  const held = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([-+]?\d+))?$/.exec(written);
+/**
+ * A number as JSON writes one, in the one form its amount has: whether it is below nothing, its
+ * digits with no zero leading or trailing, and the power of ten they are multiplied by. Nothing is
+ * no digits, whatever sign or power it was written with. What it costs is the text's length, so a
+ * power however large is only read and never raised.
+ */
+function partsOf(written: string): { negative: boolean; digits: string; power: bigint } | undefined {
+  const held = /^(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([-+]?\d+))?$/.exec(written);
   if (held === null) {
     return undefined;
   }
   const [, sign, whole, fraction = "", power = "0"] = held;
-  return { digits: BigInt(sign + whole + fraction), scale: fraction.length - Number(power) };
+  const significant = (whole + fraction).replace(/^0+/, "");
+  const digits = significant.replace(/0+$/, "");
+  if (digits === "") {
+    return { negative: false, digits: "", power: 0n };
+  }
+  return {
+    negative: sign === "-",
+    digits,
+    power: BigInt(power) - BigInt(fraction.length) + BigInt(significant.length - digits.length),
+  };
 }
 
