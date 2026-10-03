@@ -1,0 +1,19 @@
+@souther/wasm
+Copyright the Souther contributors
+
+This package is licensed under the Eclipse Public License 2.0, except for the
+file noted below.
+
+---
+
+src/catalog.ts
+
+  The message templates of Raoh's catalog (catalog/messages/en.properties and
+  ja.properties), read by scripts/catalog.py at the commit the file names.
+
+    raoh-specification
+    https://github.com/raoh-project/raoh-specification
+    Licensed under the Apache License, Version 2.0
+
+  The file stays under the Apache License 2.0; a copy is in the repository's
+  LICENSE-APACHE-2.0.
