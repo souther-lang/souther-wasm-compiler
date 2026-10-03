@@ -52,8 +52,8 @@ export default function App() {
       member,
     };
     try {
-      const cart = bound.decode.Cart(typed);
-      return cart.issues !== undefined ? cart : bound.cart.price(cart.value);
+      const cart = bound.decode.cart.Cart(typed);
+      return cart.issues !== undefined ? cart : bound.modules.cart.price(cart.value);
     } catch (ended) {
       return { ended: ended instanceof Error ? ended.message : String(ended) };
     }

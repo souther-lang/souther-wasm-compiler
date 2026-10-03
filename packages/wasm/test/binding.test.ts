@@ -52,14 +52,14 @@ const PAGE = `import { load, type Line } from "./binding.ts";
 export async function priced(bytes: Uint8Array): Promise<string> {
   const shop = await load(bytes, { "shop.rate": (pair: string) => (pair === "USD" ? 150 : 1) });
   const line: Line = { sku: "ABC-1234", quantity: 1 };
-  const answer = shop.shop.price([line], "Premium");
+  const answer = shop.modules.shop.price([line], "Premium");
   if (answer.issues !== undefined) {
     return answer.issues.map((issue) => issue.code).join();
   }
   if (answer.value.type === "Priced") {
     return String(answer.value.total);
   }
-  const read = shop.decode.Sku("nope");
+  const read = shop.decode.shop.Sku("nope");
   return read.issues === undefined ? read.value : "not a code";
 }
 `;
@@ -72,7 +72,7 @@ const run = promisify(execFile);
  */
 const generatedFor = new Map<string, Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }>>();
 
-function generated(model: string, page = PAGE): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
+function generated(model: string | readonly string[], page = PAGE): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
   const asked = JSON.stringify([model, page]);
   let held = generatedFor.get(asked);
   if (held === undefined) {
@@ -82,7 +82,7 @@ function generated(model: string, page = PAGE): Promise<{ at: string; bytes: Uin
   return held;
 }
 
-async function generating(model: string, page: string): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
+async function generating(model: string | readonly string[], page: string): Promise<{ at: string; bytes: Uint8Array<ArrayBuffer> }> {
   const { bytes } = await compiled(model);
   // A directory of its own for each page, since two pages may be written against one model.
   const at = mkdtempSync(join(tmpdir(), "souther-binding-"));
@@ -151,7 +151,7 @@ let spread (pair, today) = lowered(today(pair))
 
 export async function spread(bytes: Uint8Array): Promise<unknown> {
   const rates = await load(bytes, { "rates.today": (pair: string) => (pair === "USDJPY" ? 150 : 0) });
-  return rates.rates.spread("USDJPY").value;
+  return rates.modules.rates.spread("USDJPY").value;
 }
 `);
     assert.equal(await checked(at), "");
@@ -164,7 +164,7 @@ export async function spread(bytes: Uint8Array): Promise<unknown> {
 
 export async function lowered(bytes: Uint8Array): Promise<unknown> {
   const rates = await load(bytes, { "rates.today": () => 0 });
-  return rates.rates.lowered(1);
+  return rates.modules.rates.lowered(1);
 }
 `);
     assert.match(await checked(at), /lowered/);
@@ -178,12 +178,12 @@ import { load } from "./binding.ts";
 
 export async function twice(bytes: Uint8Array): Promise<string[]> {
   const shop = await load(bytes, { "shop.rate": () => amount("1.000000000000000000001") });
-  const once = shop.shop.doubled(amount("12345678901234567890.5"));
+  const once = shop.modules.shop.doubled(amount("12345678901234567890.5"));
   if (once.issues !== undefined) {
     return once.issues.map((issue) => issue.code);
   }
-  const again = shop.shop.doubled(once.value);
-  const converted = shop.shop.converted(3);
+  const again = shop.modules.shop.doubled(once.value);
+  const converted = shop.modules.shop.converted(3);
   return [again, converted].map((read) =>
     read.issues === undefined ? numeral(read.value) : read.issues.map((issue) => issue.code).join());
 }
@@ -199,12 +199,78 @@ export async function twice(bytes: Uint8Array): Promise<string[]> {
 
 export async function doubled(bytes: Uint8Array): Promise<unknown> {
   const shop = await load(bytes, { "shop.rate": () => 1 });
-  return [shop.shop.doubled("123"), shop.shop.doubled({ rawJSON: "123" })];
+  return [shop.modules.shop.doubled("123"), shop.modules.shop.doubled({ rawJSON: "123" })];
 }
 `);
     const said = await checked(at);
-    assert.match(said, /page\.ts\(5,29\).*'string' is not assignable/);
-    assert.match(said, /page\.ts\(5,55\).*'\{ rawJSON: string; \}' is not assignable/);
+    assert.match(said, /page\.ts\(5,\d+\).*'string' is not assignable/);
+    assert.match(said, /page\.ts\(5,\d+\).*'\{ rawJSON: string; \}' is not assignable/);
+  });
+
+  // What the model names is the model's to name: a module called what the binding calls its own
+  // parts, a type called what the runtime calls its types or what another type is written as once
+  // its module is put before it, a parameter called what TypeScript reserves.
+  it("writes whatever a model names without one name standing for another", async () => {
+    const { at, bytes } = await generated([`module a exposing ( X, Reading, Numeric, Program, Bound, Record, Promise, souther )
+
+data X = { n: Int }
+data Reading = { n: Int }
+data Numeric = Int
+data Program = String
+data Bound = { b: Bool }
+data Record = { r: Int }
+data Promise = { p: Int }
+data souther = { s: Int }
+`, `module b exposing ( X )
+
+data X = { m: Int }
+`, `module c exposing ( AX )
+
+data AX = { k: Int }
+`, `module program exposing ( decode, modules )
+
+import a ( X, Reading, Record )
+
+behavior decode : (program: Int, function: Int, new: Int) -> Int
+
+let decode (program, function, new) = program + function + new
+
+behavior modules : (x: X, reading: Reading, record: Record) -> Int
+
+let modules (x, reading, record) = x.n + reading.n + record.r
+`, `module decode exposing ( program, load )
+
+behavior program : (souther: Int) -> Int
+
+let program (souther) = souther + 1
+
+behavior load : (argument1: Int, FINGERPRINT: Int) -> Int
+
+let load (argument1, FINGERPRINT) = argument1 + FINGERPRINT
+`], `import { load, type AX, type AX_2, type BX, type Bound, type Bound_2 } from "./binding.ts";
+
+export async function all(bytes: Uint8Array): Promise<unknown[]> {
+  const bound: Bound = await load(bytes);
+  const x: AX_2 = { n: 1 };
+  const flag: Bound_2 = { b: true };
+  const other: BX = { m: 2 };
+  const ax: AX = { k: 3 };
+  return [
+    bound.modules.decode.program(1).value,
+    bound.modules.decode.load(2, 3).value,
+    bound.modules.program.decode(1, 2, 3).value,
+    bound.modules.program.modules(x, { n: 2 }, { r: 3 }).value,
+    bound.decode.a.Bound(flag).value,
+    bound.decode.b.X(other).value,
+    bound.decode.c.AX(ax).value,
+    bound.decode.a.souther({ s: 1 }).value,
+  ];
+}
+`);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.deepEqual(await page.all(bytes),
+      [2, 5, 6, 6, { b: true }, { m: 2 }, { k: 3 }, { s: 1 }]);
   });
 
   it("refuses a module it was not generated from", async () => {

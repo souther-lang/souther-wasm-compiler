@@ -24,19 +24,21 @@ export interface Compiled {
 const run = promisify(execFile);
 const held = new Map<string, Promise<Compiled>>();
 
-/** The module compiled from `model`, once for every test that asks for it. */
-export function compiled(model: string): Promise<Compiled> {
-  let answer = held.get(model);
+/** The module compiled from `model`, a source or one per module, once for every test that asks for it. */
+export function compiled(model: string | readonly string[]): Promise<Compiled> {
+  const sources = typeof model === "string" ? [model] : model;
+  const asked = JSON.stringify(sources);
+  let answer = held.get(asked);
   if (answer === undefined) {
-    answer = compiling(model);
-    held.set(model, answer);
+    answer = compiling(sources);
+    held.set(asked, answer);
   }
   return answer;
 }
 
-async function compiling(model: string): Promise<Compiled> {
+async function compiling(sources: readonly string[]): Promise<Compiled> {
   const at = mkdtempSync(join(tmpdir(), "souther-wasm-"));
-  writeFileSync(join(at, "model.sou"), model);
+  sources.forEach((source, n) => writeFileSync(join(at, `model${n}.sou`), source));
   const jar = readdirSync(join(ROOT, "target")).find((name) => name.endsWith("-cli.jar"));
   assert.ok(jar, "the compiler is built: mvn package at the repository's root");
   await run("java", ["-jar", join(ROOT, "target", jar), at, "-o", join(at, "model.wasm")]);

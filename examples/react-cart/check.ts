@@ -27,7 +27,7 @@ function same(what: string, held: unknown, wanted: unknown): void {
 
 /** What a basket's subtotal comes to, through the binding: a number, or an amount where one cannot hold it. */
 function subtotal(cart: Cart): unknown {
-  const answer = bound.cart.price(cart);
+  const answer = bound.modules.cart.price(cart);
   return answer.value?.type === "Priced" ? answer.value.subtotal : answer;
 }
 
@@ -44,15 +44,15 @@ same("what a product code is written as",
     wraps: { is: "scalar", scalar: "string" }, rules: [{ name: "written" }],
   });
 
-same("a product code read on its own", bound.decode.Sku("ABC-1234"),
+same("a product code read on its own", bound.decode.cart.Sku("ABC-1234"),
   { value: "ABC-1234" });
 
 same("a product code that is not one, read on its own",
-  bound.decode.Sku("nope").issues?.map((it) => [it.path, it.code]),
+  bound.decode.cart.Sku("nope").issues?.map((it) => [it.path, it.code]),
   [["", "invalid_format"]]);
 
 same("a basket with something in it",
-  bound.cart.price({
+  bound.modules.cart.price({
     lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: 1500 }], member: "Standard",
   }),
   { value: { type: "Priced", subtotal: 3000, discount: 0, shipping: 500, total: 3500 } });
@@ -76,13 +76,13 @@ same("a product code that is not one",
 
 // What a person reads of it is written from Raoh's catalog, in their language, and nowhere here.
 {
-  const answer = bound.cart.price({
+  const answer = bound.modules.cart.price({
     lines: [{ sku: "ABC-1234", quantity: 0, unitPrice: 1 }], member: "Standard",
   });
   same("what is read of a line of none, in English",
     answer.issues?.map((issue) => messageOf(issue, "en")),
     ["invariant violated on cart.Line: atLeastOne"]);
-  const code = bound.decode.Sku("nope");
+  const code = bound.decode.cart.Sku("nope");
   same("what is read of a product code that is not one, in Japanese",
     code.issues?.map((issue) => messageOf(issue, "ja")), ["形式が不正です"]);
 }

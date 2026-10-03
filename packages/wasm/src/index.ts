@@ -93,6 +93,9 @@ export function numeral(held: Numeric): string {
   return typeof held === "number" ? String(held) : held.rawJSON;
 }
 
+/** Where a module is: its bytes, or where to fetch them from. */
+export type Source = string | URL | Response | ArrayBuffer | ArrayBufferView;
+
 /** What answers each behavior a program reaches out for, by the name the model declares it under. */
 export type Supplied = Readonly<Record<string, (...args: never[]) => unknown>>;
 
@@ -117,7 +120,7 @@ export class Ended extends Error {
  * @param fingerprint what a binding was generated from, which the module's surface must be
  */
 export async function load(
-  source: string | URL | Response | ArrayBuffer | ArrayBufferView,
+  source: Source,
   supplied: Supplied = {},
   fingerprint?: string,
 ): Promise<Program> {
@@ -154,9 +157,7 @@ export async function fingerprintOf(surface: Uint8Array<ArrayBuffer>): Promise<s
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function asBytes(
-  source: string | URL | Response | ArrayBuffer | ArrayBufferView,
-): Promise<BufferSource> {
+async function asBytes(source: Source): Promise<BufferSource> {
   if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) {
     return source as BufferSource;
   }

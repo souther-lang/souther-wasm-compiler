@@ -15,11 +15,19 @@ from that and nothing else:
 import { load } from "./cart.ts";
 
 const cart = await load("/cart.wasm");
-const answer = cart.cart.price({ lines, member: "Premium" });
+const answer = cart.modules.cart.price({ lines, member: "Premium" });
 if (answer.issues === undefined && answer.value.type === "Priced") {
   show(answer.value.total);
 }
 ```
+
+What the model names stays under the name it gives: a behavior is `bound.modules.<module>.<behavior>`,
+a type a value can be read as on its own is `bound.decode.<module>.<Type>`, and only behaviors the
+module publishes are there to call. What the host supplies is every behavior the program reaches
+out for, published or kept, by `"<module>.<behavior>"`. Each declaration is a type of the same name,
+with its module's name before it where two modules declare one by that name; a name that TypeScript
+reserves, or that the binding declares itself (`Bound`, `Supplied`, `load`, `FINGERPRINT`), is
+given a number after it.
 
 So a case or a field renamed in the model is a type renamed in the binding, and a page still
 reading the old one stops compiling. A product is an object type, a newtype the type it is written

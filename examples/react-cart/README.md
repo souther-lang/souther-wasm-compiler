@@ -94,7 +94,7 @@ An amount is held to whatever precision it was written with. A JavaScript number
 amount put through one is rounded before the model ever sees it and rounded again coming back.
 
     import { amount } from "@souther/wasm";
-    cart.cart.price({ lines: [{ sku, quantity: 1, unitPrice: amount("12345678901234567890.12345") }], member });
+    cart.modules.cart.price({ lines: [{ sku, quantity: 1, unitPrice: amount("12345678901234567890.12345") }], member });
 
 `amount` carries the digits. Coming back, a number is a number wherever one holds what the model
 answered and an amount wherever one does not, so a total is a `Numeric`, one or the other.
@@ -137,7 +137,7 @@ product code. So the form does not work out which input a complaint belongs unde
 knowing.
 
 The page hands over what was typed, which is not a basket until the model has read it as one: a
-quantity typed as `two` is no `Int`. So it reads it first, with `bound.decode.Cart(typed)`, and
+quantity typed as `two` is no `Int`. So it reads it first, with `bound.decode.cart.Cart(typed)`, and
 prices what that answers. A complaint about what was typed is then said of the basket, at
 `/lines/0/sku`, and what is priced is a `Cart` the binding types.
 
