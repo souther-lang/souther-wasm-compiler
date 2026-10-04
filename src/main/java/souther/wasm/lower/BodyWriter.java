@@ -54,6 +54,10 @@ final class BodyWriter {
     private static final int OPCODE_I64_LOAD = 0x29;
     private static final int OPCODE_I32_SHL = 0x74;
     private static final int OPCODE_SELECT = 0x1b;
+    private static final int OPCODE_RETURN = 0x0f;
+    private static final int OPCODE_TRY_TABLE = 0x1f;
+    /** A catch clause naming a tag, which hands on what the exception carries. */
+    private static final int CATCH = 0x00;
 
     private static final int TYPE_I32 = 0x7f;
     private static final int TYPE_I64 = 0x7e;
@@ -229,6 +233,25 @@ final class BodyWriter {
     BodyWriter block() {
         writer.write((byte) OPCODE_BLOCK).write((byte) BLOCK_TYPE_EMPTY);
         depth++;
+        return this;
+    }
+
+    /**
+     * Opens a run of instructions an exception under {@code tag} leaves, closed by {@link #end}.
+     * The exception goes to the edge of the block {@code depth} out from where this opens, as a
+     * branch there would.
+     */
+    BodyWriter catching(int tag, int depth) {
+        writer.write((byte) OPCODE_TRY_TABLE).write((byte) BLOCK_TYPE_EMPTY)
+                .writeUnsignedLeb128(1)
+                .write((byte) CATCH).writeUnsignedLeb128(tag).writeUnsignedLeb128(depth);
+        this.depth++;
+        return this;
+    }
+
+    /** Answers what is on the stack, from wherever the body is. */
+    BodyWriter returns() {
+        writer.write((byte) OPCODE_RETURN);
         return this;
     }
 

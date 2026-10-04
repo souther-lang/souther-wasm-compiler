@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.core.BlockReaches;
@@ -347,40 +348,39 @@ public final class WasmCompiler {
     /**
      * The functions a component's lift calls, which a plain core module does not carry.
      *
-     * <p>One per behavior, taking the argument string and answering where the answer's own two
-     * words are, because the canonical ABI reads a string result out of memory rather than off the
-     * stack. One per type a caller may read a value of, the same over {@link #DECODE} with the
-     * type's number put in front. And one post-return for all of them: everything a call made is
-     * the arena, so what each owes back is the same thing.
+     * <p>One per behavior, taking the argument string and answering where its outcome is, because
+     * the canonical ABI reads a {@code result<string, ended>} out of memory rather than off the
+     * stack ({@link #outcomeOf}). One per type a caller may read a value of, the same over {@link
+     * #DECODE} with the type's number put in front. And one post-return for all of them: everything
+     * a call made is the arena, so what each owes back is the same thing, whichever way the call
+     * came out.
      */
     private static void liftable(WasmFragment fragment, Runtime calls, CheckedProgram program,
             List<TypeSymbol.AtModule> decodable) {
         int overStrings = fragment.functionType(
                 List.of(Type.I32, Type.I32), List.of(Type.I32));
+        int ended = fragment.endsCallsByThrowing();
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
                 if (!publishes(module, behavior)) {
                     continue;
                 }
                 String crossing = exportName(behavior.name());
-                byte[] body = new BodyWriter(2, 0)
+                byte[] body = outcomeOf(calls, ended, out -> out
                         .localGet(0)
                         .localGet(1)
-                        .call(fragment.exported(crossing))
-                        .call(calls.of(RuntimeAbi.LIFT_AREA))
-                        .body();
+                        .call(fragment.exported(crossing)));
                 fragment.export(Component.Lifted.wrapping(crossing),
                         fragment.define(overStrings, body));
             }
         }
         for (int number = 0; number < decodable.size(); number++) {
-            byte[] body = new BodyWriter(2, 0)
-                    .constant(number)
+            int reading = number;
+            byte[] body = outcomeOf(calls, ended, out -> out
+                    .constant(reading)
                     .localGet(0)
                     .localGet(1)
-                    .call(fragment.exported(DECODE))
-                    .call(calls.of(RuntimeAbi.LIFT_AREA))
-                    .body();
+                    .call(fragment.exported(DECODE)));
             fragment.export(Component.Lifted.reading(readAs(decodable.get(number))),
                     fragment.define(overStrings, body));
         }
@@ -389,6 +389,28 @@ public final class WasmCompiler {
                 .body();
         fragment.export(Component.Lifted.POST_RETURN, fragment.define(
                 fragment.functionType(List.of(Type.I32), List.of()), rewind));
+    }
+
+    /**
+     * A lifted function's body: the call {@code calling} writes, its answer put where a component
+     * reads the {@code ok} of an outcome; or, where the runtime ended the call, the reason its
+     * failure record holds put where it reads the {@code err}.
+     *
+     * <p>Only the tag the runtime ends a call under is caught, and it carries nothing: the record
+     * is the one place a reason is kept. Neither way of writing the outcome hands anything out, so
+     * a call that ended because nothing more could be handed out is still answered. A trap is not
+     * an exception, and no catch clause stops one, so a call that failed for no reason the runtime
+     * gave still traps.
+     */
+    private static byte[] outcomeOf(Runtime calls, int ended, Consumer<BodyWriter> calling) {
+        BodyWriter out = new BodyWriter(2, 0).block().catching(ended, 0);
+        calling.accept(out);
+        return out.call(calls.of(RuntimeAbi.LIFT_AREA))
+                .returns()
+                .end()
+                .end()
+                .call(calls.of(RuntimeAbi.LIFT_ENDED))
+                .body();
     }
 
     /** The shape of a generated function over values: a cell per parameter, and a cell answered. */

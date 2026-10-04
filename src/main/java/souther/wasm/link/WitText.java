@@ -43,28 +43,38 @@ public final class WitText {
             out.append("  export ").append(Component.readAs(module)).append(";\n");
         }
         out.append("}\n");
-        packageOf(out, ASKED, asked, Component::askedUnder, TAKES);
-        packageOf(out, UNDER, offering.behaviors(), Component::offeredAs, TAKES);
-        packageOf(out, READ_UNDER, offering.readable(), Component::readAs, GIVEN);
+        packageOf(out, ASKED, asked, Component::askedUnder, TAKES, false);
+        packageOf(out, UNDER, offering.behaviors(), Component::offeredAs, TAKES, true);
+        packageOf(out, READ_UNDER, offering.readable(), Component::readAs, GIVEN, true);
         return out.toString();
     }
 
-    /** The interfaces of one package, which is one per Souther module with anything in it. */
+    /**
+     * The interfaces of one package, which is one per Souther module with anything in it.
+     *
+     * @param ends whether a call of one of these functions can end, which the component's own
+     *     functions answer as their {@code err}; what a program reaches out for answers a string
+     */
     private static void packageOf(StringBuilder out, String held,
             Map<String, Map<String, String>> modules, UnaryOperator<String> exportedAs,
-            String takes) {
+            String takes, boolean ends) {
         if (modules.isEmpty()) {
             return;
         }
+        String answers = ends ? "result<string, " + Component.ENDED + ">" : "string";
         out.append("\npackage ").append(held).append(" {\n");
         for (Map.Entry<String, Map<String, String>> module : modules.entrySet()) {
             String exported = exportedAs.apply(module.getKey());
             out.append("  interface ").append(exported.substring(exported.indexOf('/') + 1))
                     .append(" {\n");
+            if (ends) {
+                out.append("    record ").append(Component.ENDED).append(" { ")
+                        .append(Component.REASON).append(": u32 }\n");
+            }
             for (String crossing : Component.namesIn(
-                    module.getKey(), module.getValue()).values()) {
-                out.append("    ").append(crossing)
-                        .append(": func(").append(takes).append(": string) -> string;\n");
+                    module.getKey(), module.getValue(), ends).values()) {
+                out.append("    ").append(crossing).append(": func(").append(takes)
+                        .append(": string) -> ").append(answers).append(";\n");
             }
             out.append("  }\n");
         }
@@ -94,6 +104,12 @@ public final class WitText {
             // one value of its type as JSON and answers the same way, an issue naming where in the
             // value it is about. Nothing else crosses — the shape of what goes in and comes back
             // is the model's, and it is written in Souther, not here.
+            //
+            // Either answer is the ok of a result. Its err is a call the runtime ended, with the
+            // reason a core module's abort record holds: 3 for arguments that are not JSON, 6 for
+            // a division by zero, and the rest as the runtime's ABI lists them. The instance can
+            // be called again after one. A trap is a failure the runtime gave no reason for, or
+            // arguments too large for the instance's memory, which fail before the call begins.
             """;
 
     /**

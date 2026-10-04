@@ -5,6 +5,7 @@ import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
 import com.dylibso.chicory.wasm.Parser;
 import com.dylibso.chicory.wasm.WasmModule;
+import com.dylibso.chicory.wasm.types.MemoryLimits;
 import com.dylibso.chicory.wasm.types.ValType;
 import java.io.IOException;
 import java.io.InputStream;
@@ -40,6 +41,14 @@ public final class Running {
      */
     public static Running linked(byte[] module) {
         return new Running(instantiate(module), module);
+    }
+
+    /**
+     * A linked module whose memory cannot grow more than {@code pages} past where it starts, so that
+     * running out of it is something a test can reach.
+     */
+    public static Running linkedWithin(byte[] module, int pages) {
+        return new Running(instantiateWithin(module, pages), module);
     }
 
     /** What the custom section {@code name} of this module says, as text. */
@@ -96,8 +105,17 @@ public final class Running {
      */
     public static Running bareRuntime() {
         byte[] module = runtimeModule();
-        Running running = new Running(instantiate(module), module);
-        running.call(RuntimeAbi.RUNTIME_INIT, RuntimeLayout.of(module).heapBase(module));
+        return placed(new Running(instantiate(module), module));
+    }
+
+    /** The runtime on its own, as {@link #bareRuntime}, with memory that cannot grow at all. */
+    public static Running bareRuntimeThatCannotGrow() {
+        byte[] module = runtimeModule();
+        return placed(new Running(instantiateWithin(module, 0), module));
+    }
+
+    private static Running placed(Running running) {
+        running.call(RuntimeAbi.RUNTIME_INIT, RuntimeLayout.of(running.module).heapBase(running.module));
         return running;
     }
 
@@ -184,6 +202,11 @@ public final class Running {
         instance.memory().write(address, bytes);
     }
 
+    /** How many bytes of memory the instance has now. */
+    public int memoryBytes() {
+        return instance.memory().pages() * 65536;
+    }
+
     /** Reads bytes out of the module's memory. */
     public byte[] read(int address, int length) {
         return instance.memory().readBytes(address, length);
@@ -199,6 +222,16 @@ public final class Running {
     }
 
     private static Instance instantiate(byte[] module) {
+        return builderFor(module).build();
+    }
+
+    /** An instance whose memory grows at most {@code pages} past what the module starts with. */
+    private static Instance instantiateWithin(byte[] module, int pages) {
+        int starts = parsed(module).memorySection().orElseThrow().getMemory(0).limits().initialPages();
+        return builderFor(module).withMemoryLimits(new MemoryLimits(starts, starts + pages)).build();
+    }
+
+    private static Instance.Builder builderFor(byte[] module) {
         HostFunction hostCall = new HostFunction(
                 RuntimeAbi.IMPORT_MODULE,
                 RuntimeAbi.IMPORT_HOST_CALL,
@@ -206,8 +239,7 @@ public final class Running {
                 List.of(ValType.I32),
                 (instance, arguments) -> new long[] {0});
         return Instance.builder(parsed(module))
-                .withImportValues(ImportValues.builder().addFunction(hostCall).build())
-                .build();
+                .withImportValues(ImportValues.builder().addFunction(hostCall).build());
     }
 
     /**

@@ -770,6 +770,32 @@ public final class ComponentWriter {
 	}
 
 	/**
+	 * Encode a component instance built from inline exports of types and then functions
+	 * &mdash; the form of {@link #componentInstanceFromFuncs} for an interface whose
+	 * functions name a type of their own, which the interface has to export under a name
+	 * for those functions to be exportable.
+	 * @param types the {@code (export name, component type index)} pairs, in order
+	 * @param funcs the {@code (export name, component function index)} pairs, in order
+	 * @return the encoded component instance entry
+	 */
+	public static byte[] componentInstanceFromTypesAndFuncs(
+			java.util.List<java.util.Map.Entry<String, Integer>> types,
+			java.util.List<java.util.Map.Entry<String, Integer>> funcs) {
+		return enc(w -> {
+			w.write(0x01); // from-exports
+			w.writeUnsignedLeb128(types.size() + funcs.size());
+			for (java.util.Map.Entry<String, Integer> type : types) {
+				declName(w, type.getKey());
+				w.write(0x03).writeUnsignedLeb128(type.getValue()); // sortidx: type
+			}
+			for (java.util.Map.Entry<String, Integer> func : funcs) {
+				declName(w, func.getKey());
+				w.write(0x01).writeUnsignedLeb128(func.getValue()); // sortidx: func
+			}
+		});
+	}
+
+	/**
 	 * Encode a component export of an instance (e.g. the {@code wasi:cli/run@0.3.0}
 	 * interface).
 	 * @param exportName the export name

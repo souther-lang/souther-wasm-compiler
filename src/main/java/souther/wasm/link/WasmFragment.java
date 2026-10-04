@@ -153,6 +153,30 @@ public final class WasmFragment {
 
     private String surface;
 
+    /** The tag a call the runtime ends is thrown under, where {@link #endsCallsByThrowing} said so. */
+    public static final int ENDED_TAG = 0;
+
+    /**
+     * Has a call the runtime ends leave by a throw under {@link #ENDED_TAG}, which carries nothing,
+     * rather than by a trap; and answers the tag, for a body that catches it.
+     *
+     * <p>For a module a component wraps. A host of a core module reads why a call ended out of the
+     * module's memory after the trap, and a component's caller cannot: an instance that has trapped
+     * cannot be asked anything again. The runtime's record of the reason is written the same way
+     * either way; only how the call is left differs, and that is settled at the link.
+     */
+    public int endsCallsByThrowing() {
+        throwsEndings = true;
+        return ENDED_TAG;
+    }
+
+    /** Whether a call the runtime ends is left by a throw, which {@link #endsCallsByThrowing} says. */
+    boolean throwsEndings() {
+        return throwsEndings;
+    }
+
+    private boolean throwsEndings;
+
     /**
      * Which function a name reaches, for a body that means to call what a caller would.
      *
