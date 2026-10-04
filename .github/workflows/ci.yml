@@ -157,8 +157,13 @@ jobs:
       # sentences Raoh's catalog writes of an issue — each held to what the compiler built above
       # writes, the binding to a page that stops compiling when the model it reads changes, and the
       # issues and their sentences to the same fixtures the JVM and the wasm module are held to.
+      #
+      # The installed test keeps what it built with the tools — the archives, the module and the
+      # page compiled to JavaScript — for the oldest Node engines names to be handed below.
       - name: Test the TypeScript package
         working-directory: packages/wasm
+        env:
+          SOUTHER_WASM_BUILD_INTO: ${{ runner.temp }}/built
         run: |
           npm ci
           npm run typecheck
@@ -179,22 +184,26 @@ jobs:
         working-directory: examples/react-cart
         run: node check.ts
 
-      # The package on the oldest Node engines names. It is packed, and the installed test compiled,
-      # with the Node the tools need; on the oldest Node only that test's JavaScript runs, and the
-      # npm that comes with that Node installs the archive into a project as a project would.
-      - name: Pack the package and compile the installed test
+      # The package on the oldest Node engines names, run as a project runs it: what the project
+      # built with its tools, kept by the installed test above, is installed with the npm of that
+      # Node, the package's command run, and the page's JavaScript run. The test is compiled with the
+      # tools' Node, and the repository's node_modules taken away before the Node changes, so no
+      # tool of the repository's can be run on the oldest Node, and a test that ran one fails.
+      - name: Compile the installed test, and take the tools away
         working-directory: packages/wasm
         run: |
-          npm pack --silent --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/packed"
           npm run compile-tests
+          rm -rf node_modules
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ steps.floor.outputs.runtime }}
       - name: Use the installed package on the oldest Node engines names
         working-directory: packages/wasm
+        env:
+          SOUTHER_WASM_BUILT: ${{ runner.temp }}/built
         run: |
           test "$(node --version)" = "v${{ steps.floor.outputs.runtime }}"
-          SOUTHER_WASM_PACKED="$RUNNER_TEMP/$(cat "$RUNNER_TEMP/packed")" node --test target/runtime/test/installed.test.js
+          node --test target/runtime/test/installed.test.js
 
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no

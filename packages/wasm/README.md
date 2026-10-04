@@ -114,7 +114,8 @@ in; `package.json` says that in `devEngines`, apart from the Node a project runs
 
 The tests read `src` directly, except `test/installed.test.ts`, which packs the package as it would
 be published, installs it into a project of its own, and writes, compiles and runs a page there. CI
-also runs that test, compiled, on the oldest Node `engines` names.
+also hands what it built there, the archives, the module and the compiled page, to that test run on
+the oldest Node `engines` names, which installs and runs them with nothing of the repository's tools.
 
 Raoh's catalogue is raoh-ts's, which ships the text of raoh-specification's. `@raoh/core` is
 depended on from git at a commit until it is published; `test/installed.test.ts` installs it from
