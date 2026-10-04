@@ -52,7 +52,7 @@ export default function App() {
       member,
     };
     try {
-      const cart = bound.decode.cart.Cart(typed);
+      const cart = bound.decode.cart.Cart.decode(typed);
       return cart.issues !== undefined ? cart : bound.modules.cart.price(cart.value);
     } catch (ended) {
       return { ended: ended instanceof Error ? ended.message : String(ended) };
@@ -219,7 +219,7 @@ function Complaint({ about }: { readonly about: Issue | undefined }) {
  */
 function complaintAt(answer: Answer | null, path: string): Issue | undefined {
   return answer !== null && !("ended" in answer)
-    ? answer.issues?.find((issue) => issue.path === path)
+    ? answer.issues?.list.find((issue) => issue.path.toString() === path)
     : undefined;
 }
 
