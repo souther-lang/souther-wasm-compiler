@@ -7,13 +7,30 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
+/**
+ * The package's directory, the nearest above this file that holds a package.json: the tests run
+ * from test/ as TypeScript, and the installed test also from the directory it is compiled into.
+ */
+export const PACKAGE = packageRoot(import.meta.dirname);
+
 /** The repository's root, where the compiler is built. */
-export const ROOT = join(import.meta.dirname, "..", "..", "..");
+export const ROOT = join(PACKAGE, "..", "..");
+
+function packageRoot(from: string): string {
+  for (let at = from; ; at = dirname(at)) {
+    if (existsSync(join(at, "package.json"))) {
+      return at;
+    }
+    if (dirname(at) === at) {
+      throw new Error(`no package.json above ${from}`);
+    }
+  }
+}
 
 /** A compiled model: the directory it was compiled in, and the module. */
 export interface Compiled {

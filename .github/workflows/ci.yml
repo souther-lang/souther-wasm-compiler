@@ -131,22 +131,18 @@ jobs:
       # here calls a compiled program from outside the JVM, so it is the only place that would
       # notice the boundary changing shape — and only while it is still built.
       #
-      # The oldest Node the glue says it runs on is the one it is built and tested on here. The
-      # engines field and this are one statement, so this reads it there: a version written here
-      # as well would let a test pass on a Node the glue no longer promises, and the promise go
-      # unkept on the one it does.
-      - name: Read the oldest Node the glue runs on
+      # Two Nodes, each read from packages/wasm/package.json: the oldest the tests need, which run
+      # as the TypeScript they are written in (devEngines), and the oldest a project that installs
+      # the package may run it on (engines). The tools run on the first; the package is run on the
+      # second below, by the one test that runs only what a project runs.
+      - name: Read the Nodes the package names
         id: floor
         run: |
-          floor=$(jq -r '.engines.node' packages/wasm/package.json)
-          if [[ ! "$floor" =~ ^\>=([0-9]+)$ ]]; then
-            echo "packages/wasm says it runs on Node $floor; write the oldest it runs on as >=N" >&2
-            exit 1
-          fi
-          echo "node=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "tooling=$(scripts/oldest-node.sh packages/wasm tooling)" >> "$GITHUB_OUTPUT"
+          echo "runtime=$(scripts/oldest-node.sh packages/wasm runtime)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ steps.floor.outputs.node }}
+          node-version: ${{ steps.floor.outputs.tooling }}
           cache: npm
           cache-dependency-path: |
             examples/react-cart/package-lock.json
@@ -161,8 +157,13 @@ jobs:
       # sentences Raoh's catalog writes of an issue — each held to what the compiler built above
       # writes, the binding to a page that stops compiling when the model it reads changes, and the
       # issues and their sentences to the same fixtures the JVM and the wasm module are held to.
+      #
+      # The installed test keeps what it built with the tools — the archives, the module and the
+      # page compiled to JavaScript — for the oldest Node engines names to be handed below.
       - name: Test the TypeScript package
         working-directory: packages/wasm
+        env:
+          SOUTHER_WASM_BUILD_INTO: ${{ runner.temp }}/built
         run: |
           npm ci
           npm run typecheck
@@ -182,6 +183,27 @@ jobs:
       - name: Call a compiled program through the glue the page uses
         working-directory: examples/react-cart
         run: node check.ts
+
+      # The package on the oldest Node engines names, run as a project runs it: what the project
+      # built with its tools, kept by the installed test above, is installed with the npm of that
+      # Node, the package's command run, and the page's JavaScript run. The test is compiled with the
+      # tools' Node, and the repository's node_modules taken away before the Node changes, so no
+      # tool of the repository's can be run on the oldest Node, and a test that ran one fails.
+      - name: Compile the installed test, and take the tools away
+        working-directory: packages/wasm
+        run: |
+          npm run compile-tests
+          rm -rf node_modules
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.floor.outputs.runtime }}
+      - name: Use the installed package on the oldest Node engines names
+        working-directory: packages/wasm
+        env:
+          SOUTHER_WASM_BUILT: ${{ runner.temp }}/built
+        run: |
+          test "$(node --version)" = "v${{ steps.floor.outputs.runtime }}"
+          node --test target/runtime/test/installed.test.js
 
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no
