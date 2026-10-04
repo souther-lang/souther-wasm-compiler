@@ -1,5 +1,5 @@
 {
-  "model": "module forms\n\ndata Point = { x: Int, label: String, note: String? }\n\ndata Red\ndata Green\ndata Colour = Red | Green\n\ndata Circle = { radius: Int }\ndata Square = { side: Int }\ndata Shape = Circle | Square\n\ndata Day = Date\n\ndata At = Time\n\ndata Stamp = DateTime\n\ndata Moment = Instant\n\ndata Amount = Decimal\n\ndata Flag = Bool\n\ndata Points = List<Point>\n\ndata Counts = Map<String, Int>\n\ndata Unique = Set<Int>\n\ndata ByDay = Map<Date, Int>\n\ndata ByColour = Map<Colour, Int>\n\ndata Tracking = Int\ndata Untracked\ndata Shipment = Tracking | Untracked\n\ndata Wire = { iban: String }\ndata Card = { last4: String }\ndata Payment = Wire | Card\n",
+  "model": "module forms\n\ndata Point = { x: Int, label: String, note: String? }\n\ndata Red\ndata Green\ndata Colour = Red | Green\n\ndata Circle = { radius: Int }\ndata Square = { side: Int }\ndata Shape = Circle | Square\n\ndata Day = Date\n\ndata At = Time\n\ndata Stamp = DateTime\n\ndata Moment = Instant\n\ndata Amount = Decimal\n\ndata Flag = Bool\n\ndata Points = List<Point>\n\ndata Counts = Map<String, Int>\n\ndata Unique = Set<Int>\n\ndata ByDay = Map<Date, Int>\n\ndata ByColour = Map<Colour, Int>\n\ndata Tracking = Int\ndata Untracked\ndata Shipment = Tracking | Untracked\n\ndata Wire = { iban: String }\ndata Card = { last4: String }\ndata Payment = Wire | Card\n\ndata Ａlpha\ndata 𝐀lpha\ndata Mark = 𝐀lpha | Ａlpha\n",
   "cases": [
     {
       "about": "a field of the wrong kind",
@@ -220,6 +220,34 @@
         ],
         "ja": [
           "[Green, Red]のいずれかで入力してください"
+        ]
+      }
+    },
+    {
+      "about": "a name no case has, where code point order is not UTF-16's",
+      "type": "forms.Mark",
+      "input": "Beta",
+      "expect": [
+        {
+          "path": "",
+          "code": "not_allowed",
+          "messageKey": "not_allowed",
+          "meta": {
+            "allowed": [
+              "Ａlpha",
+              "𝐀lpha"
+            ],
+            "actual": "Beta"
+          }
+        }
+      ],
+      "note": "U+FF21 is before U+1D400 in code point order, and after it in UTF-16's, where U+1D400 is the surrogate U+D835 first. Raoh lists what was allowed in code point order.",
+      "messages": {
+        "en": [
+          "must be one of [Ａlpha, 𝐀lpha]"
+        ],
+        "ja": [
+          "[Ａlpha, 𝐀lpha]のいずれかで入力してください"
         ]
       }
     },
