@@ -132,15 +132,16 @@ jobs:
       # notice the boundary changing shape — and only while it is still built.
       #
       # The oldest Node the glue says it runs on is the one it is built and tested on here. The
-      # engines field and this are one statement, so this reads it there: a version written here
-      # as well would let a test pass on a Node the glue no longer promises, and the promise go
-      # unkept on the one it does.
+      # engines field and this are one statement, so this reads it there, to the patch: a version
+      # written here as well, or one naming only a major, which setup-node takes as the newest of
+      # it, would let a test pass on a Node the glue does not promise, and the promise go unkept on
+      # the one it does.
       - name: Read the oldest Node the glue runs on
         id: floor
         run: |
           floor=$(jq -r '.engines.node' packages/wasm/package.json)
-          if [[ ! "$floor" =~ ^\>=([0-9]+)$ ]]; then
-            echo "packages/wasm says it runs on Node $floor; write the oldest it runs on as >=N" >&2
+          if [[ ! "$floor" =~ ^\>=([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "packages/wasm says it runs on Node $floor; write the oldest it runs on as >=X.Y.Z" >&2
             exit 1
           fi
           echo "node=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"

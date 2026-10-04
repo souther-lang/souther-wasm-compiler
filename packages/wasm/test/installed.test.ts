@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
 import { promisify } from "node:util";
-import { compiled } from "./compiled.ts";
+import { compiled, ROOT } from "./compiled.ts";
 
 const PACKAGE = join(import.meta.dirname, "..");
 const TSC = join(PACKAGE, "node_modules", ".bin", "tsc");
@@ -81,9 +81,13 @@ it("is used from where it is installed, as the README says", async () => {
   }));
   await run("npm", ["install", "--offline", "--no-audit", "--no-fund",
     join(project, stdout.trim())], { cwd: project });
+  const installed = join(project, "node_modules", "@souther", "wasm");
   // One copy, the project's: the package brought none of its own.
-  assert.throws(() => readFileSync(join(project, "node_modules", "@souther", "wasm", "node_modules",
-    "@raoh", "core", "package.json")), /ENOENT/);
+  assert.throws(() => readFileSync(join(installed, "node_modules", "@raoh", "core", "package.json")),
+    /ENOENT/);
+  // The package is packed from its own directory, and the repository's license is outside it, so
+  // the package carries a copy, which is the repository's.
+  assert.equal(readFileSync(join(installed, "LICENSE"), "utf-8"), readFileSync(join(ROOT, "LICENSE"), "utf-8"));
 
   const { bytes } = await compiled(MODEL);
   writeFileSync(join(project, "model.wasm"), bytes);

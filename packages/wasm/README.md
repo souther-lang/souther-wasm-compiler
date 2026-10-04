@@ -96,7 +96,7 @@ package alike to the fixtures in the repository's `conformance/issues`.
 ## Where it runs
 
 What is installed is JavaScript and its declarations, built from `src` into `dist`; Node runs no
-TypeScript under `node_modules`. It needs Node 22 or later, or a browser that has both
+TypeScript under `node_modules`. It needs Node 22.18.0 or later, or a browser that has both
 `JSON.parse` source text access and `JSON.rawJSON`: an amount wider than a JavaScript number is
 read and written through those two, and without them it would be rounded without a word, so
 `load` refuses to run there.
