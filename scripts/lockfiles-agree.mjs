@@ -2,8 +2,8 @@
 // says.
 //
 // A lockfile records, beside what it resolved from the registry, the project it belongs to and any
-// package it links to by path: its name, its version, its commands, the Node it needs, what it
-// depends on. Those are copies of a package.json, and nothing makes a copy follow when the
+// package of this repository it links to by path or installs a copy of: its name, its version, its
+// commands, the Node it needs, what it depends on and asks of its peers. Those are copies of a package.json, and nothing makes a copy follow when the
 // package.json changes: `npm ci` refuses a lockfile whose dependencies disagree, and installs one
 // whose commands and engines do without a word. So the two can come to say two things about one
 // package, and did — package.json pointing its command at the built glue and asking for Node 22,
@@ -45,12 +45,21 @@ for (const lockfile of lockfiles) {
   const locked = JSON.parse(readFileSync(join(root, lockfile), "utf-8")).packages ?? {};
   // The project is the entry with no path, and a package linked by path is an entry whose path
   // leaves node_modules: both are directories of this repository with a package.json of their own.
+  // A package of this repository installed as a copy (install-links) is an entry under
+  // node_modules resolved from a path, the directory it was copied from; npm writes what it
+  // depends on and asks of its peers, and not what it needs to be developed, nor its name, which
+  // its path under node_modules is.
   for (const [path, entry] of Object.entries(locked)) {
-    if (path !== "" && path.split("/").includes("node_modules")) {
+    const copiedFrom = typeof entry.resolved === "string" && entry.resolved.startsWith("file:")
+      ? entry.resolved.slice("file:".length) : undefined;
+    const linked = path === "" || !path.split("/").includes("node_modules");
+    if (!linked && copiedFrom === undefined) {
       continue;
     }
-    const manifest = JSON.parse(readFileSync(join(root, at, path, "package.json"), "utf-8"));
-    const fields = new Set([...COPIED, ...Object.keys(entry).filter((each) => !LOCKED_ONLY.has(each))]);
+    const directory = linked ? path : copiedFrom;
+    const manifest = JSON.parse(readFileSync(join(root, at, directory, "package.json"), "utf-8"));
+    const copiedFields = linked ? COPIED : COPIED.filter((each) => each !== "devDependencies" && each !== "name");
+    const fields = new Set([...copiedFields, ...Object.keys(entry).filter((each) => !LOCKED_ONLY.has(each))]);
     for (const field of fields) {
       const said = normalised(field, manifest[field], manifest.name);
       const copied = normalised(field, entry[field], manifest.name);
@@ -64,7 +73,9 @@ for (const lockfile of lockfiles) {
 }
 
 if (disagreeing > 0) {
-  console.error("Write the lockfile again where its package.json changed: npm install --package-lock-only");
+  console.error("Write the lockfile again where its package.json changed: npm install --package-lock-only. "
+    + "npm keeps what it wrote of a package installed as a copy, so take that package's entry out of "
+    + "the lockfile first.");
   process.exit(1);
 }
 console.log(`${lockfiles.length} lockfiles say what their packages say`);
