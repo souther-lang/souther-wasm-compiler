@@ -61,3 +61,26 @@ export interface Surface {
   readonly modules: readonly { readonly name: string; readonly behaviors: readonly Behavior[] }[];
   readonly declarations: readonly Declaration[];
 }
+
+/** How a primitive standing as a case of an alternative is tagged: by its name in the language. */
+const PRIMITIVE_TAGS: Readonly<Record<Scalar, string>> = {
+  string: "String", int: "Int", bool: "Bool", decimal: "Decimal",
+  date: "Date", time: "Time", datetime: "DateTime", instant: "Instant",
+};
+
+/** What a case of an alternative is tagged with where it travels: its declaration's name, or its primitive's. */
+export function tagOf(shape: Shape): string {
+  switch (shape.is) {
+    case "declared":
+      return shape.name;
+    case "scalar":
+      return PRIMITIVE_TAGS[shape.scalar];
+    default:
+      throw new Error(`a case is a declaration or a primitive, and this is ${shape.is}`);
+  }
+}
+
+/** A declaration's name with its module's, which is what tells it from every other. */
+export function keyOf(declaration: { readonly module: string; readonly name: string }): string {
+  return `${declaration.module}.${declaration.name}`;
+}

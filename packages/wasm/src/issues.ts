@@ -8,24 +8,23 @@
 // reader's language; Souther adds only the sentence for the issues of its own, which no catalogue
 // of Raoh's has.
 
-import { Decimal, Issue, Issues, JsonNumber, type MessageResolver, Messages, Path, type Result, parse }
+import { Decimal, Issue, Issues, JsonNumber, type MessageResolver, Messages, Path, type Result }
   from "@raoh/core";
 
 /** What reading a value came to: the value, or the issues that kept it from being one. */
 export type Reading<T> = Result<T>;
 
 /**
- * The issues a module wrote, read from the JSON text of its answer, `{"issues": [...]}`.
+ * The issues a module wrote, from its answer, `{"issues": [...]}`, as Raoh's `parse` reads it.
  *
- * The text is read as Raoh reads JSON, so nothing in it is rounded: a metadata number written as
- * an integer is a `bigint`, one written with a fraction a `Decimal` at the scale it is written
- * with, as the bound it states was. A `message` an issue carries is what the decoder said in its
- * own words, where it says more than a template would — the form a temporal is written in — and
- * stays the issue's sentence in every language.
+ * Read as Raoh reads JSON, nothing in it is rounded: a metadata number written as an integer is a
+ * `bigint`, one written with a fraction a `Decimal` at the scale it is written with, as the bound it
+ * states was. A `message` an issue carries is what the decoder said in its own words, where it says
+ * more than a template would — the form a temporal is written in — and stays the issue's sentence
+ * in every language.
  */
-export function issuesIn(answer: string): Issues {
-  const read = parse(answer);
-  const issues = read instanceof Map ? read.get("issues") : undefined;
+export function issuesIn(answer: unknown): Issues {
+  const issues = answer instanceof Map ? answer.get("issues") : undefined;
   if (!Array.isArray(issues) || issues.length === 0) {
     throw new Error("the module's answer holds no issues where it says it does");
   }

@@ -51,7 +51,7 @@ let counted (lines) = List.length(lines)
 // @raoh/core and the one the package was built against have to be one, or the part's issues could
 // not be said at the part's path.
 const PAGE = `import { field, int, list, object } from "@raoh/core";
-import { amount, messageOf } from "@souther/wasm";
+import { messageOf } from "@souther/wasm";
 import { load } from "./binding.ts";
 
 export async function counted(bytes: Uint8Array): Promise<unknown[]> {
@@ -59,7 +59,7 @@ export async function counted(bytes: Uint8Array): Promise<unknown[]> {
   const order = object(field("lines", list(shop.decode.shop.Line)), field("count", int()));
   const read = order.decode({ lines: [{ sku: "A", quantity: "two" }], count: 1 });
   return [
-    shop.modules.shop.counted([{ sku: "A", quantity: amount("1"), note: null }]).value,
+    shop.modules.shop.counted([{ sku: "A", quantity: 1n, note: null }]).value,
     read.issues?.list.map((issue) => [issue.path.toString(), messageOf(issue, "en")]),
   ];
 }
@@ -129,7 +129,7 @@ it("is used from where it is installed, as the README says", async () => {
   }
   const page = await import(join(project, "page.js"));
   assert.deepEqual(await page.counted(new Uint8Array(readFileSync(join(project, BUILT.model)))),
-    [1, [["/lines/0/quantity", "expected long"]]]);
+    [1n, [["/lines/0/quantity", "expected long"]]]);
 });
 
 /**

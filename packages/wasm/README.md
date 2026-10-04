@@ -22,8 +22,9 @@ if (answer.issues === undefined && answer.value.type === "Priced") {
 ```
 
 What the model names stays under the name it gives: a behavior is `bound.modules.<module>.<behavior>`,
-a type a value can be read as on its own is the decoder `bound.decode.<module>.<Type>`, and only behaviors the
-module publishes are there to call. What the host supplies is every behavior the program reaches
+a type a value can be read as on its own is the decoder `bound.decode.<module>.<Type>`, and the
+decoder of the same type as a form gives it `bound.form.<module>.<Type>`. Only behaviors the module
+publishes are there to call. What the host supplies is every behavior the program reaches
 out for, published or kept, by `"<module>.<behavior>"`. Each declaration is a type of the same name,
 with its module's name before it where two modules declare one by that name; a name that TypeScript
 reserves, or that the binding declares itself (`Bound`, `Supplied`, `load`, `FINGERPRINT`), is
@@ -32,14 +33,29 @@ given a number after it.
 So a case or a field renamed in the model is a type renamed in the binding, and a page still
 reading the old one stops compiling. A product is an object type, a newtype the type it is written
 as, a sum the union of its cases discriminated by `type`, an enumeration the union of its names, an
-`Int` or a `Decimal` a `Numeric` — a number where a JavaScript number holds it and an `Amount` where
-one does not — and a temporal its text. An optional field may be left out or written as `null`,
-since the boundary reads either as nothing; a module writing one leaves it out.
+`Int` a `bigint` and a `Decimal` raoh-ts's `Decimal`, as Raoh's `long()` and `decimal()` give them,
+and a temporal its text. An optional field may be left out or written as `null`, since the boundary
+reads either as nothing; a module writing one leaves it out.
 
-An `Amount` is the digits crossing as the number they are (`JSON.rawJSON`): `amount("1.10")` makes
-one to hand over, an answer too wide for a number comes back as one, and either is handed over
-again as a number. `numeral(held)` is its digits, for showing. A string is never a number here, so
-a page handing one where the model takes an `Int` does not compile.
+What crosses is read as the surface says each value is, so no count or price is rounded however
+many digits it has: a `bigint` and a `Decimal` are handed over as the numbers they are and come back
+as the same types, and what came back is handed over again as it is. A string is never a number
+here, so a page handing one where the model takes an `Int` does not compile; `Decimal.parse("1.10")`
+and `Decimal.of(3)` make a `Decimal` to hand over, and `decimal.toString()` writes its digits.
+
+## A form hands over what was typed
+
+Every box of a form holds text. `bound.form.<module>.<Type>` reads a value as a form gives it: text
+that spells a JSON number where the type has an `Int` or a `Decimal` is that number, `"true"` and
+`"false"` where it has a `Bool` are those, and an empty box where the value is optional is nothing.
+Any other text is handed over as it was typed, and the model says what is wrong with it, at its
+path, as it says of anything else. Nothing is trimmed, and nothing about what a quantity is or what
+a code looks like is decided in the page:
+
+```ts
+const read = cart.form.cart.Cart.decode({ lines: [{ sku: "ABC-1234", quantity: "two", unitPrice: "1500.00" }], member });
+read.issues?.at(["lines", 0, "quantity"]).map((issue) => messageOf(issue, locale)); // ["expected long"]
+```
 
 A binding knows which module it was generated from: the SHA-256 of that module's surface. Loading
 any other module through it is refused, rather than calling it with the first one's numbers and
@@ -68,8 +84,11 @@ Souther's own issues (`invariant_violation`) what the JVM says. So a form says w
 have said, in English or Japanese, and the rule it is about is written in the model and nowhere
 else.
 
-A type a value can be read as on its own is a raoh-ts `Decoder`, so a page reads a form of its own
-with the model's types as its parts:
+`issues.at(path)` gives the issues at one path, which is what a form shows beside the field it names.
+
+A type a value can be read as on its own is a raoh-ts `Decoder`. A value the model knows whole is
+read by the model's own decoder; where a page reads something the model has no part in, such as a
+box a person ticks to agree to terms, it reads it with Raoh, the model's types as its parts:
 
 ```ts
 import { field, int, object } from "@raoh/core";
@@ -96,10 +115,9 @@ package alike to the fixtures in the repository's `conformance/issues`.
 ## Where it runs
 
 What is installed is JavaScript and its declarations, built from `src` into `dist`; Node runs no
-TypeScript under `node_modules`. It needs Node 22 or later, or a browser that has both
-`JSON.parse` source text access and `JSON.rawJSON`: an amount wider than a JavaScript number is
-read and written through those two, and without them it would be rounded without a word, so
-`load` refuses to run there.
+TypeScript under `node_modules`. It needs Node 22 or later, or a browser with ES2024: what crosses is
+read and written by raoh-ts, number by number as the surface says each is, and nothing of the
+engine's own reading of a number is asked.
 
 ## Developing
 
