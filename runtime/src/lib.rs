@@ -82,7 +82,12 @@ const PAGE: usize = 65536;
 /// through the `__souther_rational_*` functions, and `/` came to answer one: `__souther_divide` and
 /// `__souther_decimal_divide_by`, which answered `/` as a truncated `Int` and a rounded `Decimal`,
 /// are gone, the language having answered an exact quotient since before either was reachable.
-const ABI_VERSION: u32 = 11;
+///
+/// Raised to 12 when a call this runtime ends came to be left through `__souther_end_call`, whose
+/// body a component's link replaces with a throw (issue #41), and a component's lifted result came
+/// to be a `result<string, ended>`: `__souther_lift_area` writes which case it is before the
+/// string, and `__souther_lift_ended` writes the other case.
+const ABI_VERSION: u32 = 12;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -173,13 +178,38 @@ pub unsafe extern "C" fn __ronto_alloc_reset(mark: u32) {
     arena_popped();
 }
 
-/// Where a string a call answered with is, in the one place a component reads a result from.
+/// Where the string a call answered with is, as the `ok` of the `result<string, ended>` a
+/// component reads a call's outcome as.
 ///
-/// The canonical ABI reads a string result out of an area in this memory rather than off the
-/// stack, so an answer that crossed as two values is put in one. The area is arena memory like
-/// everything else the call made, and goes back with it at the post-return.
+/// The canonical ABI reads that result out of an area in this memory rather than off the stack: a
+/// byte saying which case it is, and from the fourth byte on what the case holds. The area is arena
+/// memory like everything else the call made, and goes back with it at the post-return.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
+    let area = lift_area(LIFTED_ANSWERED);
+    core::ptr::write_unaligned((area + 4) as *mut u32, at);
+    core::ptr::write_unaligned((area + 8) as *mut u32, length);
+    area
+}
+
+/// The reason a call ended for, as the `err` of the result [`__souther_lift_area`] answers the
+/// `ok` of.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_lift_ended(reason: u32) -> u32 {
+    let area = lift_area(LIFTED_ENDED);
+    core::ptr::write_unaligned((area + 4) as *mut u32, reason);
+    area
+}
+
+/// The case of a lifted result that holds the answer.
+const LIFTED_ANSWERED: u8 = 0;
+/// The case of a lifted result that holds why the call ended.
+const LIFTED_ENDED: u8 = 1;
+
+/// An area for a lifted result, saying which case it is.
+///
+/// Twelve bytes, the larger case's: a string's two words after the case byte and its padding.
+unsafe fn lift_area(case: u8) -> u32 {
     // The arena hands out a run exactly as long as it was asked for, so that text written piece by
     // piece is one run. What reads this area asks it to begin on a four-byte boundary, so the
     // padding is taken here rather than by the arena, where it would break the runs.
@@ -187,9 +217,8 @@ pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
     if over != 0 {
         let _ = __ronto_alloc(4 - over as u32);
     }
-    let area = __ronto_alloc(8);
-    core::ptr::write_unaligned(area as *mut u32, at);
-    core::ptr::write_unaligned((area + 4) as *mut u32, length);
+    let area = __ronto_alloc(12);
+    core::ptr::write(area as *mut u8, case);
     area
 }
 
@@ -277,6 +306,23 @@ pub unsafe extern "C" fn __souther_abort(reason: u32, descriptor: u32, aux0: u64
     core::ptr::write((FAILURE + OFF_DESCRIPTOR) as *mut u32, descriptor);
     core::ptr::write_unaligned((FAILURE + OFF_AUX0) as *mut u64, aux0);
     core::ptr::write_unaligned((FAILURE + OFF_AUX1) as *mut u64, aux1);
+    __souther_end_call(reason)
+}
+
+/// Leaves a call whose reason the record now holds.
+///
+/// A function of its own, under a name, so that how a call is left is chosen where the module is
+/// linked and not here. A core module traps, and its host reads the record out of memory. A
+/// component's link puts a throw in this body's place, which the lifted function the call came in
+/// through catches and answers with the reason: a component that has trapped cannot be asked
+/// anything again, its memory included.
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn __souther_end_call(reason: u32) -> ! {
+    // Read where the optimizer cannot see what for. A body that ignored the reason would let a
+    // caller in this crate hand over anything at all, and the body a component's link puts here
+    // throws what it is handed.
+    core::hint::black_box(reason);
     core::arch::wasm32::unreachable()
 }
 

@@ -57,9 +57,12 @@ public final class RuntimeAbi {
      * and a set and a map changed one member at a time came to be held as a tree. Raised to 11
      * when a {@code Rational} came to be a value, read through {@link Kernels#RATIONAL_ADD} and the
      * rest of its functions, and {@code /} came to answer one: the {@code /} of a truncated
-     * {@code Int} and of a rounded {@code Decimal} are gone.
+     * {@code Int} and of a rounded {@code Decimal} are gone. Raised to 12 when a call the runtime
+     * ends came to be left through {@link #END_CALL}, which a component's link makes a throw, and
+     * a component's lifted result came to be a {@code result<string, ended>}: {@link #LIFT_AREA}
+     * writes the case before the string, and {@link #LIFT_ENDED} writes the other case.
      */
-    public static final int VERSION = 11;
+    public static final int VERSION = 12;
 
     /**
      * What of the runtime a linked module still shows its host: the memory, and what the steps
@@ -89,8 +92,17 @@ public final class RuntimeAbi {
     /** Pops the arena back to where it began, which is what a post-return gives back. */
     public static final String ARENA_REWIND = "__souther_arena_rewind";
 
-    /** Puts a string a call answered with where a component reads a result from. */
+    /** Puts a string a call answered with where a component reads a result from, as its {@code ok}. */
     public static final String LIFT_AREA = "__souther_lift_area";
+
+    /** Puts the reason a call ended for where a component reads a result from, as its {@code err}. */
+    public static final String LIFT_ENDED = "__souther_lift_ended";
+
+    /**
+     * {@code (i32 reason) -> !}: leaves a call whose reason the failure record holds. A core module
+     * traps here; a component's link replaces the body with a throw its lifted functions catch.
+     */
+    public static final String END_CALL = "__souther_end_call";
 
     /** {@code (i32 size) -> i32}: zeroed bytes from the arena. */
     public static final String ALLOC = "__ronto_alloc";
@@ -115,7 +127,8 @@ public final class RuntimeAbi {
 
     /**
      * {@code (i32 reason, i32 descriptor, i64 aux0, i64 aux1) -> !}: writes the failure record and
-     * traps. Every abort a generated body raises goes through this one.
+     * leaves the call through {@link #END_CALL}. Every abort a generated body raises goes through
+     * this one.
      */
     public static final String ABORT = "__souther_abort";
 

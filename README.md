@@ -150,14 +150,24 @@ module becomes an interface and a behavior a function of it:
     }
     package souther:program {
       interface counting {
-        doubled: func(arguments: string) -> string;
+        record ended { reason: u32 }
+        doubled: func(arguments: string) -> result<string, ended>;
       }
     }
 
-The envelope is the one the core export answers with. What the component adds is who owns the
+The string is the envelope the core export answers with. What the component adds is who owns the
 memory it crosses in: the host lowers the argument through `cabi_realloc` and reads the answer out
 of an area in this memory, and the post-return says when the whole of it goes back. That is the
 bracket a core caller keeps, moved to where the format states it.
+
+A call the runtime ended answers `err`, with the reason a core module's abort record holds: 3 for
+arguments that are not JSON, 6 for a division by zero, and the rest as `RuntimeAbi` numbers them.
+A core module traps there and its host reads the record afterwards, which a component cannot
+offer, because an instance that has trapped cannot be asked anything again. So when the core module
+is linked for a component, the one runtime function every ended call leaves through is replaced by
+a throw, and each lifted function catches it and answers the reason. The instance answers the next
+call as it would have. A trap the runtime gave no reason for is not an exception, and no catch
+stops it, so it stays a trap.
 
 A type a module publishes is offered too, to be read on its own as the core module's
 `__souther_decode` reads it: one function per type, under a package of its own.
@@ -168,18 +178,21 @@ A type a module publishes is offered too, to be read on its own as the core modu
     }
     package souther:decode {
       interface cart {
-        sku: func(value: string) -> string;
-        line-item: func(value: string) -> string;
+        record ended { reason: u32 }
+        sku: func(value: string) -> result<string, ended>;
+        line-item: func(value: string) -> result<string, ended>;
       }
     }
 
-It takes one value of the type as JSON and answers `{"value": ...}` or `{"issues": [...]}`. The
+It takes one value of the type as JSON and answers `{"value": ...}` or `{"issues": [...]}`, or
+ends as a behavior does. The
 types are not functions of the interface the behaviors are in, because a type and a behavior may
 come to one name there (`LineItem` and `line_item`).
 
 A behavior's name is not the same string on both sides — Souther writes one convention and an
 interface another — so where two behaviors of a module would come to one interface name, this
-refuses rather than exporting one of them twice.
+refuses rather than exporting one of them twice. It refuses one that comes to `ended` too, which
+the interface already gives the record.
 
 A behavior the program does not implement is asked for rather than offered, under a package of its
 own:
@@ -208,11 +221,11 @@ question, so the build asks the format: CI validates a component this writes, an
 out, with `wasm-tools`.
 
 Validating says each index names something of the right type, and not that a function lifts the
-right one: every function crosses as a string and answers one, so a lift naming another
+right one: every function takes a string and answers the same result, so a lift naming another
 behavior's core function, or another type's reading, is still valid. So CI also calls each
 function of one component with `wasmtime` and compares what it answers. The JVM tests run no
 component.
-The three runtime functions a component's canonical calls go through are asked directly instead,
+The runtime functions a component's canonical calls go through are asked directly instead,
 which is where the one question the writing cannot answer — where a result may begin — can be put.
 The two modules a program reaches out through are run the same way, against lowerings that write
 what a lowering writes, because what could be got wrong about them is which behavior a numbered

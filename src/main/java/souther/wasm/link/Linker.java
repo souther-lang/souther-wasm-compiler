@@ -26,6 +26,11 @@ import souther.wasm.link.WasmFragment.Segment;
  * So the thunk pushes that number and calls {@link RuntimeAbi#RUNTIME_INIT}. Where the runtime
  * claimed the start slot itself, the thunk calls that first: a module has one start, and what the
  * runtime meant to run before anything else still has to run before anything else.
+ *
+ * <p>One body of the runtime's is replaced, and only for a module a component wraps: the one every
+ * call the runtime ends is left through, which traps, becomes a throw its lifted functions catch
+ * ({@link WasmFragment#endsCallsByThrowing}). It is replaced whole, found by the name the runtime
+ * exports it under, so no code the runtime wrote is read.
  */
 public final class Linker {
 
@@ -39,20 +44,27 @@ public final class Linker {
     private static final int SEC_DATA_COUNT = 12;
     private static final int SEC_CODE = 10;
     private static final int SEC_DATA = 11;
+    private static final int SEC_TAG = 13;
 
     private static final int EXTERNAL_KIND_FUNCTION = 0x00;
 
     private static final int OPCODE_I32_CONST = 0x41;
     private static final int OPCODE_CALL = 0x10;
     private static final int OPCODE_END = 0x0b;
+    private static final int OPCODE_LOCAL_GET = 0x20;
+    private static final int OPCODE_THROW = 0x08;
+
+    /** The one kind of tag there is: an exception. */
+    private static final int TAG_EXCEPTION = 0x00;
 
     private static final int PAGE_BYTES = 65536;
 
     /**
      * The order the binary format puts sections in. A section this linker adds has to go where the
-     * format says, not after whatever the runtime happened to write last.
+     * format says, not after whatever the runtime happened to write last. Tags go between memory
+     * and globals.
      */
-    private static final int[] BINARY_ORDER = {1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 10, 11};
+    private static final int[] BINARY_ORDER = {1, 2, 3, 4, 5, 13, 6, 7, 8, 9, 12, 10, 11};
 
     private Linker() {
     }
@@ -77,6 +89,13 @@ public final class Linker {
                 throw new IllegalArgumentException(
                         "the runtime writes section " + section.id() + " twice, so what it holds is not one vector");
             }
+        }
+        if (sections.containsKey(SEC_TAG)) {
+            throw new IllegalArgumentException(
+                    "the runtime declares tags, which this linker neither numbers after nor keeps");
+        }
+        if (fragment.throwsEndings()) {
+            throwingEndings(sections, plan);
         }
 
         sections.put(SEC_TYPE, appendEntries(sections.get(SEC_TYPE), fragment.typeEntries()));
@@ -103,6 +122,63 @@ public final class Linker {
         // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
         return WasmTreeShaker.withoutWhatNothingReaches(
                 assemble(sections, surface(fragment)));
+    }
+
+    /**
+     * Has a call the runtime ends leave by a throw rather than a trap.
+     *
+     * <p>The runtime leaves every call it ends through one function, {@link RuntimeAbi#END_CALL},
+     * whose body traps. That one body is replaced by a throw of the reason it is handed, under a
+     * tag this adds as {@link WasmFragment#ENDED_TAG}; nothing else the runtime wrote is read or
+     * changed. The tag's type is the function's own, which takes the reason and answers nothing.
+     */
+    private static void throwingEndings(Map<Integer, byte[]> sections, LinkPlan plan) {
+        int defined = plan.functionIndexOf(RuntimeAbi.END_CALL) - plan.layout().importedFunctionCount();
+        if (defined < 0) {
+            throw new IllegalArgumentException(RuntimeAbi.END_CALL
+                    + " is imported, so the runtime does not say how a call it ends is left");
+        }
+        Reading types = new Reading(sections.get(SEC_FUNCTION));
+        types.unsigned();
+        for (int i = 0; i < defined; i++) {
+            types.unsigned();
+        }
+        int type = types.unsigned();
+
+        ByteArrayOutputStream tags = new ByteArrayOutputStream();
+        new WasmWriter(tags).writeUnsignedLeb128(1).write((byte) TAG_EXCEPTION).writeUnsignedLeb128(type);
+        sections.put(SEC_TAG, tags.toByteArray());
+
+        ByteArrayOutputStream thrown = new ByteArrayOutputStream();
+        new WasmWriter(thrown)
+                .writeUnsignedLeb128(0) // no locals
+                .write((byte) OPCODE_LOCAL_GET).writeUnsignedLeb128(0)
+                .write((byte) OPCODE_THROW).writeUnsignedLeb128(WasmFragment.ENDED_TAG)
+                .write((byte) OPCODE_END);
+        sections.put(SEC_CODE, replacing(sections.get(SEC_CODE), defined, thrown.toByteArray()));
+    }
+
+    /** A code section with one entry's body replaced and every other entry copied across. */
+    private static byte[] replacing(byte[] section, int entry, byte[] body) {
+        Reading reading = new Reading(section);
+        int count = reading.unsigned();
+        if (entry >= count) {
+            throw new IllegalArgumentException("the runtime's code holds no body " + entry);
+        }
+        int start = reading.position;
+        for (int i = 0; i < entry; i++) {
+            reading.bytes(reading.unsigned());
+        }
+        int before = reading.position;
+        reading.bytes(reading.unsigned());
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        new WasmWriter(out)
+                .writeUnsignedLeb128(count)
+                .write(Arrays.copyOfRange(section, start, before))
+                .writeUnsignedLeb128(body.length)
+                .write(body)
+                .write(reading.remaining());
+        return out.toByteArray();
     }
 
     /**

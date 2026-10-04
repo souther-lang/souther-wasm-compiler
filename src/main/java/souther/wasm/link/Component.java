@@ -12,16 +12,21 @@ import souther.wasm.emit.WasmWriter;
 /**
  * A linked core module wrapped as a component, exporting one interface per Souther module.
  *
- * <p>A behavior crosses as {@code func(arguments: string) -> string} — the same envelope the core
- * export answers with, and the same one the other backend's boundary writes. What the component
- * adds is who owns the memory it crosses in: the host lowers the argument through
- * {@code cabi_realloc} and reads the answer out of an area in this memory, and the post-return
- * says when the whole of it goes back. That is the bracket the core module left to a caller to
- * keep, moved to where the format states it.
+ * <p>A behavior crosses as {@code func(arguments: string) -> result<string, ended>}. The string is
+ * the same envelope the core export answers with, and the same one the other backend's boundary
+ * writes. What the component adds is who owns the memory it crosses in: the host lowers the
+ * argument through {@code cabi_realloc} and reads the answer out of an area in this memory, and the
+ * post-return says when the whole of it goes back. That is the bracket the core module left to a
+ * caller to keep, moved to where the format states it.
+ *
+ * <p>A call the runtime ended answers {@code err}, with the reason the abort record holds. A core
+ * module traps there and its host reads the record out of its memory afterwards, which a component
+ * cannot offer: an instance that has trapped cannot be asked anything again. So the component's
+ * link ends such a call by a throw the lifted function catches ({@link Linker}). A trap the runtime gave no reason for is not caught and stays a trap.
  *
  * <p>A type a module publishes is read through a function of its own, {@code func(value: string)
- * -> string}, which answers what the core module's {@code __souther_decode} answers for it. Those
- * functions are an interface per module too, under a package of their own.
+ * -> result<string, ended>}, which answers what the core module's {@code __souther_decode} answers
+ * for it. Those functions are an interface per module too, under a package of their own.
  *
  * <p>A name crosses as the interface names it. A Souther behavior is written in one convention and
  * a component export in another, so the two are not the same string — and where two behaviors of a
@@ -44,11 +49,11 @@ public final class Component {
     /** What a type is read through, taking the one value and answering the envelope. */
     private static final String GIVEN = "value";
 
-    /** Which type in the component's type section a behavior is lifted as. */
-    private static final int CALLED = 0;
+    /** What every offered function answers when the call ended rather than answered. */
+    public static final String ENDED = "ended";
 
-    /** Which type in the component's type section a type's reading is lifted as. */
-    private static final int READ = 1;
+    /** The one field of {@link #ENDED}: the reason the abort record holds. */
+    public static final String REASON = "reason";
 
     private Component() {
     }
@@ -84,31 +89,36 @@ public final class Component {
         int realloc = aliases.coreFunc(RuntimeAbi.CANONICAL_REALLOC);
         int afterwards = aliases.coreFunc(Lifted.POST_RETURN);
 
+        List<byte[]> types = new ArrayList<>();
         int lifted = 0;
         int made = 0;
         for (Map.Entry<String, Map<String, String>> module : offering.behaviors().entrySet()) {
+            Ending ending = Ending.declared(types, TAKES);
             List<Map.Entry<String, Integer>> inside = new ArrayList<>();
-            Map<String, String> named = namesIn(module.getKey(), module.getValue());
+            Map<String, String> named = namesIn(module.getKey(), module.getValue(), true);
             for (Map.Entry<String, String> behavior : module.getValue().entrySet()) {
                 String crossing = named.get(behavior.getKey());
                 int core32 = aliases.coreFunc(Lifted.wrapping(behavior.getValue()));
                 lifts.add(ComponentWriter.canonLiftMemoryReallocUtf8PostReturn(
-                        core32, CALLED, memory, realloc, afterwards));
+                        core32, ending.function(), memory, realloc, afterwards));
                 inside.add(Map.entry(crossing, lifted++));
             }
-            instances.add(ComponentWriter.componentInstanceFromFuncs(inside));
+            instances.add(ComponentWriter.componentInstanceFromTypesAndFuncs(
+                    ending.named(), inside));
             exports.add(ComponentWriter.exportInstance(offeredAs(module.getKey()), made++));
         }
         for (Map.Entry<String, Map<String, String>> module : offering.readable().entrySet()) {
+            Ending ending = Ending.declared(types, GIVEN);
             List<Map.Entry<String, Integer>> inside = new ArrayList<>();
-            Map<String, String> named = namesIn(module.getKey(), module.getValue());
+            Map<String, String> named = namesIn(module.getKey(), module.getValue(), true);
             for (Map.Entry<String, String> type : module.getValue().entrySet()) {
                 int core32 = aliases.coreFunc(Lifted.reading(type.getValue()));
                 lifts.add(ComponentWriter.canonLiftMemoryReallocUtf8PostReturn(
-                        core32, READ, memory, realloc, afterwards));
+                        core32, ending.function(), memory, realloc, afterwards));
                 inside.add(Map.entry(named.get(type.getKey()), lifted++));
             }
-            instances.add(ComponentWriter.componentInstanceFromFuncs(inside));
+            instances.add(ComponentWriter.componentInstanceFromTypesAndFuncs(
+                    ending.named(), inside));
             exports.add(ComponentWriter.exportInstance(readAs(module.getKey()), made++));
         }
 
@@ -130,11 +140,6 @@ public final class Component {
             taken.add(ComponentWriter.aliasCoreTable(HOST, ReachingOut.TABLE));
         }
         out.rawSection(ComponentWriter.SEC_ALIAS, ComponentWriter.vec(taken));
-        List<byte[]> types = new ArrayList<>();
-        types.add(ComponentWriter.funcTypeScalars(List.of(TAKES),
-                List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING));
-        types.add(ComponentWriter.funcTypeScalars(List.of(GIVEN),
-                List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING));
         Map<String, Integer> asked = new LinkedHashMap<>();
         for (Reach reach : reaches) {
             if (!asked.containsKey(reach.module())) {
@@ -153,6 +158,40 @@ public final class Component {
     }
 
     /**
+     * The types one interface's functions are lifted as: {@link #ENDED}, the result whose
+     * {@code err} it is, and the function answering that result.
+     *
+     * <p>Declared once per interface, and not once for the component. An interface exports the
+     * record its functions name, and a type exported by two interfaces is one type re-exported
+     * under a second name, which a reader of interfaces cannot write down as the record each of
+     * them declares.
+     *
+     * @param ended where the record is in the component's type section
+     * @param function where the function type is
+     */
+    private record Ending(int ended, int function) {
+
+        /** Declares the three, for functions taking one string under {@code takes}. */
+        static Ending declared(List<byte[]> types, String takes) {
+            int ended = types.size();
+            types.add(ComponentWriter.definedRecordOf(List.of(REASON),
+                    List.of(ComponentWriter.valTypePrim(ComponentWriter.VT_U32))));
+            types.add(ComponentWriter.definedResultOf(
+                    ComponentWriter.valTypePrim(ComponentWriter.VT_STRING),
+                    ComponentWriter.valTypeIndex(ended)));
+            types.add(ComponentWriter.funcTypeOf(List.of(takes),
+                    List.of(ComponentWriter.valTypePrim(ComponentWriter.VT_STRING)),
+                    ComponentWriter.valTypeIndex(ended + 1)));
+            return new Ending(ended, ended + 2);
+        }
+
+        /** What the interface exports beside its functions, for them to be exportable at all. */
+        List<Map.Entry<String, Integer>> named() {
+            return List.of(Map.entry(ENDED, ended));
+        }
+    }
+
+    /**
      * A behavior a program declares and does not implement.
      *
      * @param module the module the behavior is declared in
@@ -166,7 +205,7 @@ public final class Component {
         List<byte[]> decls = new ArrayList<>();
         decls.add(ComponentWriter.instanceDeclType(ComponentWriter.funcTypeScalars(List.of(TAKES),
                 List.of(ComponentWriter.VT_STRING), ComponentWriter.VT_STRING)));
-        for (String named : namesIn(module, reachedIn(reaches, module)).values()) {
+        for (String named : namesIn(module, reachedIn(reaches, module), false).values()) {
             decls.add(ComponentWriter.instanceDeclExportFunc(named, 0));
         }
         return ComponentWriter.instanceTypeOf(decls);
@@ -342,11 +381,17 @@ public final class Component {
      * same whether it is written as a component or only written down — and a name an interface
      * cannot carry is not something to find out at the second of those.
      *
+     * <p>An interface whose functions can end names {@link #ENDED} too, and a type and a function
+     * of one interface do not share a name, so none of its functions may come to that one.
+     *
      * @param module the module they are declared in, for saying which one
      * @param behaviors the behaviors or the types of it, by the name Souther wrote
+     * @param ends whether the interface's functions answer a call that ended as {@link #ENDED},
+     *     which the component's own do and what it asks for does not
      * @return each one's name, by the name Souther wrote
      */
-    public static Map<String, String> namesIn(String module, Map<String, String> behaviors) {
+    public static Map<String, String> namesIn(String module, Map<String, String> behaviors,
+            boolean ends) {
         Map<String, String> named = new LinkedHashMap<>();
         Map<String, String> already = new LinkedHashMap<>();
         for (String behavior : behaviors.keySet()) {
@@ -354,6 +399,11 @@ public final class Component {
             if (!WRITABLE.matcher(crossing).matches()) {
                 throw new IllegalArgumentException(behavior + " comes to " + crossing
                         + ", which is not a name an interface writes");
+            }
+            if (ends && crossing.equals(ENDED)) {
+                throw new IllegalArgumentException(module + " declares " + behavior
+                        + ", which an interface would name " + crossing + ", the name it gives"
+                        + " what a call that ended answers");
             }
             String taken = already.put(crossing, behavior);
             if (taken != null) {

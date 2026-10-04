@@ -142,8 +142,32 @@ class AComponentSaysWhatEachModuleOffersTest {
         assertThat(WitText.of(WasmCompiler.offering(program)))
                 .contains("  export souther:decode/cart;\n", "  export souther:decode/shared-money;\n")
                 .contains("package souther:decode {\n  interface cart {\n"
-                        + "    sku: func(value: string) -> string;\n"
-                        + "    line-item: func(value: string) -> string;\n  }\n");
+                        + "    record ended { reason: u32 }\n"
+                        + "    sku: func(value: string) -> result<string, ended>;\n"
+                        + "    line-item: func(value: string) -> result<string, ended>;\n  }\n");
+    }
+
+    @Test
+    void refusesABehaviorOrATypeAnInterfaceWouldNameAsWhatACallThatEndedAnswers() {
+        CheckedProgram behavior = Compiled.program(List.of("""
+                module demo
+
+                behavior ended : (n: Int) -> Int
+
+                let ended (n) = n
+                """));
+        CheckedProgram type = Compiled.program(List.of("""
+                module demo
+
+                data Ended = String
+                """));
+
+        assertThatThrownBy(() -> Compiled.component(behavior))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("declares ended");
+        assertThatThrownBy(() -> WitText.of(WasmCompiler.offering(type)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("declares Ended");
     }
 
     @Test
@@ -279,6 +303,7 @@ class AComponentSaysWhatEachModuleOffersTest {
     private static final int SEC_CANON = 8;
     private static final int SEC_INSTANCE = 5;
     private static final int SEC_EXPORT = 11;
+    private static final int SORT_TYPE = 0x03;
 
     /**
      * What each exported interface offers, by the name it is exported under.
@@ -310,15 +335,20 @@ class AComponentSaysWhatEachModuleOffersTest {
             Cursor at = new Cursor(payload);
             int held = at.leb();
             for (int i = 0; i < held; i++) {
-                // Every instance here is one built out of functions already lifted.
+                // Every instance here is one built out of functions already lifted, beside the
+                // one type they name, which an interface has to export for them to be exported.
                 assertThat(at.byteAt()).isEqualTo(0x01);
                 List<String> functions = new ArrayList<>();
+                List<String> types = new ArrayList<>();
                 int names = at.leb();
                 for (int k = 0; k < names; k++) {
-                    functions.add(at.declaredName());
-                    at.byteAt();
+                    String name = at.declaredName();
+                    int sort = at.byteAt();
                     at.leb();
+                    (sort == SORT_TYPE ? types : functions).add(name);
                 }
+                assertThat(types).describedAs("the types " + functions + " are exported beside")
+                        .containsExactly(Component.ENDED);
                 instances.add(functions);
             }
         }
