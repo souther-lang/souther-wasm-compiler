@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
@@ -46,17 +46,18 @@ it("is used from where it is installed, as the README says", async () => {
   // Packing builds it, as publishing does: what is installed is what would be published.
   const { stdout } = await run("npm", ["pack", "--silent", "--pack-destination", project],
     { cwd: PACKAGE });
-  // What the package depends on is installed from what this directory installed, packed the same
-  // way, so that installing reaches nothing outside this machine: @raoh/core is depended on from
-  // git, which an offline install cannot fetch.
-  // It is installed built, and carries no sources to build again from.
-  const { stdout: raoh } = await run("npm",
-    ["pack", "--silent", "--ignore-scripts", "--pack-destination", project],
-    { cwd: join(PACKAGE, "node_modules", "@raoh", "core") });
+  // What the package depends on is installed from what this directory installed, so that
+  // installing reaches nothing outside this machine: @raoh/core is depended on from git, which an
+  // offline install cannot fetch. Its files are archived as they were installed, built, as the
+  // registry would hand them over: npm runs a package's prepare when it packs it or installs it
+  // from a directory, and an installed package carries no sources to build from.
+  const raoh = join(project, "raoh");
+  cpSync(join(PACKAGE, "node_modules", "@raoh", "core"), join(raoh, "package"), { recursive: true });
+  await run("tar", ["-czf", "raoh-core.tgz", "package"], { cwd: raoh });
   writeFileSync(join(project, "package.json"), JSON.stringify({
     type: "module",
     private: true,
-    overrides: { "@raoh/core": `file:${join(project, raoh.trim())}` },
+    overrides: { "@raoh/core": `file:${join(raoh, "raoh-core.tgz")}` },
   }));
   await run("npm", ["install", "--silent", "--offline", "--no-audit", "--no-fund",
     join(project, stdout.trim())], { cwd: project });
