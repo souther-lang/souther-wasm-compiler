@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { amount, messageOf, numeral, type Issue, type Numeric, type Reading } from "@souther/wasm";
+import { messageOf, type Decimal, type Issue, type Reading } from "@souther/wasm";
 import { load, type Bound, type Membership, type Priced } from "./cart.ts";
 import "./app.css";
 
-/** A line as it is being typed: text in each box, read as the model's types only when it is sent. */
+/** A line as it is being typed: the text in each box, which is what the page hands over. */
 interface Typed {
   readonly sku: string;
   readonly quantity: string;
@@ -26,6 +26,9 @@ const FIELDS = ["sku", "quantity", "unitPrice"] as const;
 /** The language a complaint is written in: the reader's, where Raoh's catalog has it. */
 const LOCALE = navigator.language;
 
+/** An amount of yen, grouped, every digit the model worked out shown. */
+const YEN = new Intl.NumberFormat("en", { maximumFractionDigits: 20 });
+
 export default function App() {
   const [bound, setBound] = useState<Bound | Error | null>(null);
   const [lines, setLines] = useState<readonly Typed[]>(START);
@@ -40,19 +43,11 @@ export default function App() {
     if (bound === null || bound instanceof Error) {
       return null;
     }
-    // What was typed goes over as it was typed, to be read as a basket. Nothing here decides
+    // What was typed goes over as it was typed, read as a form gives a basket. Nothing here decides
     // whether a code is well formed or a quantity is a quantity: the model decides that, and says
     // where. What it reads is a basket, typed as one, and that is what is priced.
-    const typed = {
-      lines: lines.map((line) => ({
-        sku: line.sku,
-        quantity: asNumber(line.quantity),
-        unitPrice: asNumber(line.unitPrice),
-      })),
-      member,
-    };
     try {
-      const cart = bound.decode.cart.Cart.decode(typed);
+      const cart = bound.form.cart.Cart.decode({ lines, member });
       return cart.issues !== undefined ? cart : bound.modules.cart.price(cart.value);
     } catch (ended) {
       return { ended: ended instanceof Error ? ended.message : String(ended) };
@@ -97,28 +92,31 @@ export default function App() {
           <tbody>
             {lines.map((line, at) => (
               <tr key={at}>
-                {FIELDS.map((field) => (
-                  <td key={field}>
-                    <input
-                      value={line[field]}
-                      aria-label={`line ${at + 1}, ${field}`}
-                      aria-invalid={complaintAt(answer, `/lines/${at}/${field}`) !== undefined}
-                      onChange={(e) => setLines(changed(lines, at, field, e.target.value))}
-                    />
-                    <Complaint about={complaintAt(answer, `/lines/${at}/${field}`)} />
-                  </td>
-                ))}
+                {FIELDS.map((field) => {
+                  const about = issuesAt(answer, ["lines", at, field]);
+                  return (
+                    <td key={field}>
+                      <input
+                        value={line[field]}
+                        aria-label={`line ${at + 1}, ${field}`}
+                        aria-invalid={about.length > 0}
+                        onChange={(e) => setLines(changed(lines, at, field, e.target.value))}
+                      />
+                      <Complaints about={about} />
+                    </td>
+                  );
+                })}
                 <td>
                   <button onClick={() => setLines(lines.filter((_, i) => i !== at))}>Remove</button>
                 </td>
               </tr>
             ))}
             {lines.map((_, at) => {
-              const about = complaintAt(answer, `/lines/${at}`);
-              return about === undefined ? null : (
+              const about = issuesAt(answer, ["lines", at]);
+              return about.length === 0 ? null : (
                 <tr key={`about-${at}`}>
                   <td colSpan={4}>
-                    <p className="complaint">Line {at + 1}: {messageOf(about, LOCALE)}</p>
+                    <Complaints about={about} prefix={`Line ${at + 1}: `} />
                   </td>
                 </tr>
               );
@@ -149,7 +147,7 @@ export default function App() {
 
       <details>
         <summary>What the model answered</summary>
-        <pre>{JSON.stringify(answer, null, 2)}</pre>
+        <pre>{JSON.stringify(answer, (_key, held) => (typeof held === "bigint" ? String(held) : held), 2)}</pre>
       </details>
     </main>
   );
@@ -194,33 +192,33 @@ function Answered({ answer }: { readonly answer: Answer | null }) {
       <h2>To pay</h2>
       <dl>
         <dt>Subtotal</dt>
-        <dd>{money(held.subtotal)}</dd>
+        <dd>{yen(held.subtotal)}</dd>
         <dt>Discount</dt>
-        <dd>{isNothing(held.discount) ? "—" : `− ${money(held.discount)}`}</dd>
+        <dd>{held.discount.signum === 0 ? "—" : `− ${yen(held.discount)}`}</dd>
         <dt>Shipping</dt>
-        <dd>{isNothing(held.shipping) ? "free" : money(held.shipping)}</dd>
+        <dd>{held.shipping.signum === 0 ? "free" : yen(held.shipping)}</dd>
         <dt className="total">Total</dt>
-        <dd className="total">{money(held.total)}</dd>
+        <dd className="total">{yen(held.total)}</dd>
       </dl>
     </section>
   );
 }
 
-function Complaint({ about }: { readonly about: Issue | undefined }) {
-  return about === undefined ? null : <p className="complaint">{messageOf(about, LOCALE)}</p>;
+function Complaints({ about, prefix = "" }: { readonly about: readonly Issue[]; readonly prefix?: string }) {
+  return about.map((issue, at) => (
+    <p key={at} className="complaint">{prefix}{messageOf(issue, LOCALE)}</p>
+  ));
 }
 
 /**
  * What the model said about one place, if it said anything.
  *
- * An issue names what it is about as a path into what was read — `/lines/1/sku` is the basket's
- * second line's code — so nothing here works out which field a complaint belongs to. It
+ * An issue names what it is about as a path into what was read — `["lines", 1, "sku"]` is the
+ * basket's second line's code — so nothing here works out which field a complaint belongs to. It
  * arrives knowing, and what it says is written from Raoh's catalog rather than here.
  */
-function complaintAt(answer: Answer | null, path: string): Issue | undefined {
-  return answer !== null && !("ended" in answer)
-    ? answer.issues?.list.find((issue) => issue.path.toString() === path)
-    : undefined;
+function issuesAt(answer: Answer | null, path: readonly (string | number)[]): readonly Issue[] {
+  return answer !== null && !("ended" in answer) ? answer.issues?.at(path) ?? [] : [];
 }
 
 function changed(
@@ -232,29 +230,7 @@ function changed(
   return lines.map((line, i) => (i === at ? { ...line, [field]: held } : line));
 }
 
-/**
- * What was typed, as the number it is where it reads as one — the digits, not the nearest
- * JavaScript number to them — and as it was typed where it does not.
- *
- * The model is what says a quantity is a quantity. Something here deciding first would be the same
- * rule written twice, in two languages, one of which nobody is reading when they change the other.
- */
-function asNumber(written: string): Numeric | string {
-  const trimmed = written.trim();
-  return /^-?\d+(\.\d+)?$/.test(trimmed) ? amount(trimmed) : written;
-}
-
-/** Whether an amount is nothing, however wide the amount it is nothing beside was. */
-function isNothing(held: Numeric): boolean {
-  return /^-?0*(\.0*)?$/.test(numeral(held));
-}
-
-/**
- * An amount, for reading: grouped where a JavaScript number holds it, and the digits as they are
- * where one does not.
- */
-function money(held: Numeric): string {
-  return typeof held === "number"
-    ? `¥${held.toLocaleString("en", { minimumFractionDigits: 0 })}`
-    : `¥${numeral(held)}`;
+/** An amount as a person reads it: grouped, from its digits rather than from a nearest number. */
+function yen(held: Decimal): string {
+  return `¥${YEN.format(held.toString() as Intl.StringNumericLiteral)}`;
 }
