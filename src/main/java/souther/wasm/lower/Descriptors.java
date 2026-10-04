@@ -456,9 +456,8 @@ final class Descriptors {
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members, int after) {
         // A form a value is built out of carries its own name and the slot of what checks it,
         // after its fields.
-        // A set of names carries its own name too, for an issue saying a name is not one of them.
         int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 16 : 0)
-                + (kind == KIND_ENUMERATION ? 8 : 0) + 4 * after);
+                + 4 * after);
         if (name != null) {
             byName.put(name, descriptor);
         }
@@ -483,11 +482,6 @@ final class Descriptors {
                     .writeLittleEndian4(checks.applyAsInt(name))
                     .writeLittleEndian4(clauses.of(name, invariantsOf(name),
                             kind == KIND_NEWTYPE));
-        }
-        if (kind == KIND_ENUMERATION) {
-            byte[] own = name == null ? new byte[0] : name.name().getBytes(StandardCharsets.UTF_8);
-            out.writeLittleEndian4(own.length == 0 ? 0 : fragment.intern(own))
-                    .writeLittleEndian4(own.length);
         }
         for (int word : after) {
             out.writeLittleEndian4(word);

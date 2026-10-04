@@ -46,6 +46,7 @@ use crate::notation;
 use crate::text;
 use crate::tree;
 use crate::{abort, alloc, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use heap::vec::Vec;
 
 /// The one value a type with a single value has. `+4` is which type.
 pub const TAG_UNIT: u32 = 0;
@@ -1502,13 +1503,26 @@ unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) 
             return __souther_unit(descriptor::member(descriptor, i));
         }
     }
-    // A name no case goes by is text of a format the set does not take, said with the set it is
-    // not one of, as the JVM's reader of an enumeration says it.
+    // A name no case goes by is reported as Raoh's `oneOf` over strings reports a value that is
+    // none of the ones allowed, since that constraint states the same rule: the names allowed, and
+    // the one written (spec §sum-discrimination).
     issues::meta::begin();
-    let (named, named_length) = descriptor::enumeration_name(descriptor);
-    issues::meta::text(b"type", named, named_length);
-    issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::end());
+    allowed(descriptor);
+    issues::meta::text(b"actual", held, held_length);
+    issues::issue(CODE_NOT_ALLOWED, path, path_length, issues::meta::end());
     0
+}
+
+/// The names of a set's cases, as the issue saying a value is none of them lists them: in code
+/// point order, which is Raoh's. A name is UTF-8, and its bytes order as its code points do.
+unsafe fn allowed(descriptor: u32) {
+    let mut names: Vec<(u32, u32)> =
+        (0..descriptor::arity(descriptor)).map(|i| descriptor::name(descriptor, i)).collect();
+    let bytes = |(at, length): &(u32, u32)| {
+        core::slice::from_raw_parts(*at as usize as *const u8, *length as usize)
+    };
+    names.sort_unstable_by(|one, other| bytes(one).cmp(bytes(other)));
+    issues::meta::texts(b"allowed", names.into_iter());
 }
 
 /// A value of a sum is written as its case, with the case's name under `type`.
@@ -1554,13 +1568,11 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
             };
         }
     }
-    // A tag naming no case is not one of those the sum allows, and which those are is said.
+    // A tag naming no case is not one of those the sum allows, and which those are is said, as
+    // Raoh's `discriminate` says it.
     let (at, at_length) = below(path, path_length, tagged_under);
     issues::meta::begin();
-    issues::meta::texts(
-        b"allowed",
-        (0..descriptor::arity(descriptor)).map(|i| descriptor::name(descriptor, i)),
-    );
+    allowed(descriptor);
     issues::issue(CODE_NOT_ALLOWED, at, at_length, issues::meta::end());
     0
 }

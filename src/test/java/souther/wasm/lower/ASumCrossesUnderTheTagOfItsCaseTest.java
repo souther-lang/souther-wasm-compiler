@@ -57,10 +57,12 @@ class ASumCrossesUnderTheTagOfItsCaseTest {
     void saysSoWhereTheTagNamesNoCaseTheDeclarationOffers() {
         Running module = compiled(SHIPPING);
 
+        // The names in code point order, as Raoh's `discriminate` lists them, and not in the order
+        // the cases are declared in.
         assertThat(answerOf(module, "shipping.chosen", "[{\"type\": \"Overnight\"}]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0/type\",\"code\":\"not_allowed\","
                         + "\"messageKey\":\"not_allowed\","
-                        + "\"meta\":{\"allowed\":[\"Standard\",\"Express\"]}}]}");
+                        + "\"meta\":{\"allowed\":[\"Express\",\"Standard\"]}}]}");
     }
 
     @Test
