@@ -34,8 +34,6 @@
 //! kind SUM / ENUMERATION
 //! +4  u32 how many cases
 //! +8  per case: u32 where its tag is, u32 how long, u32 the case's own descriptor
-//! then, of an ENUMERATION, u32 where the set's own name is, u32 how long (nothing where nobody
-//!      named it)
 //! then, of a SUM, u32 where the key the tag stands under is, u32 how long, u32 where the key a
 //!      case carried as itself stands under is, u32 how long — the checker's, nothing for a set
 //!      only a body holds
@@ -151,13 +149,6 @@ pub unsafe fn ordered_exactly(descriptor: u32, left: u32, right: u32) -> i32 {
 /// The table slot of what checks a product's invariants, or zero where it has none.
 pub unsafe fn invariant(descriptor: u32) -> u32 {
     read(descriptor as usize + 8 + 12 * arity(descriptor) as usize + 8)
-}
-
-/// Where an enumeration's own name is, and how long it is, for an issue that names the set a name
-/// is not one of. Nothing for a set nobody named.
-pub unsafe fn enumeration_name(descriptor: u32) -> (u32, u32) {
-    let at = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
-    (read(at), read(at + 4))
 }
 
 /// The key a sum's tag stands under, as the checker settled the sum's form. Nothing — no address —

@@ -147,7 +147,8 @@ class AUnionCrossesAsTheSetOfAlternativesItIsTest {
                 """);
 
         assertThat(answerOf(lights, "lighting.same", "[\"Amber\"]"))
-                .contains("\"code\":\"invalid_format\"", "\"type\":\"Signal\"");
+                .contains("\"code\":\"not_allowed\"",
+                        "\"meta\":{\"allowed\":[\"Green\",\"Red\"],\"actual\":\"Amber\"}");
         assertThat(answerOf(lights, "lighting.same", "[7]"))
                 .contains("\"code\":\"type_mismatch\"", "\"expected\":\"string\"");
     }

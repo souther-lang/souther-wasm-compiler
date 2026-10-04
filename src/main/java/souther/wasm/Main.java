@@ -135,8 +135,7 @@ public final class Main {
                     ? WasmCompiler.compileAsComponent(program)
                     : WasmCompiler.compile(program);
             if (offering != null) {
-                offers = WitText.written(
-                        WasmCompiler.offered(program), WasmCompiler.reachedOutFor(program));
+                offers = WitText.written(WasmCompiler.offering(program));
             }
         } catch (CompileException e) {
             say(e, files, read, problems);

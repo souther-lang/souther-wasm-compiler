@@ -26,12 +26,12 @@ pub const CODE_TYPE_MISMATCH: &[u8] = b"type_mismatch";
 /// A number read exactly that the declared type has no room for: a whole number wider than an
 /// `Int`, an amount at a scale no `Int` holds.
 pub const KEY_NUMERIC_RANGE: &[u8] = b"type_mismatch.numeric_range";
-/// A string that denotes no value of the declared type: text that is no `String`, no temporal, or
-/// the name of no case.
+/// A string that denotes no value of the declared type: text that is no `String`, or no temporal.
 pub const CODE_INVALID_FORMAT: &[u8] = b"invalid_format";
 /// A collection had the wrong number of elements.
 pub const CODE_INVALID_SIZE: &[u8] = b"invalid_size";
-/// A tag that names none of the cases the declaration offers.
+/// A name that is none of the ones allowed where it is read: an enumeration's name, as Raoh's
+/// `oneOf` over strings says it, or a sum's tag, as its `discriminate` does.
 pub const CODE_NOT_ALLOWED: &[u8] = b"not_allowed";
 /// A value was written that a rule of its type, which no constraint states, says nothing may be.
 pub const CODE_INVARIANT_VIOLATION: &[u8] = b"invariant_violation";

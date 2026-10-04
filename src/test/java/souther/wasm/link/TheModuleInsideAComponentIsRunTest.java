@@ -98,8 +98,49 @@ class TheModuleInsideAComponentIsRunTest {
         }
     }
 
+    @Test
+    void readsAValueOfEachTypeThroughItsOwnLiftedFunction() {
+        Running module = Running.linked(insideComponentFor("""
+                module forms
+
+                data Point = { x: Int, label: String }
+
+                data Day = Date
+
+                behavior labelOf : (p: Point) -> String
+
+                let labelOf (p) = p.label
+                """, """
+                module shapes
+
+                data Square = { side: Int }
+                """));
+
+        // Every type a caller may read, each through its own function, because the function puts
+        // the type's number in front of what it reads, and a wrong number reads the value as some
+        // other type and answers perfectly well.
+        assertThat(readingOf(module, "forms.Point", "{\"x\":1,\"label\":\"a\"}"))
+                .isEqualTo("{\"value\":{\"x\":1,\"label\":\"a\"}}");
+        assertThat(readingOf(module, "forms.Day", "\"2026-01-02\""))
+                .isEqualTo("{\"value\":\"2026-01-02\"}");
+        assertThat(readingOf(module, "shapes.Square", "{\"side\":3}"))
+                .isEqualTo("{\"value\":{\"side\":3}}");
+        assertThat(readingOf(module, "forms.Day", "{\"side\":3}"))
+                .startsWith("{\"issues\":[{\"path\":\"\",\"code\":\"type_mismatch\"");
+        assertThat(readingOf(module, "shapes.Square", "{}"))
+                .startsWith("{\"issues\":[{\"path\":\"/side\",\"code\":\"required\"");
+    }
+
+    private static String readingOf(Running module, String type, String value) {
+        return answerThrough(module, Component.Lifted.reading(type), value);
+    }
+
     private static String answerOf(Running module, String behavior, String arguments) {
-        int area = module.call(Component.Lifted.wrapping(behavior), module.staged(arguments),
+        return answerThrough(module, Component.Lifted.wrapping(behavior), arguments);
+    }
+
+    private static String answerThrough(Running module, String lifted, String arguments) {
+        int area = module.call(lifted, module.staged(arguments),
                 arguments.getBytes(StandardCharsets.UTF_8).length);
         String held = new String(module.read(wordAt(module, area), wordAt(module, area + 4)),
                 StandardCharsets.UTF_8);
