@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
@@ -17,7 +17,18 @@ import { compiled } from "./compiled.ts";
 
 const PACKAGE = join(import.meta.dirname, "..");
 const TSC = join(PACKAGE, "node_modules", ".bin", "tsc");
-const run = promisify(execFile);
+const ran = promisify(execFile);
+
+/** Runs a command, and fails with everything it wrote where it fails, npm's own account included. */
+async function run(command: string, args: readonly string[], options: { cwd?: string } = {}):
+  Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await ran(command, args, options);
+  } catch (failed) {
+    const { stdout, stderr } = failed as { stdout?: string; stderr?: string };
+    throw new Error(`${command} ${args.join(" ")} failed:\n${stdout ?? ""}${stderr ?? ""}`, { cause: failed });
+  }
+}
 
 const MODEL = `module shop
 
@@ -28,15 +39,20 @@ behavior counted : (lines: List<Line>) -> Int
 let counted (lines) = List.length(lines)
 `;
 
-const PAGE = `import { amount, messageOf } from "@souther/wasm";
+// The page reads a form of its own with Raoh, the model's type a part of it: the project's
+// @raoh/core and the one the package was built against have to be one, or the part's issues could
+// not be said at the part's path.
+const PAGE = `import { field, int, list, object } from "@raoh/core";
+import { amount, messageOf } from "@souther/wasm";
 import { load } from "./binding.ts";
 
 export async function counted(bytes: Uint8Array): Promise<unknown[]> {
   const shop = await load(bytes);
-  const read = shop.decode.shop.Line({ sku: "A", quantity: "two" });
+  const order = object(field("lines", list(shop.decode.shop.Line)), field("count", int()));
+  const read = order.decode({ lines: [{ sku: "A", quantity: "two" }], count: 1 });
   return [
     shop.modules.shop.counted([{ sku: "A", quantity: amount("1"), note: null }]).value,
-    read.issues?.map((issue) => messageOf(issue, "en")),
+    read.issues?.list.map((issue) => [issue.path.toString(), messageOf(issue, "en")]),
   ];
 }
 `;
@@ -46,9 +62,28 @@ it("is used from where it is installed, as the README says", async () => {
   // Packing builds it, as publishing does: what is installed is what would be published.
   const { stdout } = await run("npm", ["pack", "--silent", "--pack-destination", project],
     { cwd: PACKAGE });
-  writeFileSync(join(project, "package.json"), JSON.stringify({ type: "module", private: true }));
-  await run("npm", ["install", "--silent", "--offline", "--no-audit", "--no-fund",
+  // The package asks the project for @raoh/core, as a peer, so the project depends on it itself.
+  // It is installed from what this directory installed, so that installing reaches nothing outside
+  // this machine: @raoh/core is depended on from git, which an offline install cannot fetch. Its
+  // files are archived as they were installed, built, as the registry would hand them over: npm
+  // runs a package's prepare when it packs it or installs it from a directory, and an installed
+  // package carries no sources to build from.
+  const raoh = join(project, "raoh");
+  cpSync(join(PACKAGE, "node_modules", "@raoh", "core"), join(raoh, "package"), { recursive: true });
+  await run("tar", ["-czf", "raoh-core.tgz", "package"], { cwd: raoh });
+  const archived = `file:${join(raoh, "raoh-core.tgz")}`;
+  writeFileSync(join(project, "package.json"), JSON.stringify({
+    type: "module",
+    private: true,
+    dependencies: { "@raoh/core": archived },
+    // The package names the peer it was built against by its git commit; the archive is that.
+    overrides: { "@raoh/core": "$@raoh/core" },
+  }));
+  await run("npm", ["install", "--offline", "--no-audit", "--no-fund",
     join(project, stdout.trim())], { cwd: project });
+  // One copy, the project's: the package brought none of its own.
+  assert.throws(() => readFileSync(join(project, "node_modules", "@souther", "wasm", "node_modules",
+    "@raoh", "core", "package.json")), /ENOENT/);
 
   const { bytes } = await compiled(MODEL);
   writeFileSync(join(project, "model.wasm"), bytes);
@@ -78,5 +113,5 @@ it("is used from where it is installed, as the README says", async () => {
 
   const page = await import(join(project, "page.ts"));
   assert.deepEqual(await page.counted(bytes),
-    [1, ["expected long"]]);
+    [1, [["/lines/0/quantity", "expected long"]]]);
 });

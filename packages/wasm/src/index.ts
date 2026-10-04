@@ -7,11 +7,13 @@
 // Nothing in this file knows anything about a model. It is the same whatever program it loads;
 // what a binding generated from a module knows is its own, and calls through this.
 
-import type { Issue, Reading } from "./issues.ts";
+import { Decoder, type Path, type Result, failed, stringify } from "@raoh/core";
+import { issuesIn, type Reading } from "./issues.ts";
 import type { Surface } from "./surface.ts";
 
-export { messageOf } from "./issues.ts";
-export type { Issue, Reading } from "./issues.ts";
+export { messageOf, messagesFor } from "./issues.ts";
+export type { Reading } from "./issues.ts";
+export type { Decoder, Issue, Issues } from "@raoh/core";
 export type { Surface } from "./surface.ts";
 
 const encoder = new TextEncoder();
@@ -296,27 +298,49 @@ export class Program {
    * @param type the type, module and all: `cart.Sku`
    */
   decode<T = unknown>(type: string, value: unknown): Reading<T> {
+    return this.decoder<T>(type).decode(value);
+  }
+
+  /**
+   * A type the program publishes, as a Raoh decoder: what a page combines with decoders of its own,
+   * so that `object(field("sku", decoder))` reads the field as the model's type, its rules
+   * included, and says what is wrong with it at the field's path. An absent value is read as
+   * `null`, which a module reads as it reads a member that is not there.
+   *
+   * @param type the type, module and all: `cart.Sku`
+   */
+  decoder<T = unknown>(type: string): Decoder<T> {
     const number = this.#decodable.get(type);
     if (number === undefined) {
       throw new Error(`${type} is not a type this program offers to read`);
     }
-    return this.#crossed(value, (at, length) => this.#held().__souther_decode(number, at, length)) as
-      Reading<T>;
+    return new ModuleDecoder<T>((input) =>
+      this.#crossed(input === undefined ? null : input,
+        (at, length) => this.#held().__souther_decode(number, at, length)) as Reading<T>);
   }
 
-  /** Hands `document` to `reach` as JSON in the module's memory, and reads what it answers. */
-  #crossed(document: unknown, reach: (at: number, length: number) => [number, number]): unknown {
+  /**
+   * Hands `document` to `reach` as JSON in the module's memory, and reads what it answers.
+   *
+   * The document is written as Raoh writes the input model, so a number read with Raoh's `parse`
+   * crosses as its digits and an object's members keep their order. What comes back is the value,
+   * every number a module writes too wide for a JavaScript number an `Amount`; or the issues, read
+   * as Raoh reads JSON, so that none of what they say is rounded.
+   */
+  #crossed(document: unknown, reach: (at: number, length: number) => [number, number]): Result<unknown> {
     const exports = this.#held();
     const generation = exports.__souther_failure_generation();
     const mark = exports.__ronto_alloc_mark();
     try {
-      const written = encoder.encode(JSON.stringify(document));
+      const written = encoder.encode(stringify(document));
       const at = exports.__ronto_alloc(written.length);
       // After the allocation and not before: growing the memory replaces the buffer, and a view
       // made over the old one writes where nothing will read.
       this.#bytes().set(written, at);
       const [pointer, length] = reach(at, written.length);
-      return read(decoder.decode(this.#bytes().subarray(pointer, pointer + length)));
+      const text = decoder.decode(this.#bytes().subarray(pointer, pointer + length));
+      const answer = read(text) as { readonly value?: unknown; readonly issues?: unknown };
+      return answer.issues === undefined ? { value: answer.value } : failed(issuesIn(text));
     } catch (trapped) {
       throw this.#whyItEnded(generation, trapped);
     } finally {
@@ -339,7 +363,7 @@ export class Program {
         : `${crossing} is reached out for and nothing was supplied for it`);
     }
     const asked = read(decoder.decode(this.#bytes().subarray(at, at + length))) as never[];
-    const written = encoder.encode(JSON.stringify(supplied(...asked)));
+    const written = encoder.encode(stringify(supplied(...asked)));
     if (written.length <= room) {
       this.#bytes().set(written, into);
     }
@@ -369,6 +393,21 @@ export class Program {
       return trapped;
     }
     return new Ended(words.getUint32(at + FAILURE.reason, true), trapped);
+  }
+}
+
+/** A type a module publishes, read by the module: the issues it gives below where it is read. */
+class ModuleDecoder<T> extends Decoder<T> {
+  readonly #read: (input: unknown) => Reading<T>;
+
+  constructor(read: (input: unknown) => Reading<T>) {
+    super();
+    this.#read = read;
+  }
+
+  decodeAt(input: unknown, path: Path): Reading<T> {
+    const read = this.#read(input);
+    return read.issues === undefined ? read : failed(read.issues.under(path));
   }
 }
 

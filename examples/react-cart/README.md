@@ -10,7 +10,11 @@ quantity is at least one, appear nowhere in the TypeScript.
     npm run dev
 
 The first line builds the compiler, which is what turns the model into a module, and the second
-the glue the page calls it through, which the page reads as a project installing it would.
+the glue the page calls it through, which the page reads as a project installing it would:
+`npm install` installs a copy of it (`.npmrc` says `install-links`), beside the page's own
+`@raoh/core`, which the glue asks for as a peer. So the glue and the page share one Raoh, and a
+decoder of the model's can be a part of one the page writes. A copy is a copy, so run
+`npm install` here again after changing the glue.
 `npm run dev`
 compiles the model with it, writes the module's TypeScript binding into `src/cart.ts`, and then
 starts Vite, so it is what to run again after changing the model. `npm run build` checks the page
@@ -140,7 +144,7 @@ product code. So the form does not work out which input a complaint belongs unde
 knowing.
 
 The page hands over what was typed, which is not a basket until the model has read it as one: a
-quantity typed as `two` is no `Int`. So it reads it first, with `bound.decode.cart.Cart(typed)`, and
+quantity typed as `two` is no `Int`. So it reads it first, with `bound.decode.cart.Cart.decode(typed)`, and
 prices what that answers. A complaint about what was typed is then said of the basket, at
 `/lines/0/sku`, and what is priced is a `Cart` the binding types.
 
@@ -151,8 +155,8 @@ naming the line, at `/0/lines/0`, as `invariant_violation` with the rule's name 
 `priced`).
 
 What a person reads of an issue is not written here either. `messageOf(issue, locale)` writes it
-from Raoh's catalog the way the JVM's resolver does, in English or Japanese, so the page shows what
-the model's rules say without saying any of them a second time.
+from Raoh's catalogue, as the JVM does, in English or Japanese, so the page shows what the model's
+rules say without saying any of them a second time.
 
 ## An empty basket
 

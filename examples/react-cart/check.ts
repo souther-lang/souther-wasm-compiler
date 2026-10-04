@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { field, object, string } from "@raoh/core";
 import { amount, load as loadModule, messageOf, numeral, READS, type Numeric } from "@souther/wasm";
 import { load, type Cart } from "./src/cart.ts";
 
@@ -44,12 +45,19 @@ same("what a product code is written as",
     wraps: { is: "scalar", scalar: "string" }, rules: [{ name: "written" }],
   });
 
-same("a product code read on its own", bound.decode.cart.Sku("ABC-1234"),
+same("a product code read on its own", bound.decode.cart.Sku.decode("ABC-1234"),
   { value: "ABC-1234" });
 
 same("a product code that is not one, read on its own",
-  bound.decode.cart.Sku("nope").issues?.map((it) => [it.path, it.code]),
+  bound.decode.cart.Sku.decode("nope").issues?.list.map((it) => [it.path.toString(), it.code]),
   [["", "invalid_format"]]);
+
+// The model's type as a part of a form the page reads with Raoh: the page's @raoh/core is the one
+// the glue uses, so what the module says of the part is said where the part is.
+same("a product code that is not one, read as a part of a form",
+  object(field("code", bound.decode.cart.Sku), field("note", string())).decode({ code: "nope", note: "x" })
+    .issues?.list.map((it) => [it.path.toString(), it.code]),
+  [["/code", "invalid_format"]]);
 
 same("a basket with something in it",
   bound.modules.cart.price({
@@ -72,7 +80,7 @@ same("a product code that is not one",
     lines: [{ sku: "nope", quantity: 1, unitPrice: 1 }], member: "Standard",
   }]),
   { issues: [{ path: "/0/lines/0/sku", code: "invalid_format", messageKey: "invalid_format",
-    meta: { pattern: "[A-Z]{3}-[0-9]{4}" } }] });
+    message: "invalid format", meta: { pattern: "[A-Z]{3}-[0-9]{4}" } }] });
 
 // What a person reads of it is written from Raoh's catalog, in their language, and nowhere here.
 {
@@ -80,11 +88,11 @@ same("a product code that is not one",
     lines: [{ sku: "ABC-1234", quantity: 0, unitPrice: 1 }], member: "Standard",
   });
   same("what is read of a line of none, in English",
-    answer.issues?.map((issue) => messageOf(issue, "en")),
+    answer.issues?.list.map((issue) => messageOf(issue, "en")),
     ["invariant violated on cart.Line: atLeastOne"]);
-  const code = bound.decode.cart.Sku("nope");
+  const code = bound.decode.cart.Sku.decode("nope");
   same("what is read of a product code that is not one, in Japanese",
-    code.issues?.map((issue) => messageOf(issue, "ja")), ["形式が不正です"]);
+    code.issues?.list.map((issue) => messageOf(issue, "ja")), ["形式が不正です"]);
 }
 
 same("a quantity that is not a number",
@@ -92,7 +100,7 @@ same("a quantity that is not a number",
     lines: [{ sku: "ABC-1234", quantity: "two", unitPrice: 1 }], member: "Standard",
   }]),
   { issues: [{ path: "/0/lines/0/quantity", code: "type_mismatch", messageKey: "type_mismatch",
-    meta: { actual: "string", expected: "long" } }] });
+    message: "expected long", meta: { actual: "string", expected: "long" } }] });
 
 // Everything a call made goes back at the reset, so the tenth call is the first.
 for (let i = 1; i <= 10; i++) {
@@ -108,7 +116,7 @@ for (let i = 1; i <= 10; i++) {
 same("a call given nothing",
   program.call("cart.price", []),
   { issues: [{ path: "", code: "invalid_size", messageKey: "invalid_size",
-    meta: { actual: 0, expected: 1 } }] });
+    message: "must have exactly 1 elements", meta: { actual: 0, expected: 1 } }] });
 
 // An amount is held to whatever precision it was written with, and a JavaScript number is not. So
 // one is handed over as its digits and comes back as its digits wherever a number could not have
