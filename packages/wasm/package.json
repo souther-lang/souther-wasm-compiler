@@ -34,5 +34,8 @@
   "devDependencies": {
     "@types/node": "^22.20.5",
     "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "@raoh/core": "github:raoh-project/raoh-ts#93d08b79e4b8fe1240bfbc47e2a2772af42bf70a"
   }
 }

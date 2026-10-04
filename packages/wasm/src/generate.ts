@@ -135,7 +135,7 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
     decodable.set(declaration.module, [...decodable.get(declaration.module) ?? [], declaration]);
   }
 
-  out.push("/** The program, loaded: each module's behaviors, and each type a value can be read as on its own. */");
+  out.push("/** The program, loaded: each module's behaviors, and a Raoh decoder of each type a value can be read as on its own. */");
   out.push(`export interface ${OWN.bound} {`);
   out.push(`  readonly program: ${R}.Program;`);
   out.push("  readonly modules: {");
@@ -151,7 +151,7 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
   for (const [module, declarations] of decodable) {
     out.push(`    readonly ${property(module)}: {`);
     for (const declaration of declarations) {
-      out.push(`      ${property(declaration.name)}(value: unknown): ${R}.Reading<${names.get(key(declaration))}>;`);
+      out.push(`      readonly ${property(declaration.name)}: ${R}.Decoder<${names.get(key(declaration))}>;`);
     }
     out.push("    };");
   }
@@ -183,7 +183,7 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
   for (const [module, declarations] of decodable) {
     out.push(`      ${property(module)}: {`);
     for (const declaration of declarations) {
-      out.push(`        ${property(declaration.name)}: (value) => program.decode(${JSON.stringify(key(declaration))}, value),`);
+      out.push(`        ${property(declaration.name)}: program.decoder(${JSON.stringify(key(declaration))}),`);
     }
     out.push("      },");
   }

@@ -14,6 +14,8 @@ import { fingerprintOf, surfaceOf } from "../src/index.ts";
 import { compiled } from "./compiled.ts";
 
 const RUNTIME = join(import.meta.dirname, "..", "src", "index.ts");
+/** Raoh as the runtime imports it, so a page and the binding share one `Decoder`. */
+const RAOH = join(import.meta.dirname, "..", "node_modules", "@raoh", "core", "dist", "index.js");
 const TSC = join(import.meta.dirname, "..", "node_modules", ".bin", "tsc");
 
 const MODEL = `module shop
@@ -54,12 +56,12 @@ export async function priced(bytes: Uint8Array): Promise<string> {
   const line: Line = { sku: "ABC-1234", quantity: 1 };
   const answer = shop.modules.shop.price([line], "Premium");
   if (answer.issues !== undefined) {
-    return answer.issues.map((issue) => issue.code).join();
+    return answer.issues.list.map((issue) => issue.code).join();
   }
   if (answer.value.type === "Priced") {
     return String(answer.value.total);
   }
-  const read = shop.decode.shop.Sku("nope");
+  const read = shop.decode.shop.Sku.decode("nope");
   return read.issues === undefined ? read.value : "not a code";
 }
 `;
@@ -180,12 +182,12 @@ export async function twice(bytes: Uint8Array): Promise<string[]> {
   const shop = await load(bytes, { "shop.rate": () => amount("1.000000000000000000001") });
   const once = shop.modules.shop.doubled(amount("12345678901234567890.5"));
   if (once.issues !== undefined) {
-    return once.issues.map((issue) => issue.code);
+    return once.issues.list.map((issue) => issue.code);
   }
   const again = shop.modules.shop.doubled(once.value);
   const converted = shop.modules.shop.converted(3);
   return [again, converted].map((read) =>
-    read.issues === undefined ? numeral(read.value) : read.issues.map((issue) => issue.code).join());
+    read.issues === undefined ? numeral(read.value) : read.issues.list.map((issue) => issue.code).join());
 }
 `);
     assert.equal(await checked(at), "");
@@ -203,7 +205,7 @@ import { load } from "./binding.ts";
 export async function tiny(bytes: Uint8Array): Promise<string> {
   const shop = await load(bytes, { "shop.rate": () => 1 });
   const read = shop.modules.shop.doubled(amount("1e-1000000000"));
-  return read.issues === undefined ? numeral(read.value) : read.issues.map((it) => it.code).join();
+  return read.issues === undefined ? numeral(read.value) : read.issues.list.map((it) => it.code).join();
 }
 `);
     const page = await import(join(at, "page.ts"));
@@ -220,6 +222,38 @@ export async function tiny(bytes: Uint8Array): Promise<string> {
     assert.equal(amount("-0.10e+3").rawJSON, "-0.10e+3");
   });
 
+  // A type the model publishes is a Raoh decoder, so a page reads a form of its own with it as a
+  // part: the model's rules run on the part, and what is wrong is said where the part is.
+  it("reads a type the model publishes as a part of a value a page decodes", async () => {
+    const { at, bytes } = await generated(MODEL, `import { field, int, list, object } from ${JSON.stringify(RAOH)};
+import { load } from "./binding.ts";
+
+export async function ordered(bytes: Uint8Array): Promise<unknown> {
+  const shop = await load(bytes, { "shop.rate": () => 1 });
+  const order = object(
+    field("sku", shop.decode.shop.Sku),
+    field("lines", list(shop.decode.shop.Line)),
+    field("count", int()),
+  );
+  const wrong = order.decode({ lines: [{ sku: "ABC-1234", quantity: 1 }, { sku: "bad", quantity: "two" }], count: "x" });
+  const right = order.decode({ sku: "ABC-1234", lines: [{ sku: "ABC-1234", quantity: 1 }], count: 1 });
+  return [wrong.issues?.list.map((issue) => [issue.path.toString(), issue.code]), right.value];
+}
+`);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.deepEqual(await page.ordered(bytes), [
+      [
+        // A member that is not there is read by the module as it reads one that is not there.
+        ["/sku", "required"],
+        ["/lines/1/sku", "invalid_format"],
+        ["/lines/1/quantity", "type_mismatch"],
+        ["/count", "type_mismatch"],
+      ],
+      ["ABC-1234", [{ sku: "ABC-1234", quantity: 1 }], 1],
+    ]);
+  });
+
   // What a page hands over may write an optional field as null, which every backend reads as
   // nothing; and what comes back leaves it out, which the same type says.
   it("takes an optional field written as null, as the boundary does", async () => {
@@ -228,7 +262,7 @@ export async function tiny(bytes: Uint8Array): Promise<string> {
 export async function priced(bytes: Uint8Array): Promise<unknown> {
   const shop = await load(bytes, { "shop.rate": () => 1 });
   const line: Line = { sku: "ABC-1234", quantity: 1, note: null };
-  const read = shop.decode.shop.Line(line);
+  const read = shop.decode.shop.Line.decode(line);
   return [shop.modules.shop.price([line], "Standard").value, read.value];
 }
 `);
@@ -309,11 +343,11 @@ export async function all(bytes: Uint8Array): Promise<unknown[]> {
     bound.modules.decode.load(2, 3).value,
     bound.modules.program.decode(1, 2, 3).value,
     bound.modules.program.modules(x, { n: 2 }, { r: 3 }).value,
-    bound.decode.a.Bound(flag).value,
-    bound.decode.b.X(other).value,
-    bound.decode.c.AX(ax).value,
-    bound.decode.a.souther({ s: 1 }).value,
-    bound.decode.a.Record(kept[0]).value,
+    bound.decode.a.Bound.decode(flag).value,
+    bound.decode.b.X.decode(other).value,
+    bound.decode.c.AX.decode(ax).value,
+    bound.decode.a.souther.decode({ s: 1 }).value,
+    bound.decode.a.Record.decode(kept[0]).value,
   ];
 }
 `);

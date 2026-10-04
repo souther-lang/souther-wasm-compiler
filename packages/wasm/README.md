@@ -22,7 +22,7 @@ if (answer.issues === undefined && answer.value.type === "Priced") {
 ```
 
 What the model names stays under the name it gives: a behavior is `bound.modules.<module>.<behavior>`,
-a type a value can be read as on its own is `bound.decode.<module>.<Type>`, and only behaviors the
+a type a value can be read as on its own is the decoder `bound.decode.<module>.<Type>`, and only behaviors the
 module publishes are there to call. What the host supplies is every behavior the program reaches
 out for, published or kept, by `"<module>.<behavior>"`. Each declaration is a type of the same name,
 with its module's name before it where two modules declare one by that name; a name that TypeScript
@@ -57,12 +57,29 @@ A module failing any of them is refused when it is loaded, not when it is first 
 
 ## What the boundary would not read
 
-A behavior's answer and a value read on its own are each a `Reading<T>`: the value, or the issues
-the boundary found. An issue is Raoh's — `path`, `code`, `messageKey`, `meta`, and `message` where
-the decoder said it in its own words — and `messageOf(issue, locale)` writes the sentence a person
-reads from Raoh's catalog, the way the JVM's resolver writes it. So a form says what the JVM would
+A behavior's answer and a value read on its own are each a `Reading<T>`, which is
+[raoh-ts](https://github.com/raoh-project/raoh-ts)'s `Result<T>`: the value, or the `Issues` the
+boundary found. Each is a raoh-ts `Issue` — a `Path`, a `code`, a `messageKey`, `meta`, and the
+sentence the decoder gave where it said one in its own words — read from what the module wrote as
+Raoh reads JSON, so a bound in its metadata is the amount it was: a `bigint` where it is written as
+an integer, a `Decimal` at its scale where it is not. `messageOf(issue, locale)` writes the sentence
+a person reads from Raoh's catalogue, and `messagesFor(locale)` is the catalogue itself, saying of
+Souther's own issues (`invariant_violation`) what the JVM says. So a form says what the JVM would
 have said, in English or Japanese, and the rule it is about is written in the model and nowhere
 else.
+
+A type a value can be read as on its own is a raoh-ts `Decoder`, so a page reads a form of its own
+with the model's types as its parts:
+
+```ts
+import { field, int, object } from "@raoh/core";
+
+const order = object(field("sku", cart.decode.cart.Sku), field("count", int()));
+order.decode({ sku: "nope", count: 1 }).issues?.list.map((issue) => issue.path.toString()); // ["/sku"]
+```
+
+The module reads the part, its rules included, and what it says is wrong is said at the part's
+path. A member that is not there is read by the module as it reads one that is not there.
 
 What each value comes to, and what is read of it, is held for the JVM, the wasm module and this
 package alike to the fixtures in the repository's `conformance/issues`.
@@ -85,4 +102,6 @@ read and written through those two, and without them it would be rounded without
 The tests read `src` directly, except `test/installed.test.ts`, which packs the package as it would
 be published, installs it into a project of its own, and writes, type-checks and runs a page there.
 
-`src/catalog.ts` is generated from raoh-specification by `scripts/catalog.py`.
+Raoh's catalogue is raoh-ts's, which ships the text of raoh-specification's. `@raoh/core` is
+depended on from git at a commit until it is published; `test/installed.test.ts` installs it from
+what this directory installed, so the install reaches nothing outside the machine.

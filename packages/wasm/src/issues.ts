@@ -1,108 +1,101 @@
-// What the boundary would not read, and the sentence a person reads about it.
+// What the boundary would not read, as Raoh's issues, and the sentence a person reads about it.
 //
-// An issue is Raoh's (spec §decoder-error): where it is, its code, the message key that says
-// which of the code's constraints it was, and the metadata that constraint carries. The sentence
-// is not carried with it. It is written here, against the message key, from Raoh's own catalog,
-// the way the JVM's resolver writes it — so a form says what the JVM would have said, in the
-// reader's language, and the rule it is about is written in the model and nowhere else.
+// An issue is Raoh's (spec §decoder-error): where it is, its code, the message key that says which
+// of the code's constraints it was, and the metadata that constraint carries. The module writes
+// each as JSON, and here it becomes a raoh-ts `Issue`, so a page handles it as it handles an issue
+// of any decoder of its own, and its path can be extended where a module's type is read as part of
+// a larger value. The sentence is written by Raoh's catalogue, against the message key, in the
+// reader's language; Souther adds only the sentence for the issues of its own, which no catalogue
+// of Raoh's has.
 
-import { CATALOG } from "./catalog.ts";
+import { Decimal, Issue, Issues, JsonNumber, type MessageResolver, Messages, Path, type Result, parse }
+  from "@raoh/core";
 
-/** One thing the boundary would not read. */
-export interface Issue {
-  /** Where, as a JSON Pointer into what was handed over. */
-  readonly path: string;
-  /** What kind of thing was wrong. */
-  readonly code: string;
-  /** Which of the code's constraints it was. */
-  readonly messageKey: string;
-  /** What the constraint says, and what was there. */
-  readonly meta: Readonly<Record<string, unknown>>;
-  /**
-   * What the decoder says in its own words, where it says more than the catalog's template would:
-   * the form a temporal is written in. A template does not replace it.
-   */
-  readonly message?: string;
-}
-
-/** What reading a value came to: the value, or what was wrong with it. */
-export type Reading<T> =
-  | { readonly value: T; readonly issues?: undefined }
-  | { readonly issues: readonly Issue[]; readonly value?: undefined };
-
-const PLACEHOLDER = /\{([A-Za-z_][A-Za-z0-9_.-]*)\}/g;
+/** What reading a value came to: the value, or the issues that kept it from being one. */
+export type Reading<T> = Result<T>;
 
 /**
- * The sentence for `issue`, in `locale`.
+ * The issues a module wrote, read from the JSON text of its answer, `{"issues": [...]}`.
  *
- * Raoh's rule, as its resolver applies it: each layer of the catalog from the locale asked for to
- * the base, and in each the template for the message key before the one for the code, the first
- * whose every placeholder the metadata fills. What the decoder said in its own words is said as it
- * is. A template it could fill only partly is passed over,
- * since a half-filled one names a bound that is not there. Where none fits, what is said is what
- * the decoder would have said itself.
- *
- * @param locale a language tag, `ja` or `ja-JP`; the base catalog is English
+ * The text is read as Raoh reads JSON, so nothing in it is rounded: a metadata number written as
+ * an integer is a `bigint`, one written with a fraction a `Decimal` at the scale it is written
+ * with, as the bound it states was. A `message` an issue carries is what the decoder said in its
+ * own words, where it says more than a template would — the form a temporal is written in — and
+ * stays the issue's sentence in every language.
  */
-export function messageOf(issue: Issue, locale = "en"): string {
-  if (issue.message !== undefined) {
-    return issue.message;
+export function issuesIn(answer: string): Issues {
+  const read = parse(answer);
+  const issues = read instanceof Map ? read.get("issues") : undefined;
+  if (!Array.isArray(issues) || issues.length === 0) {
+    throw new Error("the module's answer holds no issues where it says it does");
   }
-  for (const layer of layers(locale)) {
-    for (const key of [issue.messageKey, issue.code]) {
-      const template = layer[`raoh.${key}`];
-      if (template !== undefined) {
-        const filled = filledFully(template, issue.meta);
-        if (filled !== undefined) {
-          return filled;
-        }
-      }
+  return new Issues(issues.map(issueOf));
+}
+
+function issueOf(written: unknown): Issue {
+  if (!(written instanceof Map)) {
+    throw new Error("an issue the module wrote is not an object");
+  }
+  const text = (name: string): string => {
+    const value = written.get(name);
+    if (typeof value !== "string") {
+      throw new Error(`an issue the module wrote has no ${name}`);
     }
-  }
-  return ownMessage(issue);
+    return value;
+  };
+  const message = written.get("message");
+  const meta = written.get("meta");
+  return new Issue(text("code"), {
+    messageKey: text("messageKey"),
+    path: Path.parse(text("path")),
+    meta: meta instanceof Map ? metaOf(meta) as Record<string, unknown> : {},
+    message: typeof message === "string" ? message : undefined,
+  });
 }
 
-/** The layers of the catalog asked in turn: the locale's language, then the base. */
-function layers(locale: string): Readonly<Record<string, string>>[] {
-  const language = locale.split(/[-_]/)[0].toLowerCase();
-  const held = [];
-  if (language !== "en" && CATALOG[language] !== undefined) {
-    held.push(CATALOG[language]);
+/** A metadata value as the module wrote it, every number read as the amount it is written as. */
+function metaOf(value: unknown): unknown {
+  if (value instanceof JsonNumber) {
+    return /^-?[0-9]+$/.test(value.lexeme) ? BigInt(value.lexeme) : Decimal.parse(value.lexeme);
   }
-  held.push(CATALOG.en);
-  return held;
-}
-
-function filledFully(template: string, meta: Readonly<Record<string, unknown>>): string | undefined {
-  for (const [, name] of template.matchAll(PLACEHOLDER)) {
-    if (!(name in meta)) {
-      return undefined;
-    }
+  if (value instanceof Map) {
+    return Object.fromEntries([...value].map(([name, each]) => [name, metaOf(each)]));
   }
-  return template.replace(PLACEHOLDER, (_, name: string) => shown(meta[name]));
-}
-
-/** A value as a template shows it: what Java's `String.valueOf` writes, which the JVM's does. */
-function shown(value: unknown): string {
   if (Array.isArray(value)) {
-    return `[${value.map(shown).join(", ")}]`;
+    return value.map(metaOf);
   }
-  if (value !== null && typeof value === "object") {
-    return JSON.stringify(value);
-  }
-  return String(value);
+  return value;
 }
 
 /**
- * What the decoder says of an issue no template fits, which for a rule of the model's own is the
- * rule it was: Raoh's catalog has nothing for one, and the JVM says this.
+ * The sentence for an issue of Souther's own, which no Raoh catalogue has a template for: a rule of
+ * the model that is not a standard constraint, named by its module, type and clause, as the JVM
+ * says it.
  */
-function ownMessage(issue: Issue): string {
+function southerSentence(issue: Issue): string {
   if (issue.code === "invariant_violation") {
     const { module, type, clause } = issue.meta as { module?: string; type?: string; clause?: string };
     return clause === undefined
       ? `invariant violated on ${module}.${type}`
       : `invariant violated on ${module}.${type}: ${clause}`;
   }
-  return issue.code;
+  return `validation failed: ${issue.code}`;
+}
+
+const ENGLISH = Messages.english.withFallback(southerSentence);
+const JAPANESE = Messages.japanese.withFallback(southerSentence);
+
+/**
+ * The catalogue a person reading `locale` is written to: Raoh's Japanese one for Japanese, its
+ * English one for any other language, each saying of Souther's own issues what the JVM says.
+ *
+ * @param locale a language tag, `ja` or `ja-JP`
+ */
+export function messagesFor(locale = "en"): MessageResolver {
+  return locale.split(/[-_]/)[0]?.toLowerCase() === "ja" ? JAPANESE : ENGLISH;
+}
+
+/** The sentence for `issue`, in `locale`, as {@link messagesFor} writes it. */
+export function messageOf(issue: Issue, locale = "en"): string {
+  return issue.message(messagesFor(locale));
 }

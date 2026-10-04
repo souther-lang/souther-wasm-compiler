@@ -33,10 +33,10 @@ import { load } from "./binding.ts";
 
 export async function counted(bytes: Uint8Array): Promise<unknown[]> {
   const shop = await load(bytes);
-  const read = shop.decode.shop.Line({ sku: "A", quantity: "two" });
+  const read = shop.decode.shop.Line.decode({ sku: "A", quantity: "two" });
   return [
     shop.modules.shop.counted([{ sku: "A", quantity: amount("1"), note: null }]).value,
-    read.issues?.map((issue) => messageOf(issue, "en")),
+    read.issues?.list.map((issue) => messageOf(issue, "en")),
   ];
 }
 `;
@@ -46,7 +46,18 @@ it("is used from where it is installed, as the README says", async () => {
   // Packing builds it, as publishing does: what is installed is what would be published.
   const { stdout } = await run("npm", ["pack", "--silent", "--pack-destination", project],
     { cwd: PACKAGE });
-  writeFileSync(join(project, "package.json"), JSON.stringify({ type: "module", private: true }));
+  // What the package depends on is installed from what this directory installed, packed the same
+  // way, so that installing reaches nothing outside this machine: @raoh/core is depended on from
+  // git, which an offline install cannot fetch.
+  // It is installed built, and carries no sources to build again from.
+  const { stdout: raoh } = await run("npm",
+    ["pack", "--silent", "--ignore-scripts", "--pack-destination", project],
+    { cwd: join(PACKAGE, "node_modules", "@raoh", "core") });
+  writeFileSync(join(project, "package.json"), JSON.stringify({
+    type: "module",
+    private: true,
+    overrides: { "@raoh/core": `file:${join(project, raoh.trim())}` },
+  }));
   await run("npm", ["install", "--silent", "--offline", "--no-audit", "--no-fund",
     join(project, stdout.trim())], { cwd: project });
 
