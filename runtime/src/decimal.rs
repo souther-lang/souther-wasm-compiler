@@ -59,7 +59,7 @@ pub unsafe fn amount(cell: u32) -> Amount {
         signed.unsigned_abs() as usize,
     );
     // Trusted because every cell of one was written by `cell_of` from the parts of a value.
-    Amount::of_parts(signed < 0, bytes, read_u32(cell + OFF_SCALE) as i32)
+    Amount::from_trusted_parts(signed < 0, bytes, read_u32(cell + OFF_SCALE) as i32)
 }
 
 /// A cell holding the answer, or the end of the call where it has no place: a scale past the
@@ -85,8 +85,10 @@ fn kept(text: String) -> (u32, u32) {
 /// caller hands here — a literal the compiler wrote, a document's number, decimal text, a bound a
 /// clause states — each of which its caller has held to that shape or a narrower one.
 ///
-/// Answers zero where the text is not of that shape, or names a scale a `Decimal` has no room for
-/// — which is what a reader of a document has to be told rather than ended for. This one function
+/// Answers zero where the text is not of that shape, or names a scale or a whole number a `Decimal`
+/// has no room for — which is what a reader of a document has to be told rather than ended for. A
+/// document's number is as long as the document, so its digits are held to the widest whole number
+/// as any other `Decimal`'s are, and refused from their count before they are read. This one function
 /// is called from places whose provenance is not the same (`String.toDecimal`, which the language
 /// declares never aborts; the JSON boundary decoder, which reports a bad document as an issue and
 /// not an abort; and a `Decimal` literal a body wrote down, which the checker settles is always one
