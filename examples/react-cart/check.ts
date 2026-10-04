@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { field, object, string } from "@raoh/core";
 import { amount, load as loadModule, messageOf, numeral, READS, type Numeric } from "@souther/wasm";
 import { load, type Cart } from "./src/cart.ts";
 
@@ -50,6 +51,13 @@ same("a product code read on its own", bound.decode.cart.Sku.decode("ABC-1234"),
 same("a product code that is not one, read on its own",
   bound.decode.cart.Sku.decode("nope").issues?.list.map((it) => [it.path.toString(), it.code]),
   [["", "invalid_format"]]);
+
+// The model's type as a part of a form the page reads with Raoh: the page's @raoh/core is the one
+// the glue uses, so what the module says of the part is said where the part is.
+same("a product code that is not one, read as a part of a form",
+  object(field("code", bound.decode.cart.Sku), field("note", string())).decode({ code: "nope", note: "x" })
+    .issues?.list.map((it) => [it.path.toString(), it.code]),
+  [["/code", "invalid_format"]]);
 
 same("a basket with something in it",
   bound.modules.cart.price({

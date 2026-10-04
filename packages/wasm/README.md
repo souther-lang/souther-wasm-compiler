@@ -81,6 +81,15 @@ order.decode({ sku: "nope", count: 1 }).issues?.list.map((issue) => issue.path.t
 The module reads the part, its rules included, and what it says is wrong is said at the part's
 path. A member that is not there is read by the module as it reads one that is not there.
 
+That takes the page and this package to use one `@raoh/core`: a `Path` the page's `field` hands
+the model's decoder, and the `Issues` it hands back, are values of one copy of it. So this package
+asks for `@raoh/core` as a peer dependency, which the project depends on itself:
+
+    npm install @souther/wasm @raoh/core
+
+Where a program comes to hold two copies anyway, a value of one met by the other is refused with an
+error saying so, rather than read as something else.
+
 What each value comes to, and what is read of it, is held for the JVM, the wasm module and this
 package alike to the fixtures in the repository's `conformance/issues`.
 

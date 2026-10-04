@@ -10,7 +10,11 @@ quantity is at least one, appear nowhere in the TypeScript.
     npm run dev
 
 The first line builds the compiler, which is what turns the model into a module, and the second
-the glue the page calls it through, which the page reads as a project installing it would.
+the glue the page calls it through, which the page reads as a project installing it would:
+`npm install` installs a copy of it (`.npmrc` says `install-links`), beside the page's own
+`@raoh/core`, which the glue asks for as a peer. So the glue and the page share one Raoh, and a
+decoder of the model's can be a part of one the page writes. A copy is a copy, so run
+`npm install` here again after changing the glue.
 `npm run dev`
 compiles the model with it, writes the module's TypeScript binding into `src/cart.ts`, and then
 starts Vite, so it is what to run again after changing the model. `npm run build` checks the page
