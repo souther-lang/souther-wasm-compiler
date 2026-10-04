@@ -32,7 +32,7 @@ use crate::{
     REASON_REQUIRED_FORM_HAS_NO_PLACE,
 };
 use core::cmp::Ordering;
-use souther_exact::{Exact, Failure, Magnitude, Ratio, Scaled};
+use souther_exact::{Exact, Failure, Magnitude, Ratio};
 
 const OFF_TWOS: u32 = 4;
 const OFF_FIVES: u32 = 12;
@@ -135,24 +135,6 @@ pub(crate) unsafe fn parts(cell: u32) -> (u32, u32) {
     (cell + OFF_TWOS, HEADER - OFF_TWOS + above + below)
 }
 
-/// A `Decimal`, as the parts a `Rational` is read from.
-unsafe fn scaled(cell: u32) -> Scaled {
-    let (at, length) = decimal::digits(cell);
-    Scaled {
-        negative: decimal::sign(cell) < 0,
-        magnitude: Magnitude::of_digits(core::slice::from_raw_parts(
-            at as usize as *const u8,
-            length as usize,
-        )),
-        scale: decimal::scale(cell),
-    }
-}
-
-/// The `Decimal` these parts are.
-unsafe fn decimal_of(parts: Scaled) -> u32 {
-    let digits = parts.magnitude.digits();
-    decimal::of_digits(digits.as_ptr() as u32, digits.len() as u32, parts.scale, parts.negative)
-}
 
 /// `Rational.fromInt`, and an `Int` read at its exact value by an operator with a `Rational` on the
 /// other side.
@@ -165,7 +147,7 @@ pub unsafe extern "C" fn __souther_rational_from_int(cell: u32) -> u32 {
 /// the exponents and nothing is built from it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_rational_from_decimal(cell: u32) -> u32 {
-    cell_of(&Ratio::of_decimal(scaled(cell)))
+    cell_of(&Ratio::of_decimal(&decimal::amount(cell)))
 }
 
 /// The unary `-`.
@@ -250,7 +232,7 @@ pub unsafe extern "C" fn __souther_rational_to_finite_decimal(cell: u32, repeati
     if !value.has_finite_decimal() {
         return __souther_unit(repeating);
     }
-    decimal_of(settled(value.to_finite_decimal()))
+    decimal::cell_of(&settled(value.to_finite_decimal()))
 }
 
 /// `Rational.toInt(mode, r)`: the whole number it rounds to by the mode.
@@ -263,5 +245,5 @@ pub unsafe extern "C" fn __souther_rational_to_int(mode: u32, cell: u32) -> u32 
 #[no_mangle]
 pub unsafe extern "C" fn __souther_rational_to_decimal(scale: u32, mode: u32, cell: u32) -> u32 {
     let places = __souther_int_value(scale);
-    decimal_of(settled(ratio(cell).to_decimal(places, decimal::rounding(mode))))
+    decimal::cell_of(&settled(ratio(cell).to_decimal(places, decimal::rounding(mode))))
 }

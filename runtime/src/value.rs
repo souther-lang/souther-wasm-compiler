@@ -1643,7 +1643,7 @@ pub(crate) unsafe fn written(cell: u32, descriptor: u32) {
         )),
         KIND_DECIMAL => {
             // The one form of the amount, so that two ways of writing it are one document.
-            let (at, length) = decimal::written(decimal::canonical(cell));
+            let (at, length) = decimal::external(cell);
             text::push(at, length);
         }
         KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
