@@ -99,10 +99,11 @@ class AMapIsKeyedByWhateverIsWrittenAsAStringTest {
         assertThat(answerOf(module, "keyed.days", "{\"2026-02-30\":1}"))
                 .contains("\"code\":\"invalid_format\"");
         // A name that is no case of the set is not a mismatch of kind — it is a string where a
-        // string belongs, naming nothing — so it is text of a format the set does not take.
+        // string belongs, naming none of the names allowed there.
         assertThat(answerOf(module, "keyed.kinds", "{\"Purple\":1}"))
-                .contains("\"code\":\"invalid_format\"")
-                .contains("\"path\":\"/0/Purple\"");
+                .contains("\"code\":\"not_allowed\"")
+                .contains("\"path\":\"/0/Purple\"")
+                .contains("\"actual\":\"Purple\"");
     }
 
     @Test
