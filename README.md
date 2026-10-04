@@ -165,9 +165,15 @@ arguments that are not JSON, 6 for a division by zero, and the rest as `RuntimeA
 A core module traps there and its host reads the record afterwards, which a component cannot
 offer, because an instance that has trapped cannot be asked anything again. So when the core module
 is linked for a component, the one runtime function every ended call leaves through is replaced by
-a throw, and each lifted function catches it and answers the reason. The instance answers the next
-call as it would have. A trap the runtime gave no reason for is not an exception, and no catch
-stops it, so it stays a trap.
+a throw that carries nothing, and each lifted function catches it and answers the reason the record
+holds. The outcome is written to a static area rather than the arena, so a call that ended because
+memory ran out is answered too. The instance answers the next call as it would have. A trap the
+runtime gave no reason for is not an exception, and no catch stops it, so it stays a trap.
+
+An argument too large for memory is the one failure that is not answered as `err`. The host lowers
+it through `cabi_realloc` before the lifted function runs, and the component model lets a realloc
+answer a place or fail the call, nothing else. So that call never begins, and the host is told it
+failed as it would be of a trap.
 
 A type a module publishes is offered too, to be read on its own as the core module's
 `__souther_decode` reads it: one function per type, under a package of its own.

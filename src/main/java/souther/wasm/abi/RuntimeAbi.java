@@ -92,15 +92,22 @@ public final class RuntimeAbi {
     /** Pops the arena back to where it began, which is what a post-return gives back. */
     public static final String ARENA_REWIND = "__souther_arena_rewind";
 
-    /** Puts a string a call answered with where a component reads a result from, as its {@code ok}. */
+    /**
+     * {@code (i32 at, i32 length) -> i32}: puts a string a call answered with where a component
+     * reads a result from, as its {@code ok}. Writes a static area and hands nothing out.
+     */
     public static final String LIFT_AREA = "__souther_lift_area";
 
-    /** Puts the reason a call ended for where a component reads a result from, as its {@code err}. */
+    /**
+     * {@code () -> i32}: puts the reason the failure record holds where a component reads a result
+     * from, as its {@code err}. Writes the same static area, so it cannot itself run out of memory.
+     */
     public static final String LIFT_ENDED = "__souther_lift_ended";
 
     /**
-     * {@code (i32 reason) -> !}: leaves a call whose reason the failure record holds. A core module
-     * traps here; a component's link replaces the body with a throw its lifted functions catch.
+     * {@code () -> !}: leaves a call whose reason the failure record holds, carrying nothing. A
+     * core module traps here; a component's link replaces the body with a throw its lifted
+     * functions catch.
      */
     public static final String END_CALL = "__souther_end_call";
 

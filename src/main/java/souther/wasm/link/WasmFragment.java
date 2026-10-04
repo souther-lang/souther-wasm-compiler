@@ -157,7 +157,7 @@ public final class WasmFragment {
     public static final int ENDED_TAG = 0;
 
     /**
-     * Has a call the runtime ends leave by a throw under {@link #ENDED_TAG}, carrying the reason,
+     * Has a call the runtime ends leave by a throw under {@link #ENDED_TAG}, which carries nothing,
      * rather than by a trap; and answers the tag, for a body that catches it.
      *
      * <p>For a module a component wraps. A host of a core module reads why a call ended out of the

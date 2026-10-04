@@ -22,7 +22,15 @@ import souther.wasm.emit.WasmWriter;
  * <p>A call the runtime ended answers {@code err}, with the reason the abort record holds. A core
  * module traps there and its host reads the record out of its memory afterwards, which a component
  * cannot offer: an instance that has trapped cannot be asked anything again. So the component's
- * link ends such a call by a throw the lifted function catches ({@link Linker}). A trap the runtime gave no reason for is not caught and stays a trap.
+ * link ends such a call by a throw the lifted function catches ({@link Linker}), and the reason is
+ * read from the record, which is the one place it is kept. Writing the outcome hands nothing out,
+ * so a call that ended for want of room is answered too. A trap the runtime gave no reason for is
+ * not caught and stays a trap.
+ *
+ * <p>An argument that does not fit in memory is not a call that ended. The host lowers it through
+ * {@code cabi_realloc} before the lifted function runs, and the component model lets a realloc
+ * answer a place or fail the call, nothing else; so the call never begins, and the host is told
+ * it failed as it would be of a trap.
  *
  * <p>A type a module publishes is read through a function of its own, {@code func(value: string)
  * -> result<string, ended>}, which answers what the core module's {@code __souther_decode} answers

@@ -76,6 +76,23 @@ class TheModuleInsideAComponentIsRunTest {
     }
 
     @Test
+    void answersACallThatRanOutOfRoomAsEndedAndGoesOnAnswering() {
+        Running module = Running.linkedWithin(insideComponentFor("""
+                module counting
+
+                behavior padded : (n: Int) -> Int
+
+                let padded (n) = String.length(String.repeat(n, "x"))
+                """), 2);
+
+        // What answers why a call ended is reached when nothing more could be handed out, so it
+        // must hand nothing out itself.
+        assertThat(answerOf(module, "counting.padded", "[1000000]"))
+                .describedAs("more than memory may grow to").isEqualTo("ended 1");
+        assertThat(answerOf(module, "counting.padded", "[3]")).isEqualTo("{\"value\":3}");
+    }
+
+    @Test
     void readsAValueOfATypeAsEndedWhereItIsNotJson() {
         Running module = Running.linked(insideComponentFor("""
                 module shapes

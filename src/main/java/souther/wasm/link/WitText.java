@@ -108,7 +108,8 @@ public final class WitText {
             // Either answer is the ok of a result. Its err is a call the runtime ended, with the
             // reason a core module's abort record holds: 3 for arguments that are not JSON, 6 for
             // a division by zero, and the rest as the runtime's ABI lists them. The instance can
-            // be called again after one. A trap is a failure the runtime gave no reason for.
+            // be called again after one. A trap is a failure the runtime gave no reason for, or
+            // arguments too large for the instance's memory, which fail before the call begins.
             """;
 
     /**

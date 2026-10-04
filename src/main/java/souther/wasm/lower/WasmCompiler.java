@@ -393,19 +393,21 @@ public final class WasmCompiler {
 
     /**
      * A lifted function's body: the call {@code calling} writes, its answer put where a component
-     * reads the {@code ok} of an outcome; or, where the runtime ended the call, the reason put where
-     * it reads the {@code err}.
+     * reads the {@code ok} of an outcome; or, where the runtime ended the call, the reason its
+     * failure record holds put where it reads the {@code err}.
      *
-     * <p>Only the tag the runtime ends a call under is caught. A trap is not an exception, and no
-     * catch clause stops one, so a call that failed for no reason the runtime gave still traps.
+     * <p>Only the tag the runtime ends a call under is caught, and it carries nothing: the record
+     * is the one place a reason is kept. Neither way of writing the outcome hands anything out, so
+     * a call that ended because nothing more could be handed out is still answered. A trap is not
+     * an exception, and no catch clause stops one, so a call that failed for no reason the runtime
+     * gave still traps.
      */
     private static byte[] outcomeOf(Runtime calls, int ended, Consumer<BodyWriter> calling) {
-        BodyWriter out = new BodyWriter(2, 0).blockOfANumber().catching(ended, 0);
+        BodyWriter out = new BodyWriter(2, 0).block().catching(ended, 0);
         calling.accept(out);
         return out.call(calls.of(RuntimeAbi.LIFT_AREA))
                 .returns()
                 .end()
-                .unreachable()
                 .end()
                 .call(calls.of(RuntimeAbi.LIFT_ENDED))
                 .body();

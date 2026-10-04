@@ -236,17 +236,10 @@ final class BodyWriter {
         return this;
     }
 
-    /** Opens a place to leave from with a number, closed by {@link #end}. */
-    BodyWriter blockOfANumber() {
-        writer.write((byte) OPCODE_BLOCK).write((byte) TYPE_I32);
-        depth++;
-        return this;
-    }
-
     /**
      * Opens a run of instructions an exception under {@code tag} leaves, closed by {@link #end}.
-     * What the exception carries goes to the edge of the block {@code depth} out from where this
-     * opens, as a branch there would take it.
+     * The exception goes to the edge of the block {@code depth} out from where this opens, as a
+     * branch there would.
      */
     BodyWriter catching(int tag, int depth) {
         writer.write((byte) OPCODE_TRY_TABLE).write((byte) BLOCK_TYPE_EMPTY)

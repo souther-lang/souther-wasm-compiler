@@ -1,7 +1,9 @@
 package souther.wasm.abi;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.dylibso.chicory.wasm.ChicoryException;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import souther.wasm.Running;
@@ -33,17 +35,30 @@ class WhatACanonicalCallOwesAndGetsBackTest {
     }
 
     @Test
-    void writesWhyACallEndedAsTheOtherCaseOfTheSameResult() {
-        Running module = Running.bareRuntime();
+    void writesWhyACallEndedForWantOfRoomWithoutWantingAnyMore() {
+        Running module = Running.bareRuntimeThatCannotGrow();
 
-        for (int taken = 0; taken < 4; taken++) {
-            module.call(RuntimeAbi.ALLOC, 1);
-            int area = module.call(RuntimeAbi.LIFT_ENDED, 6);
-            assertThat(area % 4).describedAs("a result after " + taken + " odd bytes").isZero();
-            assertThat(module.read(area, 1)[0]).describedAs("the err case").isEqualTo((byte) 1);
-            assertThat(wordAt(module, area + 4)).isEqualTo(6);
-        }
+        // Less room left than a result takes, and then a call asking for more than there is: what
+        // answers why it ended must not ask for any, or it ends the call again, outside anything
+        // that would catch it.
+        module.call(RuntimeAbi.ALLOC, module.memoryBytes() - module.call(RuntimeAbi.ALLOC_MARK) - 4);
+        assertThatThrownBy(() -> module.call(RuntimeAbi.ALLOC, 100))
+                .isInstanceOf(ChicoryException.class);
+        assertThat(module.failureRecord().reason()).isEqualTo(REASON_OUT_OF_MEMORY);
+
+        int area = module.call(RuntimeAbi.LIFT_ENDED);
+        assertThat(area % 4).describedAs("where a result begins").isZero();
+        assertThat(module.read(area, 1)[0]).describedAs("the err case").isEqualTo((byte) 1);
+        assertThat(wordAt(module, area + 4)).describedAs("the reason the record holds")
+                .isEqualTo(REASON_OUT_OF_MEMORY);
+
+        // The answer too, which a call may have used the last of the room to make.
+        int answered = module.call(RuntimeAbi.LIFT_AREA, 12, 34);
+        assertThat(module.read(answered, 1)[0]).describedAs("the ok case").isZero();
+        assertThat(wordAt(module, answered + 8)).isEqualTo(34);
     }
+
+    private static final int REASON_OUT_OF_MEMORY = WasmFault.OUT_OF_MEMORY.code();
 
     @Test
     void handsBackEverythingACallMadeAndNothingBelowIt() {

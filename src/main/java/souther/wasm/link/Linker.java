@@ -51,7 +51,6 @@ public final class Linker {
     private static final int OPCODE_I32_CONST = 0x41;
     private static final int OPCODE_CALL = 0x10;
     private static final int OPCODE_END = 0x0b;
-    private static final int OPCODE_LOCAL_GET = 0x20;
     private static final int OPCODE_THROW = 0x08;
 
     /** The one kind of tag there is: an exception. */
@@ -128,9 +127,10 @@ public final class Linker {
      * Has a call the runtime ends leave by a throw rather than a trap.
      *
      * <p>The runtime leaves every call it ends through one function, {@link RuntimeAbi#END_CALL},
-     * whose body traps. That one body is replaced by a throw of the reason it is handed, under a
-     * tag this adds as {@link WasmFragment#ENDED_TAG}; nothing else the runtime wrote is read or
-     * changed. The tag's type is the function's own, which takes the reason and answers nothing.
+     * whose body traps. That one body is replaced by a throw under a tag this adds as {@link
+     * WasmFragment#ENDED_TAG}; nothing else the runtime wrote is read or changed. The tag's type is
+     * the function's own, which takes nothing and answers nothing: why the call ended is the
+     * failure record's to say, and the throw only leaves the call.
      */
     private static void throwingEndings(Map<Integer, byte[]> sections, LinkPlan plan) {
         int defined = plan.functionIndexOf(RuntimeAbi.END_CALL) - plan.layout().importedFunctionCount();
@@ -152,7 +152,6 @@ public final class Linker {
         ByteArrayOutputStream thrown = new ByteArrayOutputStream();
         new WasmWriter(thrown)
                 .writeUnsignedLeb128(0) // no locals
-                .write((byte) OPCODE_LOCAL_GET).writeUnsignedLeb128(0)
                 .write((byte) OPCODE_THROW).writeUnsignedLeb128(WasmFragment.ENDED_TAG)
                 .write((byte) OPCODE_END);
         sections.put(SEC_CODE, replacing(sections.get(SEC_CODE), defined, thrown.toByteArray()));
