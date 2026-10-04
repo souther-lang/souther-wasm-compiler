@@ -1,6 +1,13 @@
 // The package as a project installs it: packed as it is published, installed into a project of its
 // own, and used from there the way the README says — the command writing a binding, a page written
-// against the binding type-checked against what the package declares, and the page run.
+// against the binding type-checked against what the package declares and compiled, and the
+// JavaScript that comes of it run.
+//
+// It is the one test that runs only what a project runs, so it is also what holds the package to
+// the oldest Node engines names, which is older than the Node the tests need as TypeScript. CI
+// compiles it, packs the package with the Node the tools need, and runs the compiled test on the
+// oldest Node with the archive handed in as SOUTHER_WASM_PACKED; nothing of the package's own
+// development runs there.
 //
 // Everything else here reads the package's sources. Node runs no TypeScript under node_modules, and
 // a file the package does not carry is not there once it is installed, so what works in this
@@ -13,9 +20,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
 import { promisify } from "node:util";
-import { compiled, ROOT } from "./compiled.ts";
+import { compiled, PACKAGE, ROOT } from "./compiled.ts";
 
-const PACKAGE = join(import.meta.dirname, "..");
 const TSC = join(PACKAGE, "node_modules", ".bin", "tsc");
 const ran = promisify(execFile);
 
@@ -60,8 +66,9 @@ export async function counted(bytes: Uint8Array): Promise<unknown[]> {
 it("is used from where it is installed, as the README says", async () => {
   const project = mkdtempSync(join(tmpdir(), "souther-installed-"));
   // Packing builds it, as publishing does: what is installed is what would be published.
-  const { stdout } = await run("npm", ["pack", "--silent", "--pack-destination", project],
-    { cwd: PACKAGE });
+  const packed = process.env.SOUTHER_WASM_PACKED
+    ?? join(project, (await run("npm", ["pack", "--silent", "--pack-destination", project],
+      { cwd: PACKAGE })).stdout.trim());
   // The package asks the project for @raoh/core, as a peer, so the project depends on it itself.
   // It is installed from what this directory installed, so that installing reaches nothing outside
   // this machine: @raoh/core is depended on from git, which an offline install cannot fetch. Its
@@ -79,8 +86,7 @@ it("is used from where it is installed, as the README says", async () => {
     // The package names the peer it was built against by its git commit; the archive is that.
     overrides: { "@raoh/core": "$@raoh/core" },
   }));
-  await run("npm", ["install", "--offline", "--no-audit", "--no-fund",
-    join(project, stdout.trim())], { cwd: project });
+  await run("npm", ["install", "--offline", "--no-audit", "--no-fund", packed], { cwd: project });
   const installed = join(project, "node_modules", "@souther", "wasm");
   // One copy, the project's: the package brought none of its own.
   assert.throws(() => readFileSync(join(installed, "node_modules", "@raoh", "core", "package.json")),
@@ -102,20 +108,20 @@ it("is used from where it is installed, as the README says", async () => {
   writeFileSync(join(project, "entries.ts"), entries
     .map((entry, at) => `export * as entry${at} from ${JSON.stringify(entry)};`).join("\n") + "\n");
 
+  // A project compiles its page, and runs the JavaScript that comes of it.
   try {
-    await run(TSC, ["--noEmit", "--strict", "--target", "es2024", "--module", "nodenext",
-      "--moduleResolution", "nodenext", "--allowImportingTsExtensions", "--lib", "esnext,dom",
+    await run(TSC, ["--strict", "--target", "es2024", "--module", "nodenext",
+      "--moduleResolution", "nodenext", "--rewriteRelativeImportExtensions", "--lib", "esnext,dom",
       "--skipLibCheck", "page.ts", "entries.ts"], { cwd: project });
   } catch (refused) {
-    const { stdout: said } = refused as { stdout: string };
-    assert.fail(`the page does not type-check against what was installed:\n${said}`);
+    assert.fail(`the page does not compile against what was installed:\n${(refused as Error).message}`);
   }
-  const imported = await import(join(project, "entries.ts"));
+  const imported = await import(join(project, "entries.js"));
   for (const [at, entry] of entries.entries()) {
     assert.ok(Object.keys(imported[`entry${at}`]).length > 0, `${entry} exports nothing`);
   }
 
-  const page = await import(join(project, "page.ts"));
+  const page = await import(join(project, "page.js"));
   assert.deepEqual(await page.counted(bytes),
     [1, [["/lines/0/quantity", "expected long"]]]);
 });

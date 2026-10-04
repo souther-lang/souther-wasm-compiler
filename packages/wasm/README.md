@@ -96,7 +96,7 @@ package alike to the fixtures in the repository's `conformance/issues`.
 ## Where it runs
 
 What is installed is JavaScript and its declarations, built from `src` into `dist`; Node runs no
-TypeScript under `node_modules`. It needs Node 22.18.0 or later, or a browser that has both
+TypeScript under `node_modules`. It needs Node 22 or later, or a browser that has both
 `JSON.parse` source text access and `JSON.rawJSON`: an amount wider than a JavaScript number is
 read and written through those two, and without them it would be rounded without a word, so
 `load` refuses to run there.
@@ -108,8 +108,13 @@ read and written through those two, and without them it would be rounded without
     npm run build   # what a project installing this, and the example beside it, reads
     npm test        # needs the compiler built: mvn package at the repository's root
 
+Developing it takes Node 22.18.0 or later, which runs the tests as the TypeScript they are written
+in; `package.json` says that in `devEngines`, apart from the Node a project runs the package on in
+`engines`.
+
 The tests read `src` directly, except `test/installed.test.ts`, which packs the package as it would
-be published, installs it into a project of its own, and writes, type-checks and runs a page there.
+be published, installs it into a project of its own, and writes, compiles and runs a page there. CI
+also runs that test, compiled, on the oldest Node `engines` names.
 
 Raoh's catalogue is raoh-ts's, which ships the text of raoh-specification's. `@raoh/core` is
 depended on from git at a commit until it is published; `test/installed.test.ts` installs it from

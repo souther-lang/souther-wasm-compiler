@@ -131,23 +131,18 @@ jobs:
       # here calls a compiled program from outside the JVM, so it is the only place that would
       # notice the boundary changing shape — and only while it is still built.
       #
-      # The oldest Node the glue says it runs on is the one it is built and tested on here. The
-      # engines field and this are one statement, so this reads it there, to the patch: a version
-      # written here as well, or one naming only a major, which setup-node takes as the newest of
-      # it, would let a test pass on a Node the glue does not promise, and the promise go unkept on
-      # the one it does.
-      - name: Read the oldest Node the glue runs on
+      # Two Nodes, each read from packages/wasm/package.json: the oldest the tests need, which run
+      # as the TypeScript they are written in (devEngines), and the oldest a project that installs
+      # the package may run it on (engines). The tools run on the first; the package is run on the
+      # second below, by the one test that runs only what a project runs.
+      - name: Read the Nodes the package names
         id: floor
         run: |
-          floor=$(jq -r '.engines.node' packages/wasm/package.json)
-          if [[ ! "$floor" =~ ^\>=([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "packages/wasm says it runs on Node $floor; write the oldest it runs on as >=X.Y.Z" >&2
-            exit 1
-          fi
-          echo "node=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "tooling=$(scripts/oldest-node.sh packages/wasm tooling)" >> "$GITHUB_OUTPUT"
+          echo "runtime=$(scripts/oldest-node.sh packages/wasm runtime)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ steps.floor.outputs.node }}
+          node-version: ${{ steps.floor.outputs.tooling }}
           cache: npm
           cache-dependency-path: |
             examples/react-cart/package-lock.json
@@ -183,6 +178,23 @@ jobs:
       - name: Call a compiled program through the glue the page uses
         working-directory: examples/react-cart
         run: node check.ts
+
+      # The package on the oldest Node engines names. It is packed, and the installed test compiled,
+      # with the Node the tools need; on the oldest Node only that test's JavaScript runs, and the
+      # npm that comes with that Node installs the archive into a project as a project would.
+      - name: Pack the package and compile the installed test
+        working-directory: packages/wasm
+        run: |
+          npm pack --silent --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/packed"
+          npm run compile-tests
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.floor.outputs.runtime }}
+      - name: Use the installed package on the oldest Node engines names
+        working-directory: packages/wasm
+        run: |
+          test "$(node --version)" = "v${{ steps.floor.outputs.runtime }}"
+          SOUTHER_WASM_PACKED="$RUNNER_TEMP/$(cat "$RUNNER_TEMP/packed")" node --test target/runtime/test/installed.test.js
 
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no
