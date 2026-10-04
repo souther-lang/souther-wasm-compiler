@@ -6,6 +6,24 @@ A behavior becomes an export that takes JSON and answers JSON. The values in bet
 linear memory, in an arena the caller pops after every call, so the output runs wherever core wasm
 runs rather than only where a garbage collector and a component runtime do.
 
+## What stays compatible
+
+Compatibility is kept at the boundaries this compiler offers the ones who use what it makes:
+
+- the command line: its arguments, its exit status, and the files it writes (below, under
+  "Running it");
+- the JavaScript package `@souther/wasm` (`packages/wasm`);
+- what a module it writes holds a host to: the host contract and its ABI version, the
+  `souther:surface` section and its version, and the interfaces a component exports and imports
+  (`souther:program/*`, `souther:decode/*`, `souther:reached/*`).
+
+Each of these that has a version moves it when it changes, and its tests fail where it changes
+without moving.
+
+The Java classes here are how this compiler is written, and none of them is offered to a caller. A
+`public` declaration is one another package of this compiler uses; it is not a Java API, and
+changing or removing it breaks nothing anyone was offered.
+
 ## What it reads
 
 `CheckedProgram` and what is reachable from it, and nothing else of the Souther compiler. Anything
@@ -123,7 +141,7 @@ rather than trusting the writing.
 
 ## As a component
 
-`WasmCompiler.compileAsComponent` wraps the same core module as a WebAssembly component. A Souther
+`--component` wraps the same core module as a WebAssembly component. A Souther
 module becomes an interface and a behavior a function of it:
 
     world root {
@@ -139,6 +157,24 @@ The envelope is the one the core export answers with. What the component adds is
 memory it crosses in: the host lowers the argument through `cabi_realloc` and reads the answer out
 of an area in this memory, and the post-return says when the whole of it goes back. That is the
 bracket a core caller keeps, moved to where the format states it.
+
+A type a module publishes is offered too, to be read on its own as the core module's
+`__souther_decode` reads it: one function per type, under a package of its own.
+
+    world root {
+      export souther:program/cart;
+      export souther:decode/cart;
+    }
+    package souther:decode {
+      interface cart {
+        sku: func(value: string) -> string;
+        line-item: func(value: string) -> string;
+      }
+    }
+
+It takes one value of the type as JSON and answers `{"value": ...}` or `{"issues": [...]}`. The
+types are not functions of the interface the behaviors are in, because a type and a behavior may
+come to one name there (`LineItem` and `line_item`).
 
 A behavior's name is not the same string on both sides — Souther writes one convention and an
 interface another — so where two behaviors of a module would come to one interface name, this
@@ -170,7 +206,11 @@ and a component that reaches out is almost entirely indices between sections. Th
 question, so the build asks the format: CI validates a component this writes, and one that reaches
 out, with `wasm-tools`.
 
-They do not run one: nothing here can.
+Validating says each index names something of the right type, and not that a function lifts the
+right one: every function crosses as a string and answers one, so a lift naming another
+behavior's core function, or another type's reading, is still valid. So CI also calls each
+function of one component with `wasmtime` and compares what it answers. The JVM tests run no
+component.
 The three runtime functions a component's canonical calls go through are asked directly instead,
 which is where the one question the writing cannot answer — where a result may begin — can be put.
 The two modules a program reaches out through are run the same way, against lowerings that write

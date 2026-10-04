@@ -42,7 +42,9 @@ import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
+import souther.wasm.link.Offering;
 import souther.wasm.link.WasmFragment;
+import souther.wasm.link.WitText;
 
 /**
  * Writes a checked program as a WebAssembly module.
@@ -110,8 +112,36 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(
-                written(program, runtime, true), offered(program), reachedOutFor(program));
+        return Component.around(written(program, runtime, true), offering(program));
+    }
+
+    /**
+     * What a program offers and has to be given, as {@link Component} and {@link WitText} are
+     * both given it.
+     *
+     * @param program what a Souther compile checked
+     * @return the program's offering
+     */
+    public static Offering offering(CheckedProgram program) {
+        return new Offering(offered(program), readable(program), reachedOutFor(program));
+    }
+
+    /**
+     * Each type a caller may read a value of on its own, by the module that declares it: its name,
+     * and the name {@link Component.Lifted#reading} is given for it.
+     */
+    private static Map<String, Map<String, String>> readable(CheckedProgram program) {
+        Map<String, Map<String, String>> types = new LinkedHashMap<>();
+        for (TypeSymbol.AtModule type : decodable(program)) {
+            types.computeIfAbsent(type.module(), held -> new LinkedHashMap<>())
+                    .put(type.name(), readAs(type));
+        }
+        return types;
+    }
+
+    /** What the lifted function reading a value of a type is named by: its module and its name. */
+    private static String readAs(TypeSymbol.AtModule type) {
+        return type.key().qualified();
     }
 
     /**
@@ -124,7 +154,7 @@ public final class WasmCompiler {
      * @param program what a Souther compile checked
      * @return each behavior the program declares and does not implement
      */
-    public static List<Component.Reach> reachedOutFor(CheckedProgram program) {
+    private static List<Component.Reach> reachedOutFor(CheckedProgram program) {
         return reachingOut(program).stream()
                 .map(behavior -> new Component.Reach(
                         behavior.name().module(), behavior.name().name()))
@@ -168,7 +198,7 @@ public final class WasmCompiler {
     }
 
     /**
-     * What a program offers, as {@link Component} and {@link WitText} are both given it.
+     * The behaviors a program offers, as its {@link #offering} holds them.
      *
      * <p>A behavior the program does not implement is not among them. Nothing in the module
      * answers it, so what it crosses as is asked for rather than offered, and that is
@@ -178,7 +208,7 @@ public final class WasmCompiler {
      * @param program what a Souther compile checked
      * @return every behavior's core export name, by the module that declares it
      */
-    public static Map<String, Map<String, String>> offered(CheckedProgram program) {
+    private static Map<String, Map<String, String>> offered(CheckedProgram program) {
         Map<String, Map<String, String>> behaviors = new LinkedHashMap<>();
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
@@ -308,7 +338,7 @@ public final class WasmCompiler {
             }
         }
         if (lifted) {
-            liftable(fragment, calls, program);
+            liftable(fragment, calls, program, decodable);
         }
         fragment.offers(Surface.of(program, decodable, reachOut));
         return Linker.link(fragment);
@@ -319,10 +349,12 @@ public final class WasmCompiler {
      *
      * <p>One per behavior, taking the argument string and answering where the answer's own two
      * words are, because the canonical ABI reads a string result out of memory rather than off the
-     * stack. And one post-return for all of them: everything a call made is the arena, so what
-     * each owes back is the same thing.
+     * stack. One per type a caller may read a value of, the same over {@link #DECODE} with the
+     * type's number put in front. And one post-return for all of them: everything a call made is
+     * the arena, so what each owes back is the same thing.
      */
-    private static void liftable(WasmFragment fragment, Runtime calls, CheckedProgram program) {
+    private static void liftable(WasmFragment fragment, Runtime calls, CheckedProgram program,
+            List<TypeSymbol.AtModule> decodable) {
         int overStrings = fragment.functionType(
                 List.of(Type.I32, Type.I32), List.of(Type.I32));
         for (CheckedModule module : program.modules()) {
@@ -340,6 +372,17 @@ public final class WasmCompiler {
                 fragment.export(Component.Lifted.wrapping(crossing),
                         fragment.define(overStrings, body));
             }
+        }
+        for (int number = 0; number < decodable.size(); number++) {
+            byte[] body = new BodyWriter(2, 0)
+                    .constant(number)
+                    .localGet(0)
+                    .localGet(1)
+                    .call(fragment.exported(DECODE))
+                    .call(calls.of(RuntimeAbi.LIFT_AREA))
+                    .body();
+            fragment.export(Component.Lifted.reading(readAs(decodable.get(number))),
+                    fragment.define(overStrings, body));
         }
         byte[] rewind = new BodyWriter(1, 0)
                 .call(calls.of(RuntimeAbi.ARENA_REWIND))
