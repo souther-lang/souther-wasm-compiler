@@ -7,7 +7,7 @@
 // about here or nowhere.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Decimal, field, object, string } from "@raoh/core";
@@ -199,8 +199,7 @@ behavior spread : (pair: String) -> Int
 
 let spread (pair, today, yesterday) = today(pair) - yesterday(pair)
 `);
-  const jar = readdirSync("../../target").find((name) => name.endsWith("-cli.jar"))!;
-  execFileSync("java", ["-jar", join("../../target", jar), at, "-o", join(at, "rates.wasm")]);
+  execFileSync("souther", ["compile", "--target", "wasm", at, "-o", join(at, "rates.wasm")]);
   const reaching = await loadModule(readFileSync(join(at, "rates.wasm")), {
     "rates.today": (pair: string) => (pair === "USDJPY" ? 150n : 0n),
     "rates.yesterday": (pair: string) => (pair === "USDJPY" ? 147n : 0n),

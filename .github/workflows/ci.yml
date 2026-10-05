@@ -31,6 +31,26 @@ jobs:
       - name: Build and test
         run: mvn -B -U --no-transfer-progress verify
 
+      # A user reaches this backend through `souther compile --target wasm`, which chooses the jar
+      # by its descriptor and refuses one built against another Souther. The CLI is not published as
+      # a SNAPSHOT, so it is built from Souther's develop, which is the Souther this build compiles
+      # against; when the two versions part, the compile below is refused, and that is the point.
+      - name: Check out Souther
+        uses: actions/checkout@v5
+        with:
+          repository: souther-lang/souther
+          ref: develop
+          path: souther
+      - name: Install the souther CLI, with this backend beside it
+        run: |
+          mvn -B -U --no-transfer-progress -f souther/pom.xml -pl souther-cli -am -DskipTests package
+          mkdir -p "$RUNNER_TEMP/souther/bin" "$RUNNER_TEMP/souther/home/backends"
+          cp souther/souther-cli/target/souther "$RUNNER_TEMP/souther/bin/souther"
+          cp target/*-cli.jar "$RUNNER_TEMP/souther/home/backends/"
+          rm -rf souther
+          echo "$RUNNER_TEMP/souther/bin" >> "$GITHUB_PATH"
+          echo "SOUTHER_HOME=$RUNNER_TEMP/souther/home" >> "$GITHUB_ENV"
+
       # What no test can see: a test runs with the whole build's classpath, and the jar carries
       # only what the pom says it does. A program with an example is what tells them apart,
       # because checking an example means running it.
@@ -53,7 +73,7 @@ jobs:
               | "five thousand is free" : (5000) -> 0
               | "under it is five hundred" : (4999) -> 500
           SOURCE
-          java -jar target/*-cli.jar /tmp/asked -o /tmp/asked/out.wasm --wit /tmp/asked/out.wit
+          souther compile --target wasm /tmp/asked -o /tmp/asked/out.wasm --wit /tmp/asked/out.wit
           test -s /tmp/asked/out.wasm
           test -s /tmp/asked/out.wit
 
@@ -81,7 +101,7 @@ jobs:
           let priced (n, today) = n * today("JPY")
           SOURCE
           for source in /tmp/asked /tmp/component; do
-            java -jar target/*-cli.jar "$source" --component \
+            souther compile --target wasm "$source" --component \
               -o "$source/out.wasm" --wit "$source/out.wit"
             wasm-tools validate --features all "$source/out.wasm"
             wasm-tools component wit "$source/out.wasm" > "$source/read-back.wit"
