@@ -207,7 +207,20 @@ public final class WasmTreeShaker {
 	 * @return the module without what nothing reaches
 	 */
 	public static byte[] withoutWhatNothingReaches(byte[] module) {
-		return dropUnreachable(module, List.of(), List.of()).module();
+		return withoutWhatNothingReaches(module, List.of());
+	}
+
+	/**
+	 * {@link #withoutWhatNothingReaches(byte[])}, dropping too every
+	 * {@link OwnedDataSegment} whose owners all died.
+	 *
+	 * @param module a core WASM module
+	 * @param ownedDataSegments data segments to drop when their owning functions are all
+	 * unreachable
+	 * @return the module without what nothing reaches
+	 */
+	public static byte[] withoutWhatNothingReaches(byte[] module, List<OwnedDataSegment> ownedDataSegments) {
+		return dropUnreachable(module, ownedDataSegments, List.of()).module();
 	}
 
 	/**
@@ -867,10 +880,15 @@ public final class WasmTreeShaker {
 			List<DroppableDataRange> deadRanges) {
 		List<byte[]> kept = new ArrayList<>();
 		int[] remap = new int[segments.size()];
+		// Asked once per segment, of a runtime holding thousands of them.
+		boolean[] dead = new boolean[segments.size()];
+		for (int i : deadSegments) {
+			dead[i] = true;
+		}
 		for (int i = 0; i < segments.size(); i++) {
 			DataSegment segment = segments.get(i);
 			remap[i] = -1;
-			if (deadSegments.contains(i)) {
+			if (dead[i]) {
 				continue;
 			}
 			List<DroppableDataRange> cuts = new ArrayList<>();

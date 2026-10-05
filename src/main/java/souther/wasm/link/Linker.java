@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.emit.WasmDataCoalescer;
 import souther.wasm.emit.WasmTreeShaker;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.LayoutReader.RawSection;
@@ -77,9 +78,12 @@ public final class Linker {
      */
     public static byte[] link(WasmFragment fragment) {
         // What no export, no start and no table reaches is left out: the runtime carries every
-        // kernel, and a program calls a few of them. Equal bodies are not folded: a linked module
+        // kernel, and a program calls a few of them. With them goes the static data only they
+        // read, which the runtime's linker said of it. Equal bodies are not folded: a linked module
         // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
-        return WasmTreeShaker.withoutWhatNothingReaches(unshaken(fragment));
+        // What data is left is then written as few segments as it needs.
+        return WasmDataCoalescer.coalesced(WasmTreeShaker.withoutWhatNothingReaches(
+                unshaken(fragment), fragment.plan().runtimeData()));
     }
 
     /**
@@ -101,6 +105,10 @@ public final class Linker {
 
         Map<Integer, byte[]> sections = new LinkedHashMap<>();
         for (RawSection section : new LayoutReader(runtime).rawSections()) {
+            // What the runtime's linker said of it is read once, by the plan, and carried no further.
+            if (section.id() == SEC_CUSTOM) {
+                continue;
+            }
             if (sections.putIfAbsent(section.id(), section.payload()) != null) {
                 throw new IllegalArgumentException(
                         "the runtime writes section " + section.id() + " twice, so what it holds is not one vector");

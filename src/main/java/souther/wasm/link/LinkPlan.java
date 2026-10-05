@@ -1,6 +1,9 @@
 package souther.wasm.link;
 
+import java.util.List;
+import org.jspecify.annotations.Nullable;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.emit.WasmTreeShaker.OwnedDataSegment;
 import souther.wasm.link.RuntimeLayout.Export;
 import souther.wasm.link.RuntimeLayout.ExportKind;
 
@@ -42,6 +45,19 @@ public final class LinkPlan {
         }
         return new LinkPlan(runtime, layout);
     }
+
+    /**
+     * The runtime's data segments, each with the runtime functions that read it ({@link RuntimeData}),
+     * read once for every link built on this plan.
+     */
+    public List<OwnedDataSegment> runtimeData() {
+        if (runtimeData == null) {
+            runtimeData = RuntimeData.owners(runtime);
+        }
+        return runtimeData;
+    }
+
+    private @Nullable List<OwnedDataSegment> runtimeData;
 
     /** The runtime module the link builds on. */
     public byte[] runtime() {
