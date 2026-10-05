@@ -242,7 +242,7 @@ unsafe fn byte(held: u8) -> u32 {
 
 /// Reads a day as a calendar writes one, or answers nothing.
 ///
-/// Which text is a day is the grammar Souther shares with Raoh, and 199x-notation reads it. What
+/// Which text is a day is the grammar Souther shares with Raoh, and notation-199x reads it. What
 /// is this runtime's is what it holds: a day is counted in an `i32`, so a day the grammar admits
 /// and that count does not reach is refused here too.
 pub unsafe fn read_day(at: u32, length: u32) -> Option<i32> {
@@ -360,7 +360,7 @@ pub unsafe fn written_moment(cell: u32) -> (u32, u32) {
 
 /// Reads a moment as a timestamp writes one, or answers nothing.
 ///
-/// An offset is a different spelling of the same moment, and 199x-notation reads it as the moment
+/// An offset is a different spelling of the same moment, and notation-199x reads it as the moment
 /// it names. A leap second is not a moment the timeline has, and the grammar refuses it.
 pub unsafe fn read_moment(at: u32, length: u32) -> Option<(i64, i32)> {
     let moment = notation199x::read_instant(notation::str_at(at, length)).ok()?;

@@ -41,11 +41,11 @@
     "compile-tests": "tsc -p tsconfig.runtime.json"
   },
   "devDependencies": {
-    "@raoh/core": "0.9.0-dev.17.20261004233405.g79260ab5b21b",
+    "@raoh/core": "0.9.0",
     "@types/node": "^22.20.5",
     "typescript": "^5.9.0"
   },
   "peerDependencies": {
-    "@raoh/core": "0.9.0-dev.17.20261004233405.g79260ab5b21b"
+    "@raoh/core": "^0.9.0"
   }
 }

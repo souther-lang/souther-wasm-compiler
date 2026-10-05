@@ -49,19 +49,21 @@ that works, for trying a change, and is the one to replace before committing.
 What a string means is not written here. Its order, its length, its case, its canonical form,
 which characters are white space, which text is a day or a moment, and which strings a pattern
 accepts are rules Souther shares with Raoh, and
-[199x-notation](https://github.com/raoh-project/199x-notation) implements them once per language.
-The runtime takes the Rust crate, pinned to a commit in `runtime/Cargo.toml`, and Souther's own
-runtime takes the Java artifact, so the two backends answer from one account. A pattern is the one
-rule that crosses between them: the checker settles what it means, the Java half writes the machine
-that meaning is run as as an image with the Java artifact, and the runtime reads the image back with
-the crate.
+[notation-199x](https://github.com/raoh-project/notation-199x) implements them once per language.
+Souther's own runtime takes the Java artifact, and the runtime here takes the Rust crate at the same
+release, so the two backends answer from one account. A pattern is the one rule that crosses between
+them: the checker settles what it means, the Java half writes the machine that meaning is run as as
+an image with the Java artifact, and the runtime reads the image back with the crate. This build
+takes the Java artifact from souther-compiler and names no version of it, and
+`TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest` holds the crate `runtime/Cargo.lock`
+resolves to the same release.
 
 What an amount or an exact quotient is is not written here either. What a `Decimal` is and what
 each operation on one answers, including the widest whole number one holds, and what a `Rational`
 is — its one form, the four operations, the order and the rounding, none of which builds the power
 of ten a `Decimal`'s scale names — are `souther-exact` in
 [souther-runtime-rs](https://github.com/souther-lang/souther-runtime-rs), which the native backend's
-runtime reads too. The runtime takes it pinned to a commit beside 199x-notation, and what is here is
+runtime reads too. The runtime takes it pinned to a commit in `runtime/Cargo.toml`, and what is here is
 the cell each is kept in, how text is read into a `Decimal`, and what a failure ends the call as.
 
 The crates allocate, and this runtime has no allocator of its own beyond the arena, so the arena is

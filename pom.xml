@@ -33,9 +33,6 @@
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <souther.version>0.3.1-SNAPSHOT</souther.version>
-        <!-- The version souther-compiler is built against: the image a pattern is written as here
-             is read by the Rust implementation of the same library in the runtime. -->
-        <notation199x.version>0.2.0-SNAPSHOT</notation199x.version>
         <jspecify.version>1.0.0</jspecify.version>
         <chicory.version>1.7.5</chicory.version>
         <junit.version>5.14.0</junit.version>
@@ -58,12 +55,12 @@
             <artifactId>souther-compiler</artifactId>
             <version>${souther.version}</version>
         </dependency>
-        <!-- Writes the machine a settled pattern means as the image the runtime reads. -->
-        <dependency>
-            <groupId>net.unit8.199x</groupId>
-            <artifactId>199x-notation</artifactId>
-            <version>${notation199x.version}</version>
-        </dependency>
+        <!-- notation-199x, which writes the machine a settled pattern means as the image the
+             runtime reads, is not declared here: it is the one souther-compiler takes, so the
+             image is written by the version that settled the pattern, and a version stated here as
+             well would win over Souther's without either saying so. The runtime reads the image
+             with the same version of the library's Rust implementation, which
+             TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest holds runtime/Cargo.lock to. -->
         <dependency>
             <groupId>org.jspecify</groupId>
             <artifactId>jspecify</artifactId>
