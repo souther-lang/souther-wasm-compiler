@@ -92,7 +92,7 @@ it("is used from where it is installed, as the README says", async () => {
     private: true,
     // The package asks the project for @raoh/core, as a peer, so the project depends on it itself.
     dependencies: { "@raoh/core": `file:${join(built, BUILT.raoh)}` },
-    // The package names the peer it was built against by its git commit; the archive is that.
+    // The package names the peer it was built against by its version; the archive is that.
     overrides: { "@raoh/core": "$@raoh/core" },
   }));
   await run("npm", ["install", "--offline", "--no-audit", "--no-fund", join(built, BUILT.souther)],
@@ -137,10 +137,8 @@ it("is used from where it is installed, as the README says", async () => {
  *
  * Packing builds the package, as publishing does: what is installed is what would be published.
  * @raoh/core is archived from what this directory installed, so that installing reaches nothing
- * outside this machine: it is depended on from git, which an offline install cannot fetch. Its files
- * are archived as they were installed, built, as the registry would hand them over: npm runs a
- * package's prepare when it packs it or installs it from a directory, and an installed package
- * carries no sources to build from.
+ * outside this machine, which an offline install of it from the registry would have to reach. Its
+ * files are archived as they were installed, as the registry handed them over.
  */
 async function archive(built: string): Promise<void> {
   const packed = (await run("npm", ["pack", "--silent", "--pack-destination", built], { cwd: PACKAGE }))

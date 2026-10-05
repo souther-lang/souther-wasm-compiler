@@ -104,7 +104,7 @@ That takes the page and this package to use one `@raoh/core`: a `Path` the page'
 the model's decoder, and the `Issues` it hands back, are values of one copy of it. So this package
 asks for `@raoh/core` as a peer dependency, which the project depends on itself:
 
-    npm install @souther/wasm @raoh/core
+    npm install --save-exact @souther/wasm @raoh/core@0.9.0-dev.17.20261004233405.g79260ab5b21b
 
 Where a program comes to hold two copies anyway, a value of one met by the other is refused with an
 error saying so, rather than read as something else.
@@ -135,6 +135,7 @@ be published, installs it into a project of its own, and writes, compiles and ru
 also hands what it built there, the archives, the module and the compiled page, to that test run on
 the oldest Node `engines` names, which installs and runs them with nothing of the repository's tools.
 
-Raoh's catalogue is raoh-ts's, which ships the text of raoh-specification's. `@raoh/core` is
-depended on from git at a commit until it is published; `test/installed.test.ts` installs it from
-what this directory installed, so the install reaches nothing outside the machine.
+Raoh's catalogue is raoh-ts's, which ships the text of raoh-specification's. Until raoh-ts has a
+release, `@raoh/core` is asked for as a development version, named exactly, which is one commit of
+raoh-ts and which no range a project writes for releases reaches; `test/installed.test.ts` installs
+it from what this directory installed, so the install reaches nothing outside the machine.
