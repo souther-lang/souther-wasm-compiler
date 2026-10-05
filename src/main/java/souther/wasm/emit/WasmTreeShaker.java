@@ -275,6 +275,98 @@ public final class WasmTreeShaker {
 		return new ShakeResult(cleaned.module(), folded.importedFunctionCount(), remap);
 	}
 
+	/** Why a function is kept: a root the module names, or a body that names it. */
+	public enum Reason {
+		/** The export section names it. */
+		EXPORT,
+		/** The start section names it. */
+		START,
+		/** An element segment puts it in a table, where a {@code call_indirect} may reach it. */
+		TABLE,
+		/** A kept body names it, by a {@code call} or a {@code ref.func}. */
+		CALL
+	}
+
+	/**
+	 * How a kept function was first reached.
+	 *
+	 * @param reason what kept it
+	 * @param predecessor for {@link Reason#CALL}, the kept function whose body named it first,
+	 * on a shortest chain from a root; {@code -1} for a root
+	 */
+	public record Reach(Reason reason, int predecessor) {
+	}
+
+	/**
+	 * How each function of a module is reached, without changing the module: what a shake
+	 * keeps, and for each kept function the root or the body that keeps it. Following
+	 * {@link Reach#predecessor} from a function back to a root gives one shortest chain of
+	 * calls that keeps it.
+	 * @param module a core WASM module
+	 * @return one entry per function in the module's index space, {@code null} for a
+	 * function a shake drops
+	 */
+	public static @Nullable Reach[] reached(byte[] module) {
+		List<Section> sections = WasmSections.parseSections(module);
+		@Nullable Section importSec = WasmSections.find(sections, SEC_IMPORT);
+		@Nullable Section codeSec = WasmSections.find(sections, SEC_CODE);
+		@Nullable Section elementSec = WasmSections.find(sections, SEC_ELEMENT);
+		int numImportedFuncs = 0;
+		for (ImportEntry e : importSec == null ? List.<ImportEntry>of() : WasmSections.parseImports(importSec.payload())) {
+			if (e.kind() == WasmSections.KIND_FUNC) {
+				numImportedFuncs++;
+			}
+		}
+		List<List<Ref>> bodyRefs = new ArrayList<>();
+		for (byte[] entry : codeSec == null ? List.<byte[]>of() : WasmSections.parseCodeEntries(codeSec.payload())) {
+			bodyRefs.add(WasmSections.scanBody(entry, null));
+		}
+		return reach(numImportedFuncs + bodyRefs.size(), numImportedFuncs, WasmSections.find(sections, SEC_EXPORT),
+				WasmSections.find(sections, SEC_START),
+				elementSec == null ? List.of() : WasmSections.parseElements(elementSec.payload()), bodyRefs);
+	}
+
+	// Roots are the exported functions, an optional start function and every function an
+	// element segment places; the rest is what their bodies name, walked breadth first so
+	// that each predecessor lies on a shortest chain from a root.
+	private static @Nullable Reach[] reach(int totalFuncs, int numImportedFuncs, @Nullable Section exportSec,
+			@Nullable Section startSec, List<WasmSections.ElementSegment> elements, List<List<Ref>> bodyRefs) {
+		@Nullable Reach[] reaches = new Reach[totalFuncs];
+		Deque<Integer> work = new ArrayDeque<>();
+		for (int root : exportFuncRoots(exportSec)) {
+			enqueue(reaches, work, root, new Reach(Reason.EXPORT, -1));
+		}
+		if (startSec != null) {
+			int[] p = { 0 };
+			enqueue(reaches, work, WasmSections.readU(startSec.payload(), p), new Reach(Reason.START, -1));
+		}
+		for (WasmSections.ElementSegment segment : elements) {
+			for (int root : segment.functions()) {
+				enqueue(reaches, work, root, new Reach(Reason.TABLE, -1));
+			}
+		}
+		while (!work.isEmpty()) {
+			int fn = work.removeFirst();
+			int defIndex = fn - numImportedFuncs;
+			if (defIndex < 0) {
+				continue; // imported function: no body, no out-edges
+			}
+			for (Ref r : bodyRefs.get(defIndex)) {
+				if (r.kind() == RefKind.FUNC) {
+					enqueue(reaches, work, r.index(), new Reach(Reason.CALL, fn));
+				}
+			}
+		}
+		return reaches;
+	}
+
+	private static void enqueue(@Nullable Reach[] reaches, Deque<Integer> work, int fn, Reach reach) {
+		if (fn >= 0 && fn < reaches.length && reaches[fn] == null) {
+			reaches[fn] = reach;
+			work.addLast(fn);
+		}
+	}
+
 	// The reachability half of the pass; shakeWithRemap then folds duplicate bodies
 	// among the survivors and composes the fold's renumbering into the remap.
 	private static ShakeResult dropUnreachable(byte[] module, List<OwnedDataSegment> ownedDataSegments,
@@ -329,43 +421,10 @@ public final class WasmTreeShaker {
 			bodyConstants.add(constants);
 		}
 
-		// Roots: exported functions plus an optional start function.
+		@Nullable Reach[] reaches = reach(totalFuncs, numImportedFuncs, exportSec, startSec, elements, bodyRefs);
 		boolean[] reachable = new boolean[totalFuncs];
-		Deque<Integer> work = new ArrayDeque<>();
-		for (int root : exportFuncRoots(exportSec)) {
-			if (root >= 0 && root < totalFuncs && !reachable[root]) {
-				reachable[root] = true;
-				work.push(root);
-			}
-		}
-		if (startSec != null) {
-			int[] p = { 0 };
-			int root = WasmSections.readU(startSec.payload(), p);
-			if (root >= 0 && root < totalFuncs && !reachable[root]) {
-				reachable[root] = true;
-				work.push(root);
-			}
-		}
-		for (WasmSections.ElementSegment segment : elements) {
-			for (int root : segment.functions()) {
-				if (root >= 0 && root < totalFuncs && !reachable[root]) {
-					reachable[root] = true;
-					work.push(root);
-				}
-			}
-		}
-		while (!work.isEmpty()) {
-			int fn = work.pop();
-			int defIndex = fn - numImportedFuncs;
-			if (defIndex < 0) {
-				continue; // imported function: no body, no out-edges
-			}
-			for (Ref r : bodyRefs.get(defIndex)) {
-				if (r.kind() == RefKind.FUNC && r.index() >= 0 && r.index() < totalFuncs && !reachable[r.index()]) {
-					reachable[r.index()] = true;
-					work.push(r.index());
-				}
-			}
+		for (int i = 0; i < totalFuncs; i++) {
+			reachable[i] = reaches[i] != null;
 		}
 
 		// Old global function index -> new global function index (kept functions only),

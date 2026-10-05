@@ -75,6 +75,21 @@ public final class Linker {
      * @return the linked module
      */
     public static byte[] link(WasmFragment fragment) {
+        // What no export, no start and no table reaches is left out: the runtime carries every
+        // kernel, and a program calls a few of them. Equal bodies are not folded: a linked module
+        // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
+        return WasmTreeShaker.withoutWhatNothingReaches(unshaken(fragment));
+    }
+
+    /**
+     * What {@link #link} answers before what nothing reaches is left out: every function of the
+     * runtime at the index the runtime gave it, the fragment's after them. For a measurement that
+     * asks what keeps each runtime function, which the shake's renumbering would hide.
+     *
+     * @param fragment the generated definitions, already numbered for the output
+     * @return the linked module, with all of the runtime in it
+     */
+    public static byte[] unshaken(WasmFragment fragment) {
         LinkPlan plan = fragment.plan();
         byte[] runtime = plan.runtime();
         RuntimeLayout layout = plan.layout();
@@ -116,11 +131,7 @@ public final class Linker {
                     layout.dataSegmentCount() + fragment.dataSegments().size()));
         }
 
-        // What no export, no start and no table reaches is left out: the runtime carries every
-        // kernel, and a program calls a few of them. Equal bodies are not folded: a linked module
-        // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
-        return WasmTreeShaker.withoutWhatNothingReaches(
-                assemble(sections, surface(fragment)));
+        return assemble(sections, surface(fragment));
     }
 
     /**

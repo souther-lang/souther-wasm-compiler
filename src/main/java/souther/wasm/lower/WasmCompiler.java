@@ -87,7 +87,18 @@ public final class WasmCompiler {
      * @return the linked module
      */
     public static byte[] compile(CheckedProgram program, byte[] runtime) {
-        return written(program, runtime, false);
+        return Linker.link(written(program, runtime, false));
+    }
+
+    /**
+     * What {@link #compile(CheckedProgram)} answers before what nothing reaches is left out, as
+     * {@link Linker#unshaken} writes it: for a measurement of what keeps each runtime function.
+     *
+     * @param program what a Souther compile checked
+     * @return the linked module, with all of the runtime in it
+     */
+    public static byte[] unshaken(CheckedProgram program) {
+        return Linker.unshaken(written(program, runtimeModule(), false));
     }
 
     /**
@@ -113,7 +124,7 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(written(program, runtime, true), offering(program));
+        return Component.around(Linker.link(written(program, runtime, true)), offering(program));
     }
 
     /**
@@ -223,7 +234,7 @@ public final class WasmCompiler {
         return behaviors;
     }
 
-    private static byte[] written(CheckedProgram program, byte[] runtime, boolean lifted) {
+    private static WasmFragment written(CheckedProgram program, byte[] runtime, boolean lifted) {
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
         Runtime calls = new Runtime(plan);
@@ -342,7 +353,7 @@ public final class WasmCompiler {
             liftable(fragment, calls, program, decodable);
         }
         fragment.offers(Surface.of(program, decodable, reachOut));
-        return Linker.link(fragment);
+        return fragment;
     }
 
     /**
