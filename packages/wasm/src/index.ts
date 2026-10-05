@@ -10,7 +10,7 @@
 import { Decoder, type Path, type Result, failed, parse, stringify } from "@raoh/core";
 import { issuesIn, type Reading } from "./issues.ts";
 import { type Behavior, type Shape, type Surface } from "./surface.ts";
-import { Values } from "./values.ts";
+import { AS_TYPED, type FormPolicy, Values } from "./values.ts";
 
 export { messageOf, messagesFor } from "./issues.ts";
 export type { Reading } from "./issues.ts";
@@ -260,27 +260,38 @@ export class Program {
   /**
    * A type the program publishes, as a Raoh decoder of what a form gives: the same reading as
    * {@link decoder}, of a value whose numbers and yes-or-nos may be the text typed for them. Text
-   * that spells a JSON number where the type has a number is read as that number, `"true"` and
-   * `"false"` where it has a yes or no as those, and an empty string where it has an optional value
-   * as nothing; any other text is handed over as it was typed, and the model says what is wrong
-   * with it at its path. So a page hands over what its boxes hold, and decides nothing about it.
+   * that spells a JSON number where the type has a number is read as that number, and `"true"` and
+   * `"false"` where it has a yes or no as those: what the text spells decides it. Any other text is
+   * handed over as it was typed, the empty string included, and the model says what is wrong with
+   * it at its path. A page that means an empty box to be nothing says so with
+   * {@link FormDecoder.emptyAsNothing}.
    *
    * @param type the type, module and all: `cart.Cart`
    */
-  formDecoder<T = unknown>(type: string): Decoder<T> {
+  formDecoder<T = unknown>(type: string): FormDecoder<T> {
+    return this.#form<T>(type, AS_TYPED);
+  }
+
+  #form<T>(type: string, policy: FormPolicy): FormDecoder<T> {
     const shape = this.#shapeOf(type);
-    return this.#reading<T>(type, (input) => this.#values.typed(shape, input));
+    return new FormDecoder<T>(this.#read<T>(type, (input) => this.#values.typed(shape, input, policy)),
+      (chosen) => this.#form<T>(type, chosen));
   }
 
   #reading<T>(type: string, given: (input: unknown) => unknown): Decoder<T> {
+    return new ModuleDecoder<T>(this.#read<T>(type, given));
+  }
+
+  /** How a value of `type` is read: what `given` makes of it, handed to the module. */
+  #read<T>(type: string, given: (input: unknown) => unknown): (input: unknown) => Reading<T> {
     const number = this.#decodable.get(type);
     if (number === undefined) {
       throw new Error(`${type} is not a type this program offers to read`);
     }
     const shape = this.#shapeOf(type);
-    return new ModuleDecoder<T>((input) =>
+    return (input) =>
       this.#crossed(input === undefined ? null : given(input),
-        (at, length) => this.#held().__souther_decode(number, at, length), shape) as Reading<T>);
+        (at, length) => this.#held().__souther_decode(number, at, length), shape) as Reading<T>;
   }
 
   /** The shape a type the program declares is written as: the type itself, by its module and name. */
@@ -387,5 +398,27 @@ class ModuleDecoder<T> extends Decoder<T> {
   decodeAt(input: unknown, path: Path): Reading<T> {
     const read = this.#read(input);
     return read.issues === undefined ? read : failed(read.issues.under(path));
+  }
+}
+
+/**
+ * A type a module publishes, read as a form gives it, with what a page chooses of how its form is
+ * read beyond what the text spells.
+ */
+export class FormDecoder<T> extends ModuleDecoder<T> {
+  readonly #chosen: (policy: FormPolicy) => FormDecoder<T>;
+
+  constructor(read: (input: unknown) => Reading<T>, chosen: (policy: FormPolicy) => FormDecoder<T>) {
+    super(read);
+    this.#chosen = chosen;
+  }
+
+  /**
+   * The same reading, an empty string where the type has an optional value read as nothing: what
+   * an empty box means to a page that chooses it, where an optional String could otherwise hold the
+   * empty string. An empty box where a value is required is still handed over as it is.
+   */
+  emptyAsNothing(): FormDecoder<T> {
+    return this.#chosen({ emptyAsNothing: true });
   }
 }

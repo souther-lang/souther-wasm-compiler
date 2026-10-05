@@ -46,11 +46,16 @@ and `Decimal.of(3)` make a `Decimal` to hand over, and `decimal.toString()` writ
 ## A form hands over what was typed
 
 Every box of a form holds text. `bound.form.<module>.<Type>` reads a value as a form gives it: text
-that spells a JSON number where the type has an `Int` or a `Decimal` is that number, `"true"` and
-`"false"` where it has a `Bool` are those, and an empty box where the value is optional is nothing.
-Any other text is handed over as it was typed, and the model says what is wrong with it, at its
+that spells a JSON number where the type has an `Int` or a `Decimal` is that number, and `"true"`
+and `"false"` where it has a `Bool` are those. What the text spells decides it, and nothing else:
+any other text is handed over as it was typed, and the model says what is wrong with it, at its
 path, as it says of anything else. Nothing is trimmed, and nothing about what a quantity is or what
-a code looks like is decided in the page:
+a code looks like is decided in the page.
+
+What an empty box means is not something its text says. An optional `String` holds the empty string
+as well as nothing, so an empty box is the empty string unless the page says otherwise:
+`bound.form.<module>.<Type>.emptyAsNothing()` reads an empty box as nothing wherever the type has an
+optional value. An empty box where a value is required is handed over as it is, either way.
 
 ```ts
 const read = cart.form.cart.Cart.decode({ lines: [{ sku: "ABC-1234", quantity: "two", unitPrice: "1500.00" }], member });

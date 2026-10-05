@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { messageOf, type Decimal, type Issue, type Reading } from "@souther/wasm";
+import { messageOf, type Issue, type Reading } from "@souther/wasm";
+import { yen } from "./amount.ts";
 import { load, type Bound, type Membership, type Priced } from "./cart.ts";
 import "./app.css";
 
@@ -25,9 +26,6 @@ const FIELDS = ["sku", "quantity", "unitPrice"] as const;
 
 /** The language a complaint is written in: the reader's, where Raoh's catalog has it. */
 const LOCALE = navigator.language;
-
-/** An amount of yen, grouped, every digit the model worked out shown. */
-const YEN = new Intl.NumberFormat("en", { maximumFractionDigits: 20 });
 
 export default function App() {
   const [bound, setBound] = useState<Bound | Error | null>(null);
@@ -228,9 +226,4 @@ function changed(
   held: string,
 ): readonly Typed[] {
   return lines.map((line, i) => (i === at ? { ...line, [field]: held } : line));
-}
-
-/** An amount as a person reads it: grouped, from its digits rather than from a nearest number. */
-function yen(held: Decimal): string {
-  return `¥${YEN.format(held.toString() as Intl.StringNumericLiteral)}`;
 }

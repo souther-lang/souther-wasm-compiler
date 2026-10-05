@@ -8,15 +8,26 @@
 //
 // A form is the one place a page holds text where the model holds something else: every box is a
 // string. So a value can also be read as a form gives it, text standing where a number or a yes or
-// no is read as the JSON value it spells, and an empty box where nothing may be as nothing. Text
-// that spells no such value is left as it was typed, and the model says what is wrong with it,
-// where it is, as it says of any other value.
+// no is read as the JSON value it spells: what the text is decides it, and nothing else. Text that
+// spells no such value is left as it was typed, and the model says what is wrong with it, where it
+// is, as it says of any other value. What an empty box means is not something the text says: an
+// optional String holds the empty string as well as nothing, so that an empty box is nothing is a
+// page's to choose (FormPolicy), and not read off the type.
 
 import { Decimal, JsonNumber } from "@raoh/core";
 import { type Declaration, type Form, keyOf, type Scalar, type Shape, type Surface, tagOf } from "./surface.ts";
 
 /** A JSON number, as RFC 8259 writes one: what text in a box must be to be read as a number. */
 const NUMBER = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/;
+
+/** What a page chooses of how its form is read, beyond what the text spells. */
+export interface FormPolicy {
+  /** Whether an empty string where the type has an optional value is read as nothing. */
+  readonly emptyAsNothing: boolean;
+}
+
+/** A form read as its text spells it, and as nothing else. */
+export const AS_TYPED: FormPolicy = { emptyAsNothing: false };
 
 /** The types a program's values are, by the declarations its surface names. */
 export class Values {
@@ -56,11 +67,12 @@ export class Values {
 
   /**
    * A value as a form gives it, as the module reads a value of `shape`: a string where a number is
-   * read as the number it spells, a string where a yes or no is read as `true` or `false` where it
-   * is one of those, and an empty string where nothing may be as nothing. Everything else is left
-   * as it was given, for the model to read and to say what is wrong with.
+   * read as the number it spells, and a string where a yes or no is read as `true` or `false` where
+   * it is one of those; and, where `policy` says so, an empty string where the type has an optional
+   * value as nothing. Everything else is left as it was given, for the model to read and to say
+   * what is wrong with.
    */
-  typed(shape: Shape, given: unknown): unknown {
+  typed(shape: Shape, given: unknown, policy: FormPolicy): unknown {
     switch (shape.is) {
       case "scalar":
         if (typeof given === "string") {
@@ -73,18 +85,18 @@ export class Values {
         }
         return given;
       case "declared":
-        return this.#typedDeclared(this.#declaration(shape), given);
+        return this.#typedDeclared(this.#declaration(shape), given, policy);
       case "list":
       case "set":
-        return Array.isArray(given) ? given.map((each) => this.typed(shape.of, each)) : given;
+        return Array.isArray(given) ? given.map((each) => this.typed(shape.of, each, policy)) : given;
       case "map":
         return isRecord(given)
-          ? Object.fromEntries(Object.entries(given).map(([name, each]) => [name, this.typed(shape.value, each)]))
+          ? Object.fromEntries(Object.entries(given).map(([name, each]) => [name, this.typed(shape.value, each, policy)]))
           : given;
       case "option":
-        return given === "" ? null : this.typed(shape.of, given);
+        return policy.emptyAsNothing && given === "" ? null : this.typed(shape.of, given, policy);
       case "union":
-        return this.#typedAlternative(shape.crossing.cases, shape.crossing.form, given);
+        return this.#typedAlternative(shape.crossing.cases, shape.crossing.form, given, policy);
     }
   }
 
@@ -157,33 +169,33 @@ export class Values {
     return into;
   }
 
-  #typedDeclared(declaration: Declaration, given: unknown): unknown {
+  #typedDeclared(declaration: Declaration, given: unknown, policy: FormPolicy): unknown {
     switch (declaration.is) {
       case "product":
-        return this.#typedFields(declaration, given);
+        return this.#typedFields(declaration, given, policy);
       case "newtype":
-        return this.typed(declaration.wraps, given);
+        return this.typed(declaration.wraps, given, policy);
       case "unit":
         return given;
       case "sum":
-        return this.#typedAlternative(declaration.cases, declaration.form, given);
+        return this.#typedAlternative(declaration.cases, declaration.form, given, policy);
     }
   }
 
   /** A product a form gives, each field the form read of it read as the field's type, and any other
    *  member left as it is, for the model to refuse. */
-  #typedFields(declaration: Declaration & { is: "product" }, given: unknown): unknown {
+  #typedFields(declaration: Declaration & { is: "product" }, given: unknown, policy: FormPolicy): unknown {
     if (!isRecord(given)) {
       return given;
     }
     const types = new Map(declaration.fields.map((field) => [field.name, field.type]));
     return Object.fromEntries(Object.entries(given).map(([name, each]) => {
       const type = types.get(name);
-      return [name, type === undefined ? each : this.typed(type, each)];
+      return [name, type === undefined ? each : this.typed(type, each, policy)];
     }));
   }
 
-  #typedAlternative(cases: readonly Shape[], form: Form, given: unknown): unknown {
+  #typedAlternative(cases: readonly Shape[], form: Form, given: unknown, policy: FormPolicy): unknown {
     if (form.is === "enumeration" || !isRecord(given)) {
       return given;
     }
@@ -194,13 +206,13 @@ export class Values {
     if (chosen.is === "declared") {
       const declaration = this.#declaration(chosen);
       if (declaration.is === "product") {
-        return this.#typedFields(declaration, given);
+        return this.#typedFields(declaration, given, policy);
       }
       if (declaration.is === "unit") {
         return given;
       }
     }
-    return { ...given, [form.contents]: this.typed(chosen, given[form.contents]) };
+    return { ...given, [form.contents]: this.typed(chosen, given[form.contents], policy) };
   }
 
   #members(written: unknown): Map<string, unknown> {

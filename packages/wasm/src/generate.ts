@@ -141,12 +141,12 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
     out.push("    };");
   }
   out.push("  };");
-  for (const reading of ["decode", "form"]) {
+  for (const [reading, decoderType] of [["decode", "Decoder"], ["form", "FormDecoder"]]) {
     out.push(`  readonly ${reading}: {`);
     for (const [module, declarations] of decodable) {
       out.push(`    readonly ${property(module)}: {`);
       for (const declaration of declarations) {
-        out.push(`      readonly ${property(declaration.name)}: ${R}.Decoder<${names.get(key(declaration))}>;`);
+        out.push(`      readonly ${property(declaration.name)}: ${R}.${decoderType}<${names.get(key(declaration))}>;`);
       }
       out.push("    };");
     }

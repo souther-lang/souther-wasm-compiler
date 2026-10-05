@@ -219,7 +219,7 @@ export async function tiny(bytes: Uint8Array): Promise<string> {
   // What a form gives is text in every box. Read as a form gives it, text that spells the number,
   // the yes or no, or the nothing the type has there is read as that, and any other text is handed
   // over as typed, for the model to say what is wrong with it where it is.
-  it("reads what a form gives as the type it is to be, and leaves the rest to the model", async () => {
+  it("reads what a form gives as the text spells it, and leaves the rest to the model and the page", async () => {
     const { at, bytes } = await generated(MODEL, `import { load } from "./binding.ts";
 
 export async function typed(bytes: Uint8Array): Promise<unknown[]> {
@@ -227,6 +227,8 @@ export async function typed(bytes: Uint8Array): Promise<unknown[]> {
   const form = shop.form.shop;
   return [
     form.Line.decode({ sku: "ABC-1234", quantity: "2", note: "" }).value,
+    form.Line.emptyAsNothing().decode({ sku: "ABC-1234", quantity: "2", note: "" }).value,
+    form.Line.emptyAsNothing().decode({ sku: "ABC-1234", quantity: "" }).issues?.list.map((issue) => [issue.path.toString(), issue.code]),
     form.Line.decode({ sku: "ABC-1234", quantity: "2", note: "gift" }).value,
     form.Priced.decode({ total: "1.50" }).value?.total.toString(),
     form.Line.decode({ sku: "ABC-1234", quantity: 3n }).value,
@@ -240,7 +242,12 @@ export async function typed(bytes: Uint8Array): Promise<unknown[]> {
     assert.equal(await checked(at), "");
     const page = await import(join(at, "page.ts"));
     assert.deepEqual(await page.typed(bytes), [
+      // An optional String holds the empty string, and an empty box is that unless the page says
+      // otherwise.
+      { sku: "ABC-1234", quantity: 2n, note: "" },
       { sku: "ABC-1234", quantity: 2n },
+      // An empty box where a value is required is handed over as it is, whatever the page chose.
+      [["/quantity", "type_mismatch"]],
       { sku: "ABC-1234", quantity: 2n, note: "gift" },
       // The model writes a Decimal in the fewest places that hold it.
       "1.5",

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Decimal, field, object, string } from "@raoh/core";
 import { load as loadModule, messageOf, READS } from "@souther/wasm";
+import { yen } from "./src/amount.ts";
 import { load, type Cart } from "./src/cart.ts";
 
 const bound = await load(readFileSync("public/cart.wasm"));
@@ -162,6 +163,16 @@ same("a Decimal written with a power of ten",
     lines: [{ sku: "ABC-1234", quantity: 1n, unitPrice: Decimal.parse("1.5e3")! }], member: "Standard",
   }),
   Decimal.of(1500));
+
+// What the page shows of an amount is every digit the Decimal holds, its whole part grouped: past
+// the places and the powers of ten a number formatter takes, nothing is rounded or dropped.
+same("an amount, shown",
+  ["1234567.89", "1.1234567890123456789012345", "1E+1000", "1E-1000", "-0.001", "1000", "999"]
+    .map((written) => yen(Decimal.parse(written)!)),
+  ["¥1,234,567.89", "¥1.1234567890123456789012345", "¥1E+1000", "¥1E-1000", "¥-0.001", "¥1,000", "¥999"]);
+same("the amount the model answered, shown",
+  yen(subtotal({ lines: [{ sku: "ABC-1234", quantity: 1n, unitPrice: Decimal.parse(wide)! }], member: "Standard" }) as Decimal),
+  "¥12,345,678,901,234,567,890.12345");
 
 // Everything a call made goes back when it is over. What is left standing after many calls is what
 // says the reset ran — a caller that never gave the arena back would leave it climbing.
