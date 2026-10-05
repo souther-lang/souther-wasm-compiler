@@ -38,6 +38,7 @@ public final class Compiled {
     private static final Recent<List<String>, CheckedProgram> PROGRAMS = new Recent<>(KEPT);
     private static final Recent<CheckedProgram, byte[]> MODULES = new Recent<>(KEPT);
     private static final Recent<CheckedProgram, byte[]> COMPONENTS = new Recent<>(KEPT);
+    private static final Recent<CheckedProgram, byte[]> UNSHAKEN = new Recent<>(KEPT);
 
     private Compiled() {
     }
@@ -62,6 +63,11 @@ public final class Compiled {
     /** {@code WasmCompiler.compile(program)}, written once for each program. */
     public static byte[] module(CheckedProgram program) {
         return MODULES.of(program, kept -> kept, WasmCompiler::compile).clone();
+    }
+
+    /** {@code WasmCompiler.unshaken(program)}, written once for each program. */
+    public static byte[] unshaken(CheckedProgram program) {
+        return UNSHAKEN.of(program, kept -> kept, WasmCompiler::unshaken).clone();
     }
 
     /** {@code WasmCompiler.compileAsComponent(program)}, written once for each program. */

@@ -16,7 +16,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.link.LinkPlan;
+import souther.wasm.link.Linker;
 import souther.wasm.link.RuntimeLayout;
+import souther.wasm.link.WasmFragment;
 
 /**
  * A module of this project's, instantiated and callable.
@@ -30,8 +33,49 @@ public final class Running {
     private final byte[] module;
 
     private Running(Instance instance, byte[] module) {
+        this(instance, module, java.util.Map.of());
+    }
+
+    private Running(Instance instance, byte[] module, java.util.Map<String, Integer> slots) {
         this.instance = instance;
         this.module = module;
+        this.slots = slots;
+    }
+
+    /** The slot each function {@link #runtimeWithSlots} was asked to put in the table went to. */
+    private final java.util.Map<String, Integer> slots;
+
+    /**
+     * The runtime with the functions named put in its table and everything it exports shown, for
+     * a test that writes a descriptor by hand and has to name what orders a value of it: a
+     * descriptor names what reads, writes and orders one by the slot of each, and the runtime on its
+     * own has no slot to name. Linked as a program would be, with nothing of a program in it.
+     *
+     * @param functions what the runtime exports under those names, each put in a slot
+     */
+    public static Running runtimeWithSlots(String... functions) {
+        LinkPlan plan = LinkPlan.reading(runtimeModule());
+        WasmFragment fragment = new WasmFragment(plan);
+        java.util.Map<String, Integer> slots = new java.util.HashMap<>();
+        for (String function : functions) {
+            slots.put(function, fragment.slot(plan.functionIndexOf(function)));
+        }
+        plan.layout().exports().forEach((name, export) -> {
+            if (export.kind() == RuntimeLayout.ExportKind.FUNCTION && !RuntimeAbi.HOST_EXPORTS.contains(name)) {
+                fragment.export(name, export.index());
+            }
+        });
+        byte[] module = Linker.unshaken(fragment);
+        return new Running(instantiate(module), module, java.util.Map.copyOf(slots));
+    }
+
+    /** The slot a function {@link #runtimeWithSlots} put in the table went to. */
+    public int slotOf(String function) {
+        Integer slot = slots.get(function);
+        if (slot == null) {
+            throw new IllegalArgumentException(function + " was not put in a slot");
+        }
+        return slot;
     }
 
     /**
@@ -115,7 +159,8 @@ public final class Running {
     }
 
     private static Running placed(Running running) {
-        running.call(RuntimeAbi.RUNTIME_INIT, RuntimeLayout.of(running.module).heapBase(running.module));
+        running.instance.export(RuntimeAbi.RUNTIME_INIT)
+                .apply(RuntimeLayout.of(running.module).heapBase(running.module), 0);
         return running;
     }
 

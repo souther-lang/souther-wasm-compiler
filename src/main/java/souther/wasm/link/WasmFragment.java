@@ -284,6 +284,23 @@ public final class WasmFragment {
         return staticTop;
     }
 
+    /**
+     * Says where the program's descriptors of the primitives are, which the start thunk hands the
+     * runtime ({@link souther.wasm.abi.RuntimeAbi#RUNTIME_INIT}).
+     *
+     * @param table one four-byte address per primitive, in the order the runtime reads them
+     */
+    public void primitives(int table) {
+        primitives = table;
+    }
+
+    /** Where the program's descriptors of the primitives are, or nothing where none was said. */
+    int primitives() {
+        return primitives;
+    }
+
+    private int primitives;
+
     List<byte[]> typeEntries() {
         return List.copyOf(types);
     }

@@ -87,7 +87,18 @@ public final class WasmCompiler {
      * @return the linked module
      */
     public static byte[] compile(CheckedProgram program, byte[] runtime) {
-        return written(program, runtime, false);
+        return Linker.link(written(program, runtime, false));
+    }
+
+    /**
+     * What {@link #compile(CheckedProgram)} answers before what nothing reaches is left out, as
+     * {@link Linker#unshaken} writes it: for a measurement of what keeps each runtime function.
+     *
+     * @param program what a Souther compile checked
+     * @return the linked module, with all of the runtime in it
+     */
+    public static byte[] unshaken(CheckedProgram program) {
+        return Linker.unshaken(written(program, runtimeModule(), false));
     }
 
     /**
@@ -113,7 +124,7 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(written(program, runtime, true), offering(program));
+        return Component.around(Linker.link(written(program, runtime, true)), offering(program));
     }
 
     /**
@@ -223,7 +234,7 @@ public final class WasmCompiler {
         return behaviors;
     }
 
-    private static byte[] written(CheckedProgram program, byte[] runtime, boolean lifted) {
+    private static WasmFragment written(CheckedProgram program, byte[] runtime, boolean lifted) {
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
         Runtime calls = new Runtime(plan);
@@ -319,7 +330,8 @@ public final class WasmCompiler {
         ByteArrayOutputStream descriptors = new ByteArrayOutputStream();
         WasmWriter writing = new WasmWriter(descriptors);
         for (TypeSymbol.AtModule each : decodable) {
-            writing.writeLittleEndian4(shapes.ofDeclared(each));
+            // Each is read from what a caller wrote and written back as the answer.
+            writing.writeLittleEndian4(shapes.toWrite(shapes.toRead(shapes.ofDeclared(each))));
         }
         int table = decodable.isEmpty() ? 0 : fragment.place(descriptors.toByteArray());
         fragment.export(DECODE, fragment.define(
@@ -342,7 +354,10 @@ public final class WasmCompiler {
             liftable(fragment, calls, program, decodable);
         }
         fragment.offers(Surface.of(program, decodable, reachOut));
-        return Linker.link(fragment);
+        // Last of all, once nothing more is described: what each descriptor's reader, writer and
+        // order are follows from everything asked of every type.
+        shapes.finish();
+        return fragment;
     }
 
     /**
@@ -819,7 +834,7 @@ public final class WasmCompiler {
             for (int i = 0; i < takes.size(); i++) {
                 out.localGet(document)
                         .localGet(i)
-                        .constant(shapes.of(takes.get(i)))
+                        .constant(shapes.toWrite(shapes.of(takes.get(i))))
                         .call(calls.of(RuntimeAbi.WRITE_ARGUMENT));
             }
             out.localGet(document).call(calls.of(RuntimeAbi.SEAL_ARGUMENTS)).localSet(document);
@@ -835,7 +850,7 @@ public final class WasmCompiler {
             out.localGet(written).wrap()
                     .localGet(written).shiftRight(32).wrap()
                     .call(calls.of(RuntimeAbi.JSON_PARSE))
-                    .constant(shapes.of(crossing.behavior().signature().answers()))
+                    .constant(shapes.toRead(shapes.of(crossing.behavior().signature().answers())))
                     .constant(0)
                     .constant(0)
                     .call(calls.of(RuntimeAbi.READ));
@@ -911,7 +926,7 @@ public final class WasmCompiler {
                 out.localGet(document)
                         .constant(i)
                         .call(calls.of(RuntimeAbi.ARGUMENT))
-                        .constant(shapes.of(takes.get(i)))
+                        .constant(shapes.toRead(shapes.of(takes.get(i))))
                         .constant(fragment.intern(path))
                         .constant(path.length)
                         .call(calls.of(RuntimeAbi.READ))
@@ -929,7 +944,7 @@ public final class WasmCompiler {
                 out.localGet(read[i]);
             }
             out.call(declaration)
-                    .constant(shapes.of(behavior.signature().answers()))
+                    .constant(shapes.toWrite(shapes.of(behavior.signature().answers())))
                     .call(calls.of(RuntimeAbi.WRITE))
                     .localSet(packed)
                     .end();
@@ -1533,7 +1548,7 @@ public final class WasmCompiler {
             // backend lacks — the same distinction `recognised` draws for String.matches's pattern.
             Core.KernelFact.OrderingSubject settled = (Core.KernelFact.OrderingSubject) factOf(call);
             souther.compiler.types.Type as = shapes.orderedAs(settled.type(), settled.ordering());
-            out.constant(shapes.namesWornBy(settled.type())).constant(shapes.of(as));
+            out.constant(shapes.namesWornBy(settled.type())).constant(shapes.toOrder(shapes.of(as)));
         }
 
         /**
@@ -2010,7 +2025,7 @@ public final class WasmCompiler {
         /** Compares the two values on the stack as values of {@code in}. */
         private void ordered(BodyWriter out, souther.compiler.types.Type in,
                 BodyWriter.Comparison how) {
-            out.constant(shapes.of(in))
+            out.constant(shapes.toOrder(shapes.of(in)))
                     .call(calls.of(RuntimeAbi.COMPARE))
                     .constant(0)
                     .compares(how);

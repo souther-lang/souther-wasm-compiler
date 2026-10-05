@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.emit.WasmDataCoalescer;
 import souther.wasm.emit.WasmTreeShaker;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.LayoutReader.RawSection;
@@ -23,7 +24,8 @@ import souther.wasm.link.WasmFragment.Segment;
  *
  * <p>The thunk exists because a start function takes and answers nothing, while the runtime has to
  * be told where its arena begins — a number that is not settled until the last segment is placed.
- * So the thunk pushes that number and calls {@link RuntimeAbi#RUNTIME_INIT}. Where the runtime
+ * So the thunk pushes that number, and where the program's descriptors of the primitives are, and
+ * calls {@link RuntimeAbi#RUNTIME_INIT}. Where the runtime
  * claimed the start slot itself, the thunk calls that first: a module has one start, and what the
  * runtime meant to run before anything else still has to run before anything else.
  *
@@ -75,15 +77,42 @@ public final class Linker {
      * @return the linked module
      */
     public static byte[] link(WasmFragment fragment) {
+        // What no export, no start and no table reaches is left out: the runtime carries every
+        // kernel, and a program calls a few of them. With them goes the static data only they
+        // read, which the runtime's linker said of it. Equal bodies are not folded: a linked module
+        // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
+        // What data is left is then written as few segments as it needs.
+        return WasmDataCoalescer.coalesced(WasmTreeShaker.withoutWhatNothingReaches(
+                unshaken(fragment), fragment.plan().runtimeData()));
+    }
+
+    /**
+     * What {@link #link} answers before what nothing reaches is left out: every function of the
+     * runtime at the index the runtime gave it, the fragment's after them. For a measurement that
+     * asks what keeps each runtime function, which the shake's renumbering would hide.
+     *
+     * @param fragment the generated definitions, already numbered for the output
+     * @return the linked module, with all of the runtime in it
+     */
+    public static byte[] unshaken(WasmFragment fragment) {
         LinkPlan plan = fragment.plan();
         byte[] runtime = plan.runtime();
         RuntimeLayout layout = plan.layout();
 
         int thunkType = fragment.functionType(List.of(), List.of());
-        int thunk = fragment.define(thunkType, startThunkBody(plan, layout, fragment.staticEnd()));
+        int thunk = fragment.define(thunkType,
+                startThunkBody(plan, layout, fragment.staticEnd(), fragment.primitives()));
 
         Map<Integer, byte[]> sections = new LinkedHashMap<>();
-        for (RawSection section : new LayoutReader(runtime).rawSections()) {
+        List<RawSection> raw = new LayoutReader(runtime).rawSections();
+        List<byte[]> custom = new ArrayList<>();
+        for (RawSection section : raw) {
+            if (section.id() == SEC_CUSTOM) {
+                if (carried(section.payload(), raw)) {
+                    custom.add(section.payload());
+                }
+                continue;
+            }
             if (sections.putIfAbsent(section.id(), section.payload()) != null) {
                 throw new IllegalArgumentException(
                         "the runtime writes section " + section.id() + " twice, so what it holds is not one vector");
@@ -116,11 +145,7 @@ public final class Linker {
                     layout.dataSegmentCount() + fragment.dataSegments().size()));
         }
 
-        // What no export, no start and no table reaches is left out: the runtime carries every
-        // kernel, and a program calls a few of them. Equal bodies are not folded: a linked module
-        // has about one pair of them, seven bytes, and looking cost as much as the rest of the link.
-        return WasmTreeShaker.withoutWhatNothingReaches(
-                assemble(sections, surface(fragment)));
+        return assemble(sections, custom, surface(fragment));
     }
 
     /**
@@ -208,7 +233,8 @@ public final class Linker {
      * <p>Nothing but what has to run before the first call: whatever the runtime already started
      * with, and then the arena's placement.
      */
-    private static byte[] startThunkBody(LinkPlan plan, RuntimeLayout layout, int staticEnd) {
+    private static byte[] startThunkBody(LinkPlan plan, RuntimeLayout layout, int staticEnd,
+            int primitives) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(body);
         writer.writeUnsignedLeb128(0); // no locals
@@ -217,6 +243,8 @@ public final class Linker {
                 .writeUnsignedLeb128(existing));
         writer.write((byte) OPCODE_I32_CONST)
                 .writeSignedLeb128(staticEnd)
+                .write((byte) OPCODE_I32_CONST)
+                .writeSignedLeb128(primitives)
                 .write((byte) OPCODE_CALL)
                 .writeUnsignedLeb128(plan.functionIndexOf(RuntimeAbi.RUNTIME_INIT))
                 .write((byte) OPCODE_END);
@@ -382,7 +410,7 @@ public final class Linker {
         return out.toByteArray();
     }
 
-    private static byte[] assemble(Map<Integer, byte[]> sections, byte[] surface) {
+    private static byte[] assemble(Map<Integer, byte[]> sections, List<byte[]> custom, byte[] surface) {
         ByteArrayOutputStream module = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(module);
         writer.write(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
@@ -393,10 +421,38 @@ public final class Linker {
             }
             writer.write((byte) id).writeUnsignedLeb128(payload.length).write(payload);
         }
+        for (byte[] payload : custom) {
+            writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(payload.length).write(payload);
+        }
         if (surface.length > 0) {
             writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(surface.length).write(surface);
         }
         return module.toByteArray();
+    }
+
+    /**
+     * The runtime's custom sections a link carries into the module: those known to name no
+     * function, type, segment or address, and so to say of the module what they said of the
+     * runtime. The link leaves out and renumbers functions and leaves out data, so a custom section
+     * naming any is no longer true of what it is carried into, and one this does not know may name
+     * any; what the runtime's linker said of it ({@code linking}, {@code reloc.*}) is read once by
+     * the plan and speaks of the runtime alone.
+     */
+    private static final java.util.Set<String> CARRIED = java.util.Set.of("producers", "target_features");
+
+    /**
+     * Whether a custom section of the runtime is carried: one of {@link #CARRIED}, and not one the
+     * runtime's linker wrote relocations for, which would be what it names.
+     */
+    private static boolean carried(byte[] custom, List<RawSection> runtime) {
+        String name = customName(custom);
+        return CARRIED.contains(name) && runtime.stream()
+                .noneMatch(each -> each.id() == SEC_CUSTOM && customName(each.payload()).equals("reloc." + name));
+    }
+
+    private static String customName(byte[] custom) {
+        Reading reading = new Reading(custom);
+        return new String(reading.bytes(reading.unsigned()), StandardCharsets.UTF_8);
     }
 
     /** A section carrying no code, whose meaning is its name. */

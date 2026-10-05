@@ -4,9 +4,12 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.ToIntFunction;
 import souther.compiler.core.Core;
 import souther.compiler.core.ValueShape;
@@ -33,6 +36,13 @@ import souther.wasm.link.WasmFragment;
  * <p>Placing one is what discovers what this backend cannot write yet, so the refusals live here:
  * met while the type is being described rather than while a body is being emitted, which is where
  * the question is actually asked.
+ *
+ * <p>Before each descriptor, sixteen bytes name what reads, writes and orders a value of its type
+ * ({@link RuntimeAbi.Operations}), each only where the program asks it of the type: a descriptor
+ * is not a reader, a writer and an order, and a slot names a function the module then carries. What
+ * is asked is said as it is asked ({@link #toRead}, {@link #toWrite}, {@link #toOrder}) and settled
+ * once everything has been described ({@link #finish}), because asking one thing of a type asks
+ * things of the types it is made of, and of types described after it.
  */
 final class Descriptors {
 
@@ -78,6 +88,22 @@ final class Descriptors {
     private final Map<TypeSymbol.LanguageCase, Integer> languageCases = new HashMap<>();
 
     private final ToIntFunction<TypeSymbol.AtModule> checks;
+
+    /** Every descriptor placed, by its address: its kind, where its operations go, its members. */
+    private final Map<Integer, Described> described = new LinkedHashMap<>();
+
+    /** The descriptors whose values the program reads from a document. */
+    private final Set<Integer> reads = new HashSet<>();
+    /** The descriptors whose values the program writes into a document. */
+    private final Set<Integer> writes = new HashSet<>();
+    /** The descriptors whose values the program places among a set's members. */
+    private final Set<Integer> orders = new HashSet<>();
+
+    /**
+     * The newtypes over a list one of whose clauses is that the list holds no value twice, by the
+     * descriptor of the list: reading one finds what it holds twice, by ordering and writing it.
+     */
+    private final Map<Integer, Integer> unique = new HashMap<>();
 
     /** Where each pattern's machine is placed, for a clause and a body alike. */
     private final Patterns patterns;
@@ -367,7 +393,7 @@ final class Descriptors {
                 .writeLittleEndian4(0)
                 .writeLittleEndian4(0)
                 .writeLittleEndian4(member);
-        return fragment.place(table.toByteArray());
+        return placed(kind, table.toByteArray(), member);
     }
 
     /** A descriptor for a type with two unnamed members: a map's keys and its values. */
@@ -380,13 +406,47 @@ final class Descriptors {
                 .writeLittleEndian4(2)
                 .writeLittleEndian4(0).writeLittleEndian4(0).writeLittleEndian4(keys)
                 .writeLittleEndian4(0).writeLittleEndian4(0).writeLittleEndian4(values);
-        return fragment.place(table.toByteArray());
+        return placed(kind, table.toByteArray(), keys, values);
     }
 
     private int scalar(int kind) {
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         new WasmWriter(table).writeLittleEndian4(kind);
-        return fragment.place(table.toByteArray());
+        return placed(kind, table.toByteArray());
+    }
+
+    /**
+     * Places a descriptor settled as it is written, after the sixteen bytes that will name its
+     * operations.
+     */
+    private int placed(int kind, byte[] descriptor, int... members) {
+        int operations = fragment.reserve(OPERATIONS);
+        int at = fragment.place(descriptor);
+        described.put(at, new Described(kind, operations, at, members));
+        return at;
+    }
+
+    /** How many bytes before a descriptor name its operations: a reader, a writer, an order. */
+    private static final int OPERATIONS = 16;
+
+    /**
+     * A descriptor placed: its kind, where its operations go, and the descriptors of what it is made
+     * of, which a composite learns after it is placed.
+     */
+    private static final class Described {
+        final int kind;
+        final int operations;
+        int[] members;
+
+        Described(int kind, int operations, int at, int[] members) {
+            if (at != operations + OPERATIONS) {
+                throw new IllegalStateException("a descriptor at " + at
+                        + " is not where its operations end, " + (operations + OPERATIONS));
+            }
+            this.kind = kind;
+            this.operations = operations;
+            this.members = members;
+        }
     }
 
     /**
@@ -406,7 +466,7 @@ final class Descriptors {
                 .writeLittleEndian4(0)
                 .writeLittleEndian4(fragment.intern(own))
                 .writeLittleEndian4(own.length);
-        return fragment.place(table.toByteArray());
+        return placed(KIND_UNIT, table.toByteArray());
     }
 
     /**
@@ -420,7 +480,7 @@ final class Descriptors {
         int order = fragment.slot(fragment.plan().functionIndexOf(RuntimeAbi.RATIONAL_ORDER));
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         new WasmWriter(table).writeLittleEndian4(KIND_RATIONAL).writeLittleEndian4(order);
-        return fragment.place(table.toByteArray());
+        return placed(KIND_RATIONAL, table.toByteArray());
     }
 
     /**
@@ -456,8 +516,10 @@ final class Descriptors {
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members, int after) {
         // A form a value is built out of carries its own name and the slot of what checks it,
         // after its fields.
+        int operations = fragment.reserve(OPERATIONS);
         int descriptor = fragment.reserve(4 + 4 + 12 * members + (carriesRules(kind) ? 16 : 0)
                 + 4 * after);
+        described.put(descriptor, new Described(kind, operations, descriptor, new int[0]));
         if (name != null) {
             byName.put(name, descriptor);
         }
@@ -487,7 +549,192 @@ final class Descriptors {
             out.writeLittleEndian4(word);
         }
         fragment.fill(descriptor, table.toByteArray());
+        described.get(descriptor).members = written.stream().mapToInt(member -> member[2]).toArray();
+        if (kind == KIND_NEWTYPE && holdsNoValueTwice(invariantsOf(name))) {
+            unique.put(descriptor, written.getFirst()[2]);
+        }
         return descriptor;
+    }
+
+    /** Whether a clause of a newtype says the list it is a name for holds no value twice. */
+    private static boolean holdsNoValueTwice(List<ValueShape.Invariant> invariants) {
+        return invariants.stream().flatMap(each -> each.projection().constraints().stream())
+                .anyMatch(each -> each instanceof souther.compiler.core.BoundaryConstraint.Unique);
+    }
+
+    /** Says the program reads values of {@code descriptor}'s type from a document. */
+    int toRead(int descriptor) {
+        reads.add(descriptor);
+        return descriptor;
+    }
+
+    /** Says the program writes values of {@code descriptor}'s type into a document. */
+    int toWrite(int descriptor) {
+        writes.add(descriptor);
+        return descriptor;
+    }
+
+    /** Says the program places values of {@code descriptor}'s type among others. */
+    int toOrder(int descriptor) {
+        orders.add(descriptor);
+        return descriptor;
+    }
+
+    /**
+     * Names in every descriptor what reads, writes and orders a value of its type, where the program
+     * asks that, and places the program's descriptors of the primitives for the runtime.
+     *
+     * <p>What is asked of a type is asked of what it is made of: a list read is its elements read.
+     * And some things are asked by others. A set and a map are held in the order of their members
+     * and their keys, whatever the program asks of them. A newtype whose list holds no value twice
+     * finds what it holds twice by ordering and writing it. And a value a model declared is ordered
+     * as what it was made as, read off the value, which may be a case of a set of alternatives the
+     * descriptor that reached it does not list: so where any is ordered, every case of every set of
+     * alternatives is.
+     *
+     * <p>Called once, after the last descriptor is described.
+     */
+    void finish() {
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Map.Entry<Integer, Described> each : described.entrySet()) {
+                int at = each.getKey();
+                Described held = each.getValue();
+                if (held.kind == KIND_SET || held.kind == KIND_MAP) {
+                    changed |= orders.add(held.members[0]);
+                }
+                if (reads.contains(at) && unique.containsKey(at)) {
+                    int element = described.get(unique.get(at)).members[0];
+                    changed |= orders.add(element) | writes.add(element);
+                }
+                for (Set<Integer> asked : List.of(reads, writes, orders)) {
+                    if (asked.contains(at)) {
+                        for (int member : held.members) {
+                            changed |= asked.add(member);
+                        }
+                    }
+                }
+            }
+            if (orders.stream().anyMatch(at -> declaresAValue(described.get(at).kind))) {
+                for (Described held : described.values()) {
+                    if (held.kind == KIND_SUM || held.kind == KIND_ENUMERATION) {
+                        for (int member : held.members) {
+                            changed |= orders.add(member);
+                        }
+                    }
+                }
+            }
+        }
+        for (Map.Entry<Integer, Described> each : described.entrySet()) {
+            int at = each.getKey();
+            int kind = each.getValue().kind;
+            ByteArrayOutputStream operations = new ByteArrayOutputStream();
+            new WasmWriter(operations)
+                    .writeLittleEndian4(reads.contains(at) ? slotOf(readerOf(kind)) : 0)
+                    .writeLittleEndian4(writes.contains(at) ? slotOf(writerOf(kind)) : 0)
+                    .writeLittleEndian4(orders.contains(at) ? slotOf(ordererOf(kind)) : 0)
+                    .writeLittleEndian4(0);
+            fragment.fill(each.getValue().operations, operations.toByteArray());
+        }
+        primitives();
+    }
+
+    /** Whether a kind is of a value a model declared, which is ordered as what it was made as. */
+    private static boolean declaresAValue(int kind) {
+        return kind == KIND_UNIT || kind == KIND_PRODUCT || kind == KIND_SUM
+                || kind == KIND_ENUMERATION;
+    }
+
+    /**
+     * Places where the program's descriptor of each primitive is, in the order the runtime reads
+     * them, for a value of one asked what it is: nothing where the program holds none, and no table
+     * at all where it holds none of them.
+     */
+    private void primitives() {
+        List<Type> order = List.of(Type.Prim.INT, Type.Prim.BOOL, Type.Prim.STRING,
+                Type.Prim.DECIMAL, Type.Prim.RATIONAL, Type.Prim.DATE, Type.Prim.TIME,
+                Type.Prim.DATETIME, Type.Prim.INSTANT);
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        WasmWriter out = new WasmWriter(table);
+        boolean any = false;
+        for (Type primitive : order) {
+            Integer held = placed.get(primitive);
+            any |= held != null;
+            out.writeLittleEndian4(held == null ? 0 : held);
+        }
+        if (any) {
+            fragment.primitives(fragment.place(table.toByteArray()));
+        }
+    }
+
+    private int slotOf(String function) {
+        return function == null ? 0 : fragment.slot(fragment.plan().functionIndexOf(function));
+    }
+
+    /** What reads a value of a kind, or nothing for a kind nothing reads. */
+    private static String readerOf(int kind) {
+        return switch (kind) {
+            case KIND_INT -> RuntimeAbi.Operations.READ_INT;
+            case KIND_BOOL -> RuntimeAbi.Operations.READ_BOOL;
+            case KIND_STRING -> RuntimeAbi.Operations.READ_STRING;
+            case KIND_DECIMAL -> RuntimeAbi.Operations.READ_DECIMAL;
+            case KIND_DATE, KIND_TIME, KIND_DATE_TIME, KIND_INSTANT ->
+                    RuntimeAbi.Operations.READ_TEMPORAL;
+            case KIND_UNIT -> RuntimeAbi.Operations.READ_UNIT;
+            case KIND_PRODUCT -> RuntimeAbi.Operations.READ_PRODUCT;
+            case KIND_NEWTYPE -> RuntimeAbi.Operations.READ_NEWTYPE;
+            case KIND_SUM -> RuntimeAbi.Operations.READ_SUM;
+            case KIND_ENUMERATION -> RuntimeAbi.Operations.READ_ENUMERATION;
+            case KIND_LIST -> RuntimeAbi.Operations.READ_LIST;
+            case KIND_SET -> RuntimeAbi.Operations.READ_SET;
+            case KIND_MAP -> RuntimeAbi.Operations.READ_MAP;
+            case KIND_OPTION -> RuntimeAbi.Operations.READ_OPTION;
+            default -> null;
+        };
+    }
+
+    /** What writes a value of a kind, or nothing for a kind nothing writes. */
+    private static String writerOf(int kind) {
+        return switch (kind) {
+            case KIND_INT -> RuntimeAbi.Operations.WRITE_INT;
+            case KIND_BOOL -> RuntimeAbi.Operations.WRITE_BOOL;
+            case KIND_STRING -> RuntimeAbi.Operations.WRITE_STRING;
+            case KIND_DECIMAL -> RuntimeAbi.Operations.WRITE_DECIMAL;
+            case KIND_DATE, KIND_TIME, KIND_DATE_TIME, KIND_INSTANT ->
+                    RuntimeAbi.Operations.WRITE_TEMPORAL;
+            case KIND_UNIT -> RuntimeAbi.Operations.WRITE_UNIT;
+            case KIND_PRODUCT -> RuntimeAbi.Operations.WRITE_PRODUCT;
+            case KIND_NEWTYPE -> RuntimeAbi.Operations.WRITE_NEWTYPE;
+            case KIND_SUM -> RuntimeAbi.Operations.WRITE_SUM;
+            case KIND_ENUMERATION -> RuntimeAbi.Operations.WRITE_ENUMERATION;
+            case KIND_LIST -> RuntimeAbi.Operations.WRITE_LIST;
+            case KIND_SET -> RuntimeAbi.Operations.WRITE_SET;
+            case KIND_MAP -> RuntimeAbi.Operations.WRITE_MAP;
+            case KIND_OPTION -> RuntimeAbi.Operations.WRITE_OPTION;
+            default -> null;
+        };
+    }
+
+    /** What orders two values of a kind, or nothing for a kind no value is of. */
+    private static String ordererOf(int kind) {
+        return switch (kind) {
+            case KIND_INT -> RuntimeAbi.Operations.ORDER_INT;
+            case KIND_BOOL -> RuntimeAbi.Operations.ORDER_BOOL;
+            case KIND_STRING -> RuntimeAbi.Operations.ORDER_STRING;
+            case KIND_DECIMAL -> RuntimeAbi.Operations.ORDER_DECIMAL;
+            case KIND_RATIONAL -> RuntimeAbi.Operations.ORDER_RATIONAL;
+            case KIND_DATE, KIND_TIME, KIND_DATE_TIME -> RuntimeAbi.Operations.ORDER_TEMPORAL;
+            case KIND_INSTANT -> RuntimeAbi.Operations.ORDER_INSTANT;
+            case KIND_UNIT, KIND_PRODUCT, KIND_SUM, KIND_ENUMERATION ->
+                    RuntimeAbi.Operations.ORDER_DECLARED;
+            case KIND_NEWTYPE -> RuntimeAbi.Operations.ORDER_NEWTYPE;
+            case KIND_TUPLE -> RuntimeAbi.Operations.ORDER_TUPLE;
+            case KIND_LIST, KIND_SET -> RuntimeAbi.Operations.ORDER_LIST;
+            case KIND_MAP -> RuntimeAbi.Operations.ORDER_MAP;
+            case KIND_OPTION -> RuntimeAbi.Operations.ORDER_OPTION;
+            default -> null;
+        };
     }
 
     /**

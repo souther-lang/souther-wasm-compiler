@@ -60,9 +60,111 @@ public final class RuntimeAbi {
      * {@code Int} and of a rounded {@code Decimal} are gone. Raised to 12 when a call the runtime
      * ends came to be left through {@link #END_CALL}, which a component's link makes a throw, and
      * a component's lifted result came to be a {@code result<string, ended>}: {@link #LIFT_AREA}
-     * writes the case before the string, and {@link #LIFT_ENDED} writes the other case.
+     * writes the case before the string, and {@link #LIFT_ENDED} writes the other case. Raised to
+     * 13 when what reads, writes and orders a value of a type came to be named by the type's
+     * descriptor ({@link Operations}) rather than chosen by the runtime from its kind (issue #44),
+     * a constraint came to name what evaluates it ({@link Constraints}), and
+     * {@link #RUNTIME_INIT} came to be handed the program's descriptors of the primitives.
      */
-    public static final int VERSION = 12;
+    public static final int VERSION = 13;
+
+    /**
+     * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
+     * each in the sixteen bytes before it: its reader at {@code -16}, its writer at {@code -12}
+     * and its order at {@code -8}.
+     *
+     * <p>Named by the descriptor and not chosen by the runtime from the descriptor's kind, so that
+     * a module carries what reads, writes and orders the kinds its program asks that of, and no
+     * others: chosen by the kind, all of them are reached from any one, and a module reading an
+     * {@code Int} carries what normalizes text and what does exact arithmetic.
+     *
+     * <p>A reader is {@code (i32 document, i32 descriptor, i32 path, i32 length) -> i32}, as
+     * {@link #READ}; a writer is {@code (i32 cell, i32 descriptor)}, writing into the run
+     * {@link #WRITE} is writing; an order is {@code (i32 left, i32 right, i32 descriptor) -> i32},
+     * where the two stand among a set's members.
+     */
+    public static final class Operations {
+
+        private Operations() {
+        }
+
+        public static final String READ_INT = "__souther_read_int";
+        public static final String READ_BOOL = "__souther_read_bool";
+        public static final String READ_STRING = "__souther_read_string";
+        public static final String READ_DECIMAL = "__souther_read_decimal";
+        /** A {@code Date}, a {@code Time}, a {@code DateTime} or an {@code Instant}. */
+        public static final String READ_TEMPORAL = "__souther_read_temporal";
+        public static final String READ_UNIT = "__souther_read_unit";
+        public static final String READ_PRODUCT = "__souther_read_product";
+        public static final String READ_NEWTYPE = "__souther_read_newtype";
+        public static final String READ_SUM = "__souther_read_sum";
+        public static final String READ_ENUMERATION = "__souther_read_enumeration";
+        public static final String READ_LIST = "__souther_read_list";
+        public static final String READ_SET = "__souther_read_set";
+        public static final String READ_MAP = "__souther_read_map";
+        public static final String READ_OPTION = "__souther_read_option";
+
+        public static final String WRITE_INT = "__souther_write_int";
+        public static final String WRITE_BOOL = "__souther_write_bool";
+        public static final String WRITE_STRING = "__souther_write_string";
+        public static final String WRITE_DECIMAL = "__souther_write_decimal";
+        /** A {@code Date}, a {@code Time}, a {@code DateTime} or an {@code Instant}. */
+        public static final String WRITE_TEMPORAL = "__souther_write_temporal";
+        public static final String WRITE_UNIT = "__souther_write_unit";
+        public static final String WRITE_PRODUCT = "__souther_write_product";
+        public static final String WRITE_NEWTYPE = "__souther_write_newtype";
+        public static final String WRITE_SUM = "__souther_write_sum";
+        public static final String WRITE_ENUMERATION = "__souther_write_enumeration";
+        public static final String WRITE_LIST = "__souther_write_list";
+        public static final String WRITE_SET = "__souther_write_set";
+        public static final String WRITE_MAP = "__souther_write_map";
+        public static final String WRITE_OPTION = "__souther_write_option";
+
+        public static final String ORDER_INT = "__souther_order_int";
+        public static final String ORDER_BOOL = "__souther_order_bool";
+        public static final String ORDER_STRING = "__souther_order_string";
+        public static final String ORDER_DECIMAL = "__souther_order_decimal";
+        public static final String ORDER_RATIONAL = "__souther_order_rational";
+        /** A {@code Date}, a {@code Time} or a {@code DateTime}. */
+        public static final String ORDER_TEMPORAL = "__souther_order_temporal";
+        public static final String ORDER_INSTANT = "__souther_order_instant";
+        /** A unit, a shape, or a set of alternatives of them, each read as what it was made as. */
+        public static final String ORDER_DECLARED = "__souther_order_declared";
+        public static final String ORDER_NEWTYPE = "__souther_order_newtype";
+        public static final String ORDER_TUPLE = "__souther_order_tuple";
+        /** A list or a set. */
+        public static final String ORDER_LIST = "__souther_order_list";
+        public static final String ORDER_MAP = "__souther_order_map";
+        public static final String ORDER_OPTION = "__souther_order_option";
+    }
+
+    /**
+     * What evaluates a constraint, one for each family of rules, which a constraint names by the
+     * slot of it in its first word.
+     *
+     * <p>{@code (i32 value, i32 descriptor, i32 constraint, i32 path, i32 length) -> i32}: whether
+     * the value breaks the constraint, having reported it where it does.
+     */
+    public static final class Constraints {
+
+        private Constraints() {
+        }
+
+        /** A {@code String}'s length. */
+        public static final String LENGTH = "__souther_constraint_length";
+        /** A {@code String} matching a pattern. */
+        public static final String PATTERN = "__souther_constraint_pattern";
+        /** An {@code Int}'s bounds. */
+        public static final String BOUND = "__souther_constraint_bound";
+        /** A {@code Decimal}'s bounds. */
+        public static final String AMOUNT = "__souther_constraint_amount";
+        /** A list's length. */
+        public static final String SIZE = "__souther_constraint_size";
+        /** A list holding no value twice. */
+        public static final String UNIQUE = "__souther_constraint_unique";
+        /** A map's size. */
+        public static final String ENTRIES = "__souther_constraint_entries";
+    }
 
     /**
      * What of the runtime a linked module still shows its host: the memory, and what the steps
@@ -120,7 +222,11 @@ public final class RuntimeAbi {
     /** {@code (i32 mark) -> ()}: pops the arena back to a mark it issued. */
     public static final String ALLOC_RESET = "__ronto_alloc_reset";
 
-    /** {@code (i32 static_end) -> ()}: places the arena. Called by the generated start thunk. */
+    /**
+     * {@code (i32 static_end, i32 primitives) -> ()}: places the arena, and takes where the
+     * program's descriptors of the primitives are, nothing where it holds none. Called by the
+     * generated start thunk.
+     */
     public static final String RUNTIME_INIT = "__souther_runtime_init";
 
     /** {@code () -> i32}: the failure record's address. */

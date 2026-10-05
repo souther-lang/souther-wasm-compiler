@@ -9,6 +9,12 @@ rustflags = [
     # The table a closure's slot and a descriptor's invariant slot live in. The link appends
     # element segments to it, so it has to be reachable by name.
     "-C", "link-arg=--export-table",
+    # Each piece of static data a segment of its own, and what the linker resolved left in the
+    # module (`linking`, `reloc.CODE`, `reloc.DATA`): a link reads from them which functions read
+    # which data, and leaves out what no function it keeps reads (`RuntimeData`). Merged into one
+    # segment and with nothing said of it, the runtime's data is carried whole into every module.
+    "-C", "link-arg=--no-merge-data-segments",
+    "-C", "link-arg=--emit-relocs",
 ]
 
 [build]

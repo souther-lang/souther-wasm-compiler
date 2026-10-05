@@ -35,14 +35,6 @@ use crate::temporal;
 use crate::value;
 use crate::{abort, REASON_BACKEND_INVARIANT_BROKEN};
 
-const RANK_NULL: i32 = 0;
-const RANK_FALSE: i32 = 1;
-const RANK_TRUE: i32 = 2;
-const RANK_NUMBER: i32 = 3;
-const RANK_STRING: i32 = 4;
-const RANK_ARRAY: i32 = 5;
-const RANK_OBJECT: i32 = 6;
-
 /// Where a value stands relative to another of its type.
 ///
 /// Not the same question as where it is written. A set of alternatives places its own in the order
@@ -258,143 +250,157 @@ unsafe fn bytes(hash: u32, at: u32, length: u32) -> u32 {
 /// this was for. It is not the order a set is written in, which `as_written` asks of the written
 /// document.
 pub unsafe fn compare(left: u32, right: u32, descriptor: u32) -> i32 {
-    // What an optional is written as is what it holds, or nothing at all — so what it is compared
-    // by is that, and the cell holding it is not a value anybody wrote. Opened here rather than
-    // where the rank is asked, because the rank is asked of what is written and everything below
-    // is then handed the value the rank was about.
-    if descriptor::kind(descriptor) == KIND_OPTION {
-        let (a, b) = (held(left), held(right));
-        if a == 0 || b == 0 {
-            return if a == b {
-                0
-            } else if a == 0 {
-                -1
-            } else {
-                1
-            };
-        }
-        return compare(a, b, descriptor::member(descriptor, 0));
+    // By the function the descriptor's slot names, which the compiler put there where the program
+    // asks this of the type: chosen here by the kind, every kind's order would be reached from
+    // every comparison, and comparing two `Int`s would carry exact arithmetic in.
+    let slot = descriptor::orderer(descriptor);
+    if slot == 0 {
+        abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, left as u64, right as u64);
     }
-    if descriptor::kind(descriptor) == KIND_NEWTYPE {
-        return compare(
-            value::__souther_record_get(left, 0),
-            value::__souther_record_get(right, 0),
-            descriptor::member(descriptor, 0),
+    let order: extern "C" fn(u32, u32, u32) -> i32 = core::mem::transmute(slot as usize);
+    order(left, right, descriptor)
+}
+
+/// Two options. What an optional is written as is what it holds, or nothing at all — so what it
+/// is compared by is that, and the cell holding it is not a value anybody wrote. Nothing stands
+/// first, as `null` is written before anything else.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_option(left: u32, right: u32, descriptor: u32) -> i32 {
+    let (a, b) = (held(left), held(right));
+    if a == 0 || b == 0 {
+        return if a == b {
+            0
+        } else if a == 0 {
+            -1
+        } else {
+            1
+        };
+    }
+    compare(a, b, descriptor::member(descriptor, 0))
+}
+
+/// Two values of a name for a value of another type, which stand where what they name does.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_newtype(left: u32, right: u32, descriptor: u32) -> i32 {
+    compare(
+        value::__souther_record_get(left, 0),
+        value::__souther_record_get(right, 0),
+        descriptor::member(descriptor, 0),
+    )
+}
+
+/// Two values a model declared — a unit, a shape, or a set of alternatives of them — each read as
+/// what it was made as (`declared`).
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_declared(left: u32, right: u32, _: u32) -> i32 {
+    declared(left, right)
+}
+
+/// Two tuples. A tuple has no written form, so no place among written values; it stands where its
+/// parts do, in order. Laid out as a tuple and not as a list, so it is not read as one.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_tuple(left: u32, right: u32, descriptor: u32) -> i32 {
+    for i in 0..descriptor::arity(descriptor) {
+        let each = compare(
+            value::__souther_tuple_get(left, i),
+            value::__souther_tuple_get(right, i),
+            descriptor::member(descriptor, i),
         );
-    }
-    if declares_a_value(descriptor::kind(descriptor)) {
-        return declared(left, right);
-    }
-    // A tuple has no written form, so no place among written values; it stands where its parts
-    // do, in order. Laid out as a tuple and not as a list, so it is not read as one.
-    if descriptor::kind(descriptor) == KIND_TUPLE {
-        for i in 0..descriptor::arity(descriptor) {
-            let each = compare(
-                value::__souther_tuple_get(left, i),
-                value::__souther_tuple_get(right, i),
-                descriptor::member(descriptor, i),
-            );
-            if each != 0 {
-                return each;
-            }
+        if each != 0 {
+            return each;
         }
-        return 0;
     }
-    let a = rank(left, descriptor);
-    let b = rank(right, descriptor);
-    if a != b {
-        return if a < b { -1 } else { 1 };
-    }
-    match a {
-        RANK_NULL | RANK_FALSE | RANK_TRUE => 0,
-        RANK_NUMBER => {
-            if descriptor::kind(descriptor) == KIND_DECIMAL {
-                // How much it is, and nothing about how it was written. Two amounts differing only
-                // in scale are one amount, and a boundary writes them as one thing, so a
-                // collection holding one of them cannot be told to hold the other beside it.
-                return decimal::compare(left, right);
-            }
-            if descriptor::kind(descriptor) == KIND_RATIONAL {
-                // By the parts each is, which are one value's own, so two are one exactly where
-                // they are one value. Nothing writes one, so it has no place among written values,
-                // and the order a set of them stands in is the language's to leave open — so it is
-                // not the order of their values, which is exact arithmetic and is `ranked`'s to
-                // answer. Asked of the cells alone, a rational met as one of a set's alternatives
-                // is placed by this whatever descriptor reached it, and no set carries arithmetic.
-                let (a, a_length) = rational::parts(left);
-                let (b, b_length) = rational::parts(right);
-                return bytewise(a, a_length, b, b_length);
-            }
-            let x = value::__souther_int_value(left);
-            let y = value::__souther_int_value(right);
-            if x < y {
-                -1
-            } else if x > y {
-                1
-            } else {
-                0
-            }
-        }
-        RANK_STRING => match descriptor::kind(descriptor) {
-            KIND_INSTANT => {
-                let (a, b) = (temporal::moment_second(left), temporal::moment_second(right));
-                if a != b {
-                    return if a < b { -1 } else { 1 };
-                }
-                let (a, b) = (temporal::moment_nano(left), temporal::moment_nano(right));
-                if a < b {
-                    -1
-                } else if a > b {
-                    1
-                } else {
-                    0
-                }
-            }
-            KIND_DATE | KIND_TIME | KIND_DATE_TIME => {
-                let a = temporal::moment(left);
-                let b = temporal::moment(right);
-                if a < b {
-                    -1
-                } else if a > b {
-                    1
-                } else {
-                    0
-                }
-            }
-            _ => text(left, right),
-        },
-        RANK_ARRAY => elements(left, right, descriptor),
-        _ => members(left, right, descriptor),
+    0
+}
+
+/// Two `Bool`s, false first, as `false` is written before `true`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_bool(left: u32, right: u32, _: u32) -> i32 {
+    sign_of_difference(value::__souther_bool_value(left), value::__souther_bool_value(right))
+}
+
+/// Two `Int`s.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_int(left: u32, right: u32, _: u32) -> i32 {
+    let x = value::__souther_int_value(left);
+    let y = value::__souther_int_value(right);
+    if x < y {
+        -1
+    } else if x > y {
+        1
+    } else {
+        0
     }
 }
 
-/// What form a value of a type is written as, which is the first thing the order asks.
-unsafe fn rank(cell: u32, descriptor: u32) -> i32 {
-    match descriptor::kind(descriptor) {
-        KIND_BOOL => {
-            if value::__souther_bool_value(cell) != 0 {
-                RANK_TRUE
-            } else {
-                RANK_FALSE
-            }
-        }
-        KIND_INT | KIND_DECIMAL | KIND_RATIONAL => RANK_NUMBER,
-        // A day and a time of day cross as the text a calendar and a clock write them as.
-        KIND_STRING | KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => RANK_STRING,
-        KIND_LIST | KIND_SET => RANK_ARRAY,
-        KIND_OPTION => {
-            if held(cell) == 0 {
-                RANK_NULL
-            } else {
-                rank(held(cell), descriptor::member(descriptor, 0))
-            }
-        }
-        // An alternative that carries nothing is written as its name, which is a string.
-        KIND_ENUMERATION => RANK_STRING,
-        KIND_TUPLE => RANK_ARRAY,
-        KIND_UNIT | KIND_PRODUCT | KIND_SUM | KIND_MAP => RANK_OBJECT,
-        _ => RANK_OBJECT,
+/// Two `Decimal`s, by how much each is, and nothing about how it was written. Two amounts differing
+/// only in scale are one amount, and a boundary writes them as one thing, so a collection holding
+/// one of them cannot be told to hold the other beside it.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_decimal(left: u32, right: u32, _: u32) -> i32 {
+    decimal::compare(left, right)
+}
+
+/// Two `Rational`s, by the parts each is, which are one value's own, so two are one exactly where
+/// they are one value. Nothing writes one, so it has no place among written values, and the order a
+/// set of them stands in is the language's to leave open — so it is not the order of their values,
+/// which is exact arithmetic and is `ranked`'s to answer. Asked of the cells alone, a rational met as
+/// one of a set's alternatives is placed by this whatever descriptor reached it, and no set carries
+/// arithmetic.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_rational(left: u32, right: u32, _: u32) -> i32 {
+    let (a, a_length) = rational::parts(left);
+    let (b, b_length) = rational::parts(right);
+    bytewise(a, a_length, b, b_length)
+}
+
+/// Two `String`s, by scalar value.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_string(left: u32, right: u32, _: u32) -> i32 {
+    text(left, right)
+}
+
+/// Two `Instant`s, by when each is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_instant(left: u32, right: u32, _: u32) -> i32 {
+    let (a, b) = (temporal::moment_second(left), temporal::moment_second(right));
+    if a != b {
+        return if a < b { -1 } else { 1 };
     }
+    let (a, b) = (temporal::moment_nano(left), temporal::moment_nano(right));
+    if a < b {
+        -1
+    } else if a > b {
+        1
+    } else {
+        0
+    }
+}
+
+/// Two `Date`s, two `Time`s or two `DateTime`s, by when each is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_temporal(left: u32, right: u32, _: u32) -> i32 {
+    let a = temporal::moment(left);
+    let b = temporal::moment(right);
+    if a < b {
+        -1
+    } else if a > b {
+        1
+    } else {
+        0
+    }
+}
+
+/// Two lists, or two sets, element by element with the shorter first.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_list(left: u32, right: u32, descriptor: u32) -> i32 {
+    elements(left, right, descriptor)
+}
+
+/// Two maps (`entries`).
+#[no_mangle]
+pub unsafe extern "C" fn __souther_order_map(left: u32, right: u32, descriptor: u32) -> i32 {
+    entries(left, right, descriptor)
 }
 
 /// What an option holds, or nothing.
@@ -752,23 +758,6 @@ unsafe fn elements(left: u32, right: u32, descriptor: u32) -> i32 {
     } else {
         0
     }
-}
-
-/// Two values written as objects.
-///
-/// Of one type, so the keys are the same and in the same order, and only what is under them
-/// decides. A `Unit` writes no members at all and two of them are one document.
-unsafe fn members(left: u32, right: u32, descriptor: u32) -> i32 {
-    if descriptor::kind(descriptor) == KIND_MAP {
-        return entries(left, right, descriptor);
-    }
-    abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, left as u64, right as u64)
-}
-
-/// Whether a kind describes a value a model declared — a unit, a shape, or a set of alternatives
-/// of them — which carries in its cell the descriptor of what it was made as.
-fn declares_a_value(kind: u32) -> bool {
-    matches!(kind, KIND_UNIT | KIND_PRODUCT | KIND_ENUMERATION | KIND_SUM)
 }
 
 /// Two values a model declared, where they are written, each read as what it was made as.

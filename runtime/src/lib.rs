@@ -88,7 +88,14 @@ const PAGE: usize = 65536;
 /// to be a `result<string, ended>`: `__souther_lift_area` writes which case it is before the
 /// string, into one static area rather than the arena, and `__souther_lift_ended` writes the other
 /// case there from the record.
-const ABI_VERSION: u32 = 12;
+///
+/// Raised to 13 when what reads, writes and orders a value of a type came to be named by the type's
+/// descriptor rather than chosen here by its kind (issue #44): the sixteen bytes before a descriptor
+/// hold the slots of its reader, its writer and its order, each filled only where the program asks
+/// for it; a constraint names the slot of what evaluates it where it named its rule; and
+/// `__souther_runtime_init` is handed the descriptors the program holds for the primitives, which
+/// this runtime no longer holds itself.
+const ABI_VERSION: u32 = 13;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -114,8 +121,12 @@ const ALIGN: usize = 8;
 /// The generated start thunk calls this with the end of the last data segment the linker wrote.
 /// The failure record is taken from there, and the arena begins after it. Runs before any export
 /// does, because a start function runs at instantiation.
+///
+/// It is handed too where the program's descriptors of the primitives are (`descriptor::primitive`),
+/// or nothing where the program holds none.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_runtime_init(static_end: u32) {
+pub unsafe extern "C" fn __souther_runtime_init(static_end: u32, primitives: u32) {
+    descriptor::held_primitives(primitives);
     let failure = align_up(static_end as usize);
     FAILURE = failure;
     let base = align_up(failure + FAILURE_BYTES);
