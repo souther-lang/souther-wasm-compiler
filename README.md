@@ -255,12 +255,18 @@ a package manager installed it, by `META-INF/souther/backend.properties`, which 
 `wasm`, and the Souther the jar was built against. Only a jar built against the Souther that runs it
 is chosen; under another, `souther compile --target wasm` is refused before anything is compiled.
 
-The jar `mvn package` writes is a backend like any other, and a clone installs it by putting it
-there. One in `$SOUTHER_HOME/backends` stands in for one a package manager installed:
+The jar `mvn package` writes is a backend like any other, and a clone installs it by putting it in
+a `$SOUTHER_HOME/backends` of its own. The CLI looks there only while `SOUTHER_HOME` is set, and
+before it looks where a package manager installed one, so the build stands in for an installed
+backend in the shell that exports it and nowhere else:
 
     mvn package
+    export SOUTHER_HOME="$PWD/.souther-home"
     mkdir -p "$SOUTHER_HOME/backends"
-    cp target/souther-wasm-compiler-*-cli.jar "$SOUTHER_HOME/backends/"
+    ln -sf "$PWD"/target/souther-wasm-compiler-*-cli.jar "$SOUTHER_HOME/backends/"
+
+A link rather than a copy, so the CLI runs what the last `mvn package` wrote, and a jar since
+cleaned away is refused as a link to nothing rather than an older build run in its place.
 
 `java -jar target/souther-wasm-compiler-*-cli.jar` takes the same arguments, for working on this
 repository. Nothing then checks which Souther it was built against.
