@@ -11,24 +11,41 @@ import souther.wasm.Running;
 import souther.wasm.emit.WasmWriter;
 
 /**
- * A link carries the runtime's custom sections into the module, all but what the runtime's linker
- * said of it.
+ * A link carries into the module only those of the runtime's custom sections it knows name no
+ * function, type, segment or address.
  *
- * <p>The linker's sections ({@code linking}, {@code reloc.*}) are read once, for which of the
- * runtime's data each function reads, and speak of the runtime alone, at offsets a link moves. Any
- * other custom section is the runtime's to say — what built it, what it needs of an engine — and
- * a link has no reason to leave it out.
+ * <p>The link leaves out and renumbers functions and leaves out data, so a custom section naming
+ * any would say of the module something no longer so. One the link does not know may name any, and
+ * one the runtime's linker wrote relocations for names what they relocate; what the linker said of
+ * the runtime ({@code linking}, {@code reloc.*}) speaks of the runtime alone.
  */
-class ALinkCarriesTheRuntimesCustomSectionsButItsLinkersTest {
+class ALinkCarriesOnlyTheRuntimesCustomSectionsThatNameNothingTest {
 
     @Test
-    void carriesWhatTheRuntimeSaysAndLeavesOutWhatItsLinkerSaid() {
+    void carriesWhatBuiltTheRuntime() {
+        byte[] runtime = withCustom(Running.runtimeModule(), "producers", "\0");
+
+        assertThat(carried(runtime)).contains("producers");
+    }
+
+    @Test
+    void leavesOutWhatItDoesNotKnowAndWhatTheRuntimesLinkerSaid() {
         byte[] runtime = withCustom(Running.runtimeModule(), "souther:note", "kept");
 
-        List<String> carried = customSections(Linker.link(new WasmFragment(LinkPlan.reading(runtime))));
+        assertThat(carried(runtime)).doesNotContain("souther:note")
+                .noneMatch(name -> name.equals("linking") || name.startsWith("reloc."));
+    }
 
-        assertThat(carried).contains("souther:note");
-        assertThat(carried).noneMatch(name -> name.equals("linking") || name.startsWith("reloc."));
+    @Test
+    void leavesOutWhatTheRuntimesLinkerRelocated() {
+        byte[] runtime = withCustom(withCustom(Running.runtimeModule(), "producers", "\0"),
+                "reloc.producers", "\0\0");
+
+        assertThat(carried(runtime)).doesNotContain("producers");
+    }
+
+    private static List<String> carried(byte[] runtime) {
+        return customSections(Linker.link(new WasmFragment(LinkPlan.reading(runtime))));
     }
 
     private static byte[] withCustom(byte[] module, String name, String content) {

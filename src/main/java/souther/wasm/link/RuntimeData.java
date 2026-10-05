@@ -28,9 +28,11 @@ import souther.wasm.link.LayoutReader.RawSection;
  * <p>What this says is used to leave data out, so it says something only where it read all of what
  * the linker said, and says nothing otherwise: a {@code linking} section of a version other than
  * the one this reads, a symbol or a relocation of a kind it does not know, a relocation section
- * missing, or one naming a place that is no body and no segment, and every segment is kept. So is
- * a segment no relocation names, which the linker kept for a reason it did not write down, and one
- * a global's initial value points into, which no relocation covers.
+ * missing, or one naming a place that is no body and no segment, and every segment is kept. And it
+ * claims only segments functions alone reach: a segment no function reaches, directly or through
+ * other segments, the linker kept for a reason it did not write down, and one a global's initial
+ * value points into is read by whoever reads the global, which no relocation says; either is kept,
+ * and so is everything it points at, all the way down.
  *
  * <p>Nothing here resolves anything again: the data stays where the linker put it, and a segment
  * dropped leaves zeros at its addresses, which nothing left reads.
@@ -129,7 +131,6 @@ final class RuntimeData {
         // What each function and each segment names, as segments.
         Map<Integer, BitSet> byFunction = new HashMap<>();
         BitSet[] bySegment = new BitSet[segments.starts().length];
-        BitSet named = new BitSet();
         for (int i = 0; i < bySegment.length; i++) {
             bySegment[i] = new BitSet();
         }
@@ -138,38 +139,44 @@ final class RuntimeData {
             if (segment >= 0) {
                 int function = importedFunctions + within(bodies, each[0]);
                 byFunction.computeIfAbsent(function, ignored -> new BitSet()).set(segment);
-                named.set(segment);
             }
         }
         for (int[] each : addresses(required(sections.custom().get("reloc.DATA")), data.length)) {
             int segment = symbols.segmentOf(each[1]);
             if (segment >= 0) {
                 bySegment[within(segments.starts(), each[0])].set(segment);
-                named.set(segment);
             }
         }
-
-        // What a global's initial value points into is read by whoever reads the global, which no
-        // relocation says; it is kept, with everything it points at.
-        BitSet held = closed(pointedAtByGlobals(sections.globals(), segments), bySegment);
 
         // Each function's segments, closed over what they point at, turned round.
         List<List<Integer>> readers = new ArrayList<>();
         for (int i = 0; i < bySegment.length; i++) {
             readers.add(new ArrayList<>());
         }
+        BitSet explained = new BitSet();
         for (Map.Entry<Integer, BitSet> each : byFunction.entrySet()) {
             BitSet reached = closed(each.getValue(), bySegment);
+            explained.or(reached);
             for (int s = reached.nextSetBit(0); s >= 0; s = reached.nextSetBit(s + 1)) {
                 readers.get(s).add(each.getKey());
             }
         }
+
+        // What is kept for a reason no relocation of a function gives is kept with everything it
+        // points at: a segment no function reaches, which the linker kept for a reason it did not
+        // write down, and one a global's initial value points into, which whoever reads the global
+        // reads. A segment kept, pointing at one dropped, would point at zeros.
+        BitSet unexplained = new BitSet();
+        unexplained.set(0, bySegment.length);
+        unexplained.andNot(explained);
+        unexplained.or(pointedAtByGlobals(sections.globals(), segments));
+        BitSet held = closed(unexplained, bySegment);
+
         List<OwnedDataSegment> owned = new ArrayList<>(bySegment.length);
         for (int i = 0; i < bySegment.length; i++) {
-            if (held.get(i) || readers.get(i).isEmpty()) {
-                continue;
+            if (!held.get(i)) {
+                owned.add(new OwnedDataSegment(i, readers.get(i).stream().mapToInt(Integer::intValue).toArray()));
             }
-            owned.add(new OwnedDataSegment(i, readers.get(i).stream().mapToInt(Integer::intValue).toArray()));
         }
         return List.copyOf(owned);
     }

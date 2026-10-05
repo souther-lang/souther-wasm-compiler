@@ -550,7 +550,11 @@ public final class WasmTreeShaker {
 					// module's old shape, which is worse than describing nothing. A
 					// hand-written helper module (a WASI adapter assembled from .wat) is
 					// where this actually bites: its name section is most of its bytes.
-					// Every other custom section is index-free and is copied through.
+					// Every other custom section is copied through as it is, which is
+					// right only of one that names no index and no address: that is the
+					// caller's to hold of what it hands this (a link carries only those
+					// it knows to be, Linker.CARRIED), since this cannot read one it does
+					// not know.
 					if (!"name".equals(WasmSections.customSectionName(s.payload()))) {
 						rebuilt.add(s);
 					}

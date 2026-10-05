@@ -104,13 +104,11 @@ public final class Linker {
                 startThunkBody(plan, layout, fragment.staticEnd(), fragment.primitives()));
 
         Map<Integer, byte[]> sections = new LinkedHashMap<>();
+        List<RawSection> raw = new LayoutReader(runtime).rawSections();
         List<byte[]> custom = new ArrayList<>();
-        for (RawSection section : new LayoutReader(runtime).rawSections()) {
+        for (RawSection section : raw) {
             if (section.id() == SEC_CUSTOM) {
-                // What the runtime's linker said of it is read once, by the plan, and carried no
-                // further: it speaks of the runtime alone, and of offsets the link moves. Any other
-                // custom section is the runtime's to say and is carried as it is.
-                if (!saidByTheLinker(section.payload())) {
+                if (carried(section.payload(), raw)) {
                     custom.add(section.payload());
                 }
                 continue;
@@ -433,13 +431,28 @@ public final class Linker {
     }
 
     /**
-     * Whether a custom section is one a linker writes about the module it linked: its symbols and
-     * segments ({@code linking}) and where a section names them ({@code reloc.*}).
+     * The runtime's custom sections a link carries into the module: those known to name no
+     * function, type, segment or address, and so to say of the module what they said of the
+     * runtime. The link leaves out and renumbers functions and leaves out data, so a custom section
+     * naming any is no longer true of what it is carried into, and one this does not know may name
+     * any; what the runtime's linker said of it ({@code linking}, {@code reloc.*}) is read once by
+     * the plan and speaks of the runtime alone.
      */
-    private static boolean saidByTheLinker(byte[] custom) {
+    private static final java.util.Set<String> CARRIED = java.util.Set.of("producers", "target_features");
+
+    /**
+     * Whether a custom section of the runtime is carried: one of {@link #CARRIED}, and not one the
+     * runtime's linker wrote relocations for, which would be what it names.
+     */
+    private static boolean carried(byte[] custom, List<RawSection> runtime) {
+        String name = customName(custom);
+        return CARRIED.contains(name) && runtime.stream()
+                .noneMatch(each -> each.id() == SEC_CUSTOM && customName(each.payload()).equals("reloc." + name));
+    }
+
+    private static String customName(byte[] custom) {
         Reading reading = new Reading(custom);
-        String name = new String(reading.bytes(reading.unsigned()), StandardCharsets.UTF_8);
-        return name.equals("linking") || name.startsWith("reloc.");
+        return new String(reading.bytes(reading.unsigned()), StandardCharsets.UTF_8);
     }
 
     /** A section carrying no code, whose meaning is its name. */
