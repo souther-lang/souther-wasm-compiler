@@ -33,13 +33,22 @@ jobs:
 
       # A user reaches this backend through `souther compile --target wasm`, which chooses the jar
       # by its descriptor and refuses one built against another Souther. The CLI is not published as
-      # a SNAPSHOT, so it is built from Souther's develop, which is the Souther this build compiles
-      # against; when the two versions part, the compile below is refused, and that is the point.
-      - name: Check out Souther
+      # a SNAPSHOT, so it is built here, and from the commit the Souther artifacts this build
+      # resolved were built from: a SNAPSHOT version is whichever build was last published under it,
+      # so a CLI built from anything else would agree with the descriptor in its version string and
+      # be another Souther.
+      - name: Read which Souther the build compiled against
+        id: souther
+        # Assigned first, so that the script failing fails the step: inside echo's arguments its
+        # status is lost, and an empty ref checks out the default branch.
+        run: |
+          revision=$(scripts/souther-revision.sh)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out that Souther
         uses: actions/checkout@v5
         with:
           repository: souther-lang/souther
-          ref: develop
+          ref: ${{ steps.souther.outputs.revision }}
           path: souther
       - name: Install the souther CLI, with this backend beside it
         run: |
