@@ -104,9 +104,15 @@ public final class Linker {
                 startThunkBody(plan, layout, fragment.staticEnd(), fragment.primitives()));
 
         Map<Integer, byte[]> sections = new LinkedHashMap<>();
+        List<byte[]> custom = new ArrayList<>();
         for (RawSection section : new LayoutReader(runtime).rawSections()) {
-            // What the runtime's linker said of it is read once, by the plan, and carried no further.
             if (section.id() == SEC_CUSTOM) {
+                // What the runtime's linker said of it is read once, by the plan, and carried no
+                // further: it speaks of the runtime alone, and of offsets the link moves. Any other
+                // custom section is the runtime's to say and is carried as it is.
+                if (!saidByTheLinker(section.payload())) {
+                    custom.add(section.payload());
+                }
                 continue;
             }
             if (sections.putIfAbsent(section.id(), section.payload()) != null) {
@@ -141,7 +147,7 @@ public final class Linker {
                     layout.dataSegmentCount() + fragment.dataSegments().size()));
         }
 
-        return assemble(sections, surface(fragment));
+        return assemble(sections, custom, surface(fragment));
     }
 
     /**
@@ -406,7 +412,7 @@ public final class Linker {
         return out.toByteArray();
     }
 
-    private static byte[] assemble(Map<Integer, byte[]> sections, byte[] surface) {
+    private static byte[] assemble(Map<Integer, byte[]> sections, List<byte[]> custom, byte[] surface) {
         ByteArrayOutputStream module = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(module);
         writer.write(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
@@ -417,10 +423,23 @@ public final class Linker {
             }
             writer.write((byte) id).writeUnsignedLeb128(payload.length).write(payload);
         }
+        for (byte[] payload : custom) {
+            writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(payload.length).write(payload);
+        }
         if (surface.length > 0) {
             writer.write((byte) SEC_CUSTOM).writeUnsignedLeb128(surface.length).write(surface);
         }
         return module.toByteArray();
+    }
+
+    /**
+     * Whether a custom section is one a linker writes about the module it linked: its symbols and
+     * segments ({@code linking}) and where a section names them ({@code reloc.*}).
+     */
+    private static boolean saidByTheLinker(byte[] custom) {
+        Reading reading = new Reading(custom);
+        String name = new String(reading.bytes(reading.unsigned()), StandardCharsets.UTF_8);
+        return name.equals("linking") || name.startsWith("reloc.");
     }
 
     /** A section carrying no code, whose meaning is its name. */

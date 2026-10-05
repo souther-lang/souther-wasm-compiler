@@ -45,6 +45,42 @@ class DataStandingSideBySideIsWrittenAsOneSegmentTest {
     }
 
     @Test
+    void leavesAModuleWhoseSegmentsWriteOverOneAnotherAsItIs() {
+        // The second writes a zero over the first's second byte, so memory holds "a\0", which
+        // leaving out a segment of zeros would make "ab".
+        byte[] module = module(false, new Segment(0, "ab"), new Segment(1, "\0"));
+
+        assertThat(WasmDataCoalescer.coalesced(module)).isSameAs(module);
+    }
+
+    @Test
+    void joinsSegmentsByWhereTheyStandAndNotByWhereTheyAreWritten() {
+        // Between "ab" and "cd" stands "Q", written before either: joined in the order written,
+        // the zeros between them would be written over it.
+        byte[] module = module(false, new Segment(4, "Q"), new Segment(0, "ab"), new Segment(6, "cd"));
+        byte[] coalesced = WasmDataCoalescer.coalesced(module);
+
+        assertThat(segments(coalesced)).containsExactly(new Segment(0, "ab\0\0Q\0cd"));
+        assertThat(memory(coalesced)).isEqualTo(memory(module));
+    }
+
+    @Test
+    void leavesAModuleWithASegmentPastItsMemoryAsItIs() {
+        // Instantiating it traps, and leaving out the segment of zeros would make it instantiate.
+        byte[] module = module(false, new Segment(0, "ab"), new Segment(65536, "\0"));
+
+        assertThat(WasmDataCoalescer.coalesced(module)).isSameAs(module);
+    }
+
+    @Test
+    void leavesAModuleWhoseMemoryIsImportedAsItIs() {
+        // A memory handed in need not start as zeros.
+        byte[] module = importingItsMemory(new Segment(0, "ab"), new Segment(2, "\0"));
+
+        assertThat(WasmDataCoalescer.coalesced(module)).isSameAs(module);
+    }
+
+    @Test
     void leavesAModuleThatMayNameASegmentByItsIndexAsItIs() {
         byte[] module = module(true, new Segment(0, "ab"), new Segment(2, "cd"));
 
@@ -83,6 +119,11 @@ class DataStandingSideBySideIsWrittenAsOneSegmentTest {
         if (countsItsData) {
             section(out, 12, new byte[] {(byte) segments.length});
         }
+        section(out, 11, data(segments));
+        return out.toByteArray();
+    }
+
+    private static byte[] data(Segment... segments) {
         ByteArrayOutputStream data = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(data).writeUnsignedLeb128(segments.length);
         for (Segment each : segments) {
@@ -90,7 +131,14 @@ class DataStandingSideBySideIsWrittenAsOneSegmentTest {
             writer.writeUnsignedLeb128(0).write((byte) 0x41).writeSignedLeb128(each.offset())
                     .write((byte) 0x0B).writeUnsignedLeb128(bytes.length).write(bytes);
         }
-        section(out, 11, data.toByteArray());
+        return data.toByteArray();
+    }
+
+    private static byte[] importingItsMemory(Segment... segments) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.writeBytes(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
+        section(out, 2, new byte[] {0x01, 0x01, 'm', 0x01, 'm', 0x02, 0x00, 0x01});
+        section(out, 11, data(segments));
         return out.toByteArray();
     }
 
