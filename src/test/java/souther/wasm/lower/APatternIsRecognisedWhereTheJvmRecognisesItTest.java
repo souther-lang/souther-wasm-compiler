@@ -19,7 +19,7 @@ import souther.wasm.abi.RuntimeAbi;
  * Whether a string is what a pattern describes, against what the JVM says.
  *
  * <p>The checker settles what a pattern means, and the machine that meaning is run as is
- * 199x-notation's: the JVM backend runs it from an image in a class, and this backend runs it from
+ * notation-199x's: the JVM backend runs it from an image in a class, and this backend runs it from
  * an image in static memory, read by the library's Rust implementation. So every pattern here is
  * run both ways, and what the JVM side answers is the library's Java implementation running the
  * machine of the same meaning.

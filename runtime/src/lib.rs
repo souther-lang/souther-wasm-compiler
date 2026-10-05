@@ -56,7 +56,7 @@ const PAGE: usize = 65536;
 /// internal invariant breaking, 8 and 9 were renamed to the language's own names), and 11 is new.
 ///
 /// Raised to 5 when what `__souther_string_matches` is told became the image of the pattern's
-/// machine that 199x-notation writes, in place of the compiler's own list of steps: a module
+/// machine that notation-199x writes, in place of the compiler's own list of steps: a module
 /// linked by the older compiler would hand this runtime steps it reads as an image.
 ///
 /// Raised to 6 when a body began to read a cell's payload itself and to place literals in static
@@ -474,7 +474,7 @@ pub const REASON_ENSURES_NOT_HELD: u32 = 11;
 /// whoever calls this module, as `BAD_MARK` is: `WasmFault::NO_SUCH_TYPE`.
 pub const REASON_NO_SUCH_TYPE: u32 = 12;
 
-/// The arena, as what `alloc` allocates from: for 199x-notation, and for the text this crate
+/// The arena, as what `alloc` allocates from: for notation-199x, and for the text this crate
 /// builds to hand to it.
 ///
 /// Nothing is given back one allocation at a time: what a call made goes back with the arena when
