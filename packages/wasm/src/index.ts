@@ -7,12 +7,14 @@
 // Nothing in this file knows anything about a model. It is the same whatever program it loads;
 // what a binding generated from a module knows is its own, and calls through this.
 
-import { Decoder, type Path, type Result, failed, stringify } from "@raoh/core";
+import { Decoder, type Path, type Result, failed, parse, stringify } from "@raoh/core";
 import { issuesIn, type Reading } from "./issues.ts";
-import type { Surface } from "./surface.ts";
+import { type Behavior, type Shape, type Surface } from "./surface.ts";
+import { AS_TYPED, type FormPolicy, Values } from "./values.ts";
 
 export { messageOf, messagesFor } from "./issues.ts";
 export type { Reading } from "./issues.ts";
+export { Decimal } from "@raoh/core";
 export type { Decoder, Issue, Issues } from "@raoh/core";
 export type { Surface } from "./surface.ts";
 
@@ -51,73 +53,6 @@ const REASONS: Readonly<Record<number, string>> = {
   12: "a number the module gives no type under",
 };
 
-declare const AMOUNT: unique symbol;
-
-/**
- * A number as it was written, crossing as the number it is: what `JSON.rawJSON` makes, which
- * `JSON.stringify` writes back as its digits and not as a string. Made only by `amount` and by
- * reading an answer, so an object that merely has a `rawJSON` field is not one.
- */
-export interface Amount {
-  readonly rawJSON: string;
-  readonly [AMOUNT]: true;
-}
-
-/** `JSON.rawJSON`, which the standard library's types do not name yet. */
-const raw = (JSON as unknown as { rawJSON(text: string): Amount }).rawJSON;
-
-/**
- * Whether this engine reads a number's text as well as its value and writes a number from its
- * text: without both, a wide amount would be rounded on the way in or out and nothing would say so,
- * so a program is not loaded at all.
- */
-const READS_NUMBERS_AS_WRITTEN = typeof raw === "function"
-  && JSON.parse("1.0", (_key, _value, context?: { source?: string }) => context?.source) === "1.0";
-
-/**
- * Refuses an engine that cannot, wherever this package is about to read or write a number as it was
- * written: loading a program, and making an amount. Asked in each, since either can be the first
- * thing a page does, and one asked only in `load` left `amount` to fail as a missing function.
- */
-function requireNumbersAsWritten(): void {
-  if (!READS_NUMBERS_AS_WRITTEN) {
-    throw new Error("this engine cannot read a number as it was written (JSON.parse source text "
-      + "access and JSON.rawJSON), so an amount wider than a JavaScript number would be rounded "
-      + "without a word");
-  }
-}
-
-/**
- * A number as the model holds one, handed over or handed back: a JavaScript number where one holds
- * it, and an `Amount` where one does not. Never a string — an answer handed back as one would be
- * handed over again as a string, and a string is not a number to the model.
- */
-export type Numeric = number | Amount;
-
-/**
- * An amount, as it was written.
- *
- * An amount is held to whatever precision it was written with and a JavaScript number is not, so
- * one written wider than a number holds would be rounded before it ever reached the model and
- * rounded again coming back. Handing this over instead carries the digits.
- *
- * @throws RangeError where `written` is not a number as JSON writes one
- * @throws Error where this engine cannot write a number as it was written
- */
-export function amount(written: string | number | bigint): Amount {
-  requireNumbersAsWritten();
-  const text = String(written);
-  if (partsOf(text) === undefined) {
-    throw new RangeError(`${JSON.stringify(text)} is not a number as JSON writes one`);
-  }
-  return raw(text);
-}
-
-/** The digits a number is written as: what a page shows, whatever a JavaScript number would round. */
-export function numeral(held: Numeric): string {
-  return typeof held === "number" ? String(held) : held.rawJSON;
-}
-
 /** Where a module is: its bytes, or where to fetch them from. */
 export type Source = string | URL | Response | ArrayBuffer | ArrayBufferView;
 
@@ -149,7 +84,6 @@ export async function load(
   supplied: Supplied = {},
   fingerprint?: string,
 ): Promise<Program> {
-  requireNumbersAsWritten();
   const module = await WebAssembly.compile(await asBytes(source));
   const [surface, held] = surfaceOf(module);
   if (fingerprint !== undefined) {
@@ -226,9 +160,13 @@ interface Exports {
 export class Program {
   #exports: Exports | undefined;
   readonly #supplied: Supplied;
-  readonly #crossings: ReadonlyMap<number, string>;
+  /** Each behavior the program reaches out for, and what it is called, by the number it reaches out under. */
+  readonly #crossings: ReadonlyMap<number, { readonly named: string; readonly behavior: Behavior }>;
   readonly #surface: Surface;
   readonly #decodable: ReadonlyMap<string, number>;
+  readonly #values: Values;
+  /** What each behavior a caller calls answers, by what it is exported as. */
+  readonly #answers: ReadonlyMap<string, Shape>;
 
   constructor(supplied: Supplied, surface: Surface) {
     this.#supplied = supplied;
@@ -238,7 +176,12 @@ export class Program {
     this.#crossings = new Map(surface.modules
       .flatMap((module) => module.behaviors
         .filter((behavior) => behavior.reachOut !== undefined)
-        .map((behavior) => [behavior.reachOut as number, `${module.name}.${behavior.name}`])));
+        .map((behavior) => [behavior.reachOut as number, { named: `${module.name}.${behavior.name}`, behavior }])));
+    this.#answers = new Map(surface.modules
+      .flatMap((module) => module.behaviors)
+      .filter((behavior) => behavior.export !== undefined)
+      .map((behavior) => [behavior.export as string, behavior.answers]));
+    this.#values = new Values(surface);
     this.#surface = surface;
     // Resolved once, by name: the numbers are this module's, and only its own surface says which
     // type each one is.
@@ -264,7 +207,7 @@ export class Program {
 
   /** What this program reaches out for, which is what has to be supplied to load it. */
   get reachesOutFor(): string[] {
-    return [...this.#crossings.values()];
+    return [...this.#crossings.values()].map((crossing) => crossing.named);
   }
 
   /**
@@ -284,10 +227,11 @@ export class Program {
   call<T = unknown>(behavior: string, args: readonly unknown[]): Reading<T> {
     const reach = this.#held()[behavior] as ((at: number, length: number) => [number, number])
       | undefined;
-    if (reach === undefined) {
+    const answers = this.#answers.get(behavior);
+    if (reach === undefined || answers === undefined) {
       throw new Error(`${behavior} is not a behavior this program offers`);
     }
-    return this.#crossed(args, reach) as Reading<T>;
+    return this.#crossed(args, reach, answers) as Reading<T>;
   }
 
   /**
@@ -310,24 +254,62 @@ export class Program {
    * @param type the type, module and all: `cart.Sku`
    */
   decoder<T = unknown>(type: string): Decoder<T> {
+    return this.#reading<T>(type, (input) => input);
+  }
+
+  /**
+   * A type the program publishes, as a Raoh decoder of what a form gives: the same reading as
+   * {@link decoder}, of a value whose numbers and yes-or-nos may be the text typed for them. Text
+   * that spells a JSON number where the type has a number is read as that number, and `"true"` and
+   * `"false"` where it has a yes or no as those: what the text spells decides it. Any other text is
+   * handed over as it was typed, the empty string included, and the model says what is wrong with
+   * it at its path. A page that means an empty box to be nothing says so with
+   * {@link FormDecoder.emptyAsNothing}.
+   *
+   * @param type the type, module and all: `cart.Cart`
+   */
+  formDecoder<T = unknown>(type: string): FormDecoder<T> {
+    return this.#form<T>(type, AS_TYPED);
+  }
+
+  #form<T>(type: string, policy: FormPolicy): FormDecoder<T> {
+    const shape = this.#shapeOf(type);
+    return new FormDecoder<T>(this.#read<T>(type, (input) => this.#values.typed(shape, input, policy)),
+      (chosen) => this.#form<T>(type, chosen));
+  }
+
+  #reading<T>(type: string, given: (input: unknown) => unknown): Decoder<T> {
+    return new ModuleDecoder<T>(this.#read<T>(type, given));
+  }
+
+  /** How a value of `type` is read: what `given` makes of it, handed to the module. */
+  #read<T>(type: string, given: (input: unknown) => unknown): (input: unknown) => Reading<T> {
     const number = this.#decodable.get(type);
     if (number === undefined) {
       throw new Error(`${type} is not a type this program offers to read`);
     }
-    return new ModuleDecoder<T>((input) =>
-      this.#crossed(input === undefined ? null : input,
-        (at, length) => this.#held().__souther_decode(number, at, length)) as Reading<T>);
+    const shape = this.#shapeOf(type);
+    return (input) =>
+      this.#crossed(input === undefined ? null : given(input),
+        (at, length) => this.#held().__souther_decode(number, at, length), shape) as Reading<T>;
+  }
+
+  /** The shape a type the program declares is written as: the type itself, by its module and name. */
+  #shapeOf(type: string): Shape {
+    const at = type.lastIndexOf(".");
+    return { is: "declared", module: type.slice(0, at), name: type.slice(at + 1) };
   }
 
   /**
    * Hands `document` to `reach` as JSON in the module's memory, and reads what it answers.
    *
-   * The document is written as Raoh writes the input model, so a number read with Raoh's `parse`
-   * crosses as its digits and an object's members keep their order. What comes back is the value,
-   * every number a module writes too wide for a JavaScript number an `Amount`; or the issues, read
-   * as Raoh reads JSON, so that none of what they say is rounded.
+   * The document is written as Raoh writes the input model, so a `bigint`, a `Decimal` or a number
+   * read with Raoh's `parse` crosses as its digits and an object's members keep their order. What
+   * comes back is read as Raoh reads JSON, so none of it is rounded: the value, read as `answers`
+   * says it is, or the issues.
    */
-  #crossed(document: unknown, reach: (at: number, length: number) => [number, number]): Result<unknown> {
+  #crossed(document: unknown, reach: (at: number, length: number) => [number, number], answers: Shape):
+    Result<unknown> {
     const exports = this.#held();
     const generation = exports.__souther_failure_generation();
     const mark = exports.__ronto_alloc_mark();
@@ -338,9 +320,11 @@ export class Program {
       // made over the old one writes where nothing will read.
       this.#bytes().set(written, at);
       const [pointer, length] = reach(at, written.length);
-      const text = decoder.decode(this.#bytes().subarray(pointer, pointer + length));
-      const answer = read(text) as { readonly value?: unknown; readonly issues?: unknown };
-      return answer.issues === undefined ? { value: answer.value } : failed(issuesIn(text));
+      const answer = parse(decoder.decode(this.#bytes().subarray(pointer, pointer + length)));
+      if (!(answer instanceof Map)) {
+        throw new Error("the module answered something other than an object");
+      }
+      return answer.has("issues") ? failed(issuesIn(answer)) : { value: this.#values.read(answers, answer.get("value")) };
     } catch (trapped) {
       throw this.#whyItEnded(generation, trapped);
     } finally {
@@ -356,18 +340,24 @@ export class Program {
    */
   reachOut(ordinal: number, at: number, length: number, into: number, room: number): number {
     const crossing = this.#crossings.get(ordinal);
-    const supplied = crossing === undefined ? undefined : this.#supplied[crossing];
-    if (supplied === undefined) {
+    const supplied = crossing === undefined ? undefined : this.#supplied[crossing.named];
+    if (crossing === undefined || supplied === undefined) {
       throw new Error(crossing === undefined
         ? `this program reached out under a number it does not name: ${ordinal}`
-        : `${crossing} is reached out for and nothing was supplied for it`);
+        : `${crossing.named} is reached out for and nothing was supplied for it`);
     }
-    const asked = read(decoder.decode(this.#bytes().subarray(at, at + length))) as never[];
-    const written = encoder.encode(stringify(supplied(...asked)));
-    if (written.length <= room) {
-      this.#bytes().set(written, into);
+    // What is asked is read as the behavior's parameters are, as a value the module answers is.
+    const written = parse(decoder.decode(this.#bytes().subarray(at, at + length)));
+    const parameters = crossing.behavior.parameters;
+    if (!Array.isArray(written) || written.length !== parameters.length) {
+      throw new Error(`${crossing.named} was asked something other than its ${parameters.length} arguments`);
     }
-    return written.length;
+    const asked = written.map((each, place) => this.#values.read(parameters[place]!.type, each)) as never[];
+    const answer = encoder.encode(stringify(supplied(...asked)));
+    if (answer.length <= room) {
+      this.#bytes().set(answer, into);
+    }
+    return answer.length;
   }
 
   #held(): Exports {
@@ -412,70 +402,23 @@ class ModuleDecoder<T> extends Decoder<T> {
 }
 
 /**
- * Whether a document may hold a number no JavaScript number holds: one written with sixteen digits
- * or more, or with a power of ten. A number of fifteen significant digits or fewer and no power of
- * ten comes back from a JavaScript number as the amount it was, so a document with neither is read
- * without asking after each number — which is most of what reading one otherwise costs. Digits in
- * a string can only make this say yes where the answer is no, and that costs the slower read and
- * nothing else.
+ * A type a module publishes, read as a form gives it, with what a page chooses of how its form is
+ * read beyond what the text spells.
  */
-const WIDE = /\d[\d.]{15}|\d[eE]/;
+export class FormDecoder<T> extends ModuleDecoder<T> {
+  readonly #chosen: (policy: FormPolicy) => FormDecoder<T>;
 
-/**
- * A document, read with every number kept as it was written where a number cannot hold it: an
- * `Amount` of the digits wherever the nearest JavaScript number is a different amount, which is
- * handed over again as the number it is.
- */
-function read(text: string): unknown {
-  if (!WIDE.test(text)) {
-    return JSON.parse(text);
+  constructor(read: (input: unknown) => Reading<T>, chosen: (policy: FormPolicy) => FormDecoder<T>) {
+    super(read);
+    this.#chosen = chosen;
   }
-  return JSON.parse(text, function (_key, value, context?: { source?: string }) {
-    // Most numbers are written as a JavaScript number writes them, and those it holds exactly.
-    if (typeof value !== "number" || context?.source === undefined
-      || context.source === String(value)) {
-      return value;
-    }
-    return sameAmount(String(value), context.source) ? value : raw(context.source);
-  });
+
+  /**
+   * The same reading, an empty string where the type has an optional value read as nothing: what
+   * an empty box means to a page that chooses it, where an optional String could otherwise hold the
+   * empty string. An empty box where a value is required is still handed over as it is.
+   */
+  emptyAsNothing(): FormDecoder<T> {
+    return this.#chosen({ emptyAsNothing: true });
+  }
 }
-
-/**
- * Whether two texts written as JSON numbers are the same amount, however each is written.
- *
- * Compared in the one form each amount has, and never by lining the two up: lining up `0` and
- * `1e-1000000000` would write out a number a billion digits long, for a text of fourteen bytes.
- */
-function sameAmount(left: string, right: string): boolean {
-  const a = partsOf(left);
-  const b = partsOf(right);
-  if (a === undefined || b === undefined) {
-    return left === right;
-  }
-  return a.negative === b.negative && a.digits === b.digits && a.power === b.power;
-}
-
-/**
- * A number as JSON writes one, in the one form its amount has: whether it is below nothing, its
- * digits with no zero leading or trailing, and the power of ten they are multiplied by. Nothing is
- * no digits, whatever sign or power it was written with. What it costs is the text's length, so a
- * power however large is only read and never raised.
- */
-function partsOf(written: string): { negative: boolean; digits: string; power: bigint } | undefined {
-  const held = /^(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([-+]?\d+))?$/.exec(written);
-  if (held === null) {
-    return undefined;
-  }
-  const [, sign, whole, fraction = "", power = "0"] = held;
-  const significant = (whole + fraction).replace(/^0+/, "");
-  const digits = significant.replace(/0+$/, "");
-  if (digits === "") {
-    return { negative: false, digits: "", power: 0n };
-  }
-  return {
-    negative: sign === "-",
-    digits,
-    power: BigInt(power) - BigInt(fraction.length) + BigInt(significant.length - digits.length),
-  };
-}
-

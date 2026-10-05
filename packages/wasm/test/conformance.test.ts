@@ -11,7 +11,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { Decimal, type Issue, JsonNumber, parse } from "@raoh/core";
-import { amount, load, messageOf, type Program } from "../src/index.ts";
+import { load, messageOf, type Program } from "../src/index.ts";
 import { compiled, ROOT } from "./compiled.ts";
 
 const FIXTURES = join(ROOT, "conformance", "issues");
@@ -27,7 +27,7 @@ interface Case {
 /** A fixture, its numbers read as the digits they were written as, so none is rounded on the way. */
 function fixture(file: string): { model: string; cases: Case[] } {
   return JSON.parse(readFileSync(file, "utf-8"), (_key, value, context?: { source?: string }) =>
-    typeof value === "number" && context?.source !== undefined ? amount(context.source) : value);
+    typeof value === "number" && context?.source !== undefined ? new JsonNumber(context.source) : value);
 }
 
 /**

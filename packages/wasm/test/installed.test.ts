@@ -51,7 +51,7 @@ let counted (lines) = List.length(lines)
 // @raoh/core and the one the package was built against have to be one, or the part's issues could
 // not be said at the part's path.
 const PAGE = `import { field, int, list, object } from "@raoh/core";
-import { amount, messageOf } from "@souther/wasm";
+import { messageOf } from "@souther/wasm";
 import { load } from "./binding.ts";
 
 export async function counted(bytes: Uint8Array): Promise<unknown[]> {
@@ -59,7 +59,7 @@ export async function counted(bytes: Uint8Array): Promise<unknown[]> {
   const order = object(field("lines", list(shop.decode.shop.Line)), field("count", int()));
   const read = order.decode({ lines: [{ sku: "A", quantity: "two" }], count: 1 });
   return [
-    shop.modules.shop.counted([{ sku: "A", quantity: amount("1"), note: null }]).value,
+    shop.modules.shop.counted([{ sku: "A", quantity: 1n, note: null }]).value,
     read.issues?.list.map((issue) => [issue.path.toString(), messageOf(issue, "en")]),
   ];
 }
@@ -92,7 +92,7 @@ it("is used from where it is installed, as the README says", async () => {
     private: true,
     // The package asks the project for @raoh/core, as a peer, so the project depends on it itself.
     dependencies: { "@raoh/core": `file:${join(built, BUILT.raoh)}` },
-    // The package names the peer it was built against by its git commit; the archive is that.
+    // The package names the peer it was built against by its version; the archive is that.
     overrides: { "@raoh/core": "$@raoh/core" },
   }));
   await run("npm", ["install", "--offline", "--no-audit", "--no-fund", join(built, BUILT.souther)],
@@ -129,7 +129,7 @@ it("is used from where it is installed, as the README says", async () => {
   }
   const page = await import(join(project, "page.js"));
   assert.deepEqual(await page.counted(new Uint8Array(readFileSync(join(project, BUILT.model)))),
-    [1, [["/lines/0/quantity", "expected long"]]]);
+    [1n, [["/lines/0/quantity", "expected long"]]]);
 });
 
 /**
@@ -137,10 +137,8 @@ it("is used from where it is installed, as the README says", async () => {
  *
  * Packing builds the package, as publishing does: what is installed is what would be published.
  * @raoh/core is archived from what this directory installed, so that installing reaches nothing
- * outside this machine: it is depended on from git, which an offline install cannot fetch. Its files
- * are archived as they were installed, built, as the registry would hand them over: npm runs a
- * package's prepare when it packs it or installs it from a directory, and an installed package
- * carries no sources to build from.
+ * outside this machine, which an offline install of it from the registry would have to reach. Its
+ * files are archived as they were installed, as the registry handed them over.
  */
 async function archive(built: string): Promise<void> {
   const packed = (await run("npm", ["pack", "--silent", "--pack-destination", built], { cwd: PACKAGE }))

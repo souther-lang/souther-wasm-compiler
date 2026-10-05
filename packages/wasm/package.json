@@ -41,11 +41,11 @@
     "compile-tests": "tsc -p tsconfig.runtime.json"
   },
   "devDependencies": {
-    "@raoh/core": "github:raoh-project/raoh-ts#1397d5c93a8d9d79b5ec7b67c6266032831d9b71",
+    "@raoh/core": "0.9.0-dev.17.20261004233405.g79260ab5b21b",
     "@types/node": "^22.20.5",
     "typescript": "^5.9.0"
   },
   "peerDependencies": {
-    "@raoh/core": "github:raoh-project/raoh-ts#1397d5c93a8d9d79b5ec7b67c6266032831d9b71"
+    "@raoh/core": "0.9.0-dev.17.20261004233405.g79260ab5b21b"
   }
 }

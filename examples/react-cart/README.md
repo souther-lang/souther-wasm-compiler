@@ -95,19 +95,32 @@ own surface each time the model is compiled. It types every value the page hands
 back, so the page reads `answer.value.type === "Priced"` against the cases the model declares, and
 it refuses to load any module but the one it was written from.
 
+## What the page hands over
+
+The boxes of the form hold text, and the page hands that over as it is, read as a form gives a
+basket:
+
+    const read = cart.form.cart.Cart.decode({ lines, member });
+
+Text that spells a number where the model has an `Int` or a `Decimal` is that number; any other text
+goes over as it was typed, and the model says what is wrong with it, where it is. The page shows
+each complaint beside the box it is about, by its path, `read.issues?.at(["lines", 0, "quantity"])`,
+in the reader's language from Raoh's catalog. Nothing in the page says what a quantity or a product
+code is.
+
 ## Amounts
 
 An amount is held to whatever precision it was written with. A JavaScript number is not, so an
-amount put through one is rounded before the model ever sees it and rounded again coming back.
+amount put through one is rounded before the model ever sees it and rounded again coming back. So
+an `Int` crosses as a `bigint` and a `Decimal` as raoh-ts's `Decimal`, both ways:
 
-    import { amount } from "@souther/wasm";
-    cart.modules.cart.price({ lines: [{ sku, quantity: 1, unitPrice: amount("12345678901234567890.12345") }], member });
+    import { Decimal } from "@raoh/core";
+    cart.modules.cart.price({ lines: [{ sku, quantity: 1n, unitPrice: Decimal.parse("12345678901234567890.12345")! }], member });
 
-`amount` carries the digits. Coming back, a number is a number wherever one holds what the model
-answered and an amount wherever one does not, so a total is a `Numeric`, one or the other.
-`numeral(total)` is its digits for showing. Handed over again, an amount is the number it is and not
-a string: the binding takes a number or an amount where the model takes an `Int` or a `Decimal`, and
-a page handing over a string does not compile.
+What comes back is the same types, so a total is a `Decimal` whatever its digits, `total.toString()`
+writes them, and handed over again it is the number it is. The binding takes a `bigint` where the
+model takes an `Int` and a `Decimal` where it takes a `Decimal`, and a page handing over a string or
+a JavaScript number does not compile; a form's text is read by the form's decoder, above.
 
 An amount that crosses out carries no scale: the model answers `1.1` where it was handed `1.10`,
 because how much it is and how it was written are two things and only the first is the amount. A

@@ -10,23 +10,29 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { field, object, string } from "@raoh/core";
-import { amount, load as loadModule, messageOf, numeral, READS, type Numeric } from "@souther/wasm";
+import { Decimal, field, object, string } from "@raoh/core";
+import { load as loadModule, messageOf, READS } from "@souther/wasm";
+import { yen } from "./src/amount.ts";
 import { load, type Cart } from "./src/cart.ts";
 
 const bound = await load(readFileSync("public/cart.wasm"));
 const program = bound.program;
 let wrong = 0;
 
+/** A value as it is compared: a bigint as its digits and a type of its own, and a Decimal as its digits. */
+function shown(value: unknown): string {
+  return JSON.stringify(value, (_key, held) => (typeof held === "bigint" ? `${held}n` : held));
+}
+
 function same(what: string, held: unknown, wanted: unknown): void {
-  const written = JSON.stringify(held);
-  if (written !== JSON.stringify(wanted)) {
-    console.error(`${what}\n  answered ${written}\n  and not  ${JSON.stringify(wanted)}`);
+  const written = shown(held);
+  if (written !== shown(wanted)) {
+    console.error(`${what}\n  answered ${written}\n  and not  ${shown(wanted)}`);
     wrong += 1;
   }
 }
 
-/** What a basket's subtotal comes to, through the binding: a number, or an amount where one cannot hold it. */
+/** What a basket's subtotal comes to, through the binding. */
 function subtotal(cart: Cart): unknown {
   const answer = bound.modules.cart.price(cart);
   return answer.value?.type === "Priced" ? answer.value.subtotal : answer;
@@ -61,15 +67,35 @@ same("a product code that is not one, read as a part of a form",
 
 same("a basket with something in it",
   bound.modules.cart.price({
-    lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: 1500 }], member: "Standard",
+    lines: [{ sku: "ABC-1234", quantity: 2n, unitPrice: Decimal.of(1500) }], member: "Standard",
   }),
-  { value: { type: "Priced", subtotal: 3000, discount: 0, shipping: 500, total: 3500 } });
+  { value: { type: "Priced", subtotal: Decimal.of(3000), discount: Decimal.of(0), shipping: Decimal.of(500),
+    total: Decimal.of(3500) } });
+
+// What a form gives is text in every box. Read as a form gives it, the text of a number is the
+// number, and text that is no number is the model's to say so of, where it is.
+same("a basket typed into a form",
+  bound.form.cart.Cart.decode({
+    lines: [{ sku: "ABC-1234", quantity: "2", unitPrice: "1500.00" }], member: "Standard",
+  }),
+  { value: { lines: [{ sku: "ABC-1234", quantity: 2n, unitPrice: Decimal.of(1500) }], member: "Standard" } });
+{
+  const typed = bound.form.cart.Cart.decode({
+    lines: [{ sku: "nope", quantity: "two", unitPrice: "1500.00" }], member: "Standard",
+  });
+  same("what is wrong with a line typed into a form, where it is",
+    [typed.issues?.at(["lines", 0, "sku"]).map((it) => it.code),
+      typed.issues?.at(["lines", 0, "quantity"]).map((it) => messageOf(it, "en")),
+      typed.issues?.at(["lines", 0, "unitPrice"])],
+    [["invalid_format"], ["expected long"], []]);
+}
 
 same("a member's tenth, and what is left shipping free",
   program.call("cart.price", [{
     lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: 3000 }], member: "Premium",
   }]),
-  { value: { type: "Priced", subtotal: 6000, discount: 600, shipping: 0, total: 5400 } });
+  { value: { type: "Priced", subtotal: Decimal.of(6000), discount: Decimal.of(600), shipping: Decimal.of(0),
+    total: Decimal.of(5400) } });
 
 same("a basket with nothing in it",
   program.call("cart.price", [{ lines: [], member: "Standard" }]),
@@ -85,7 +111,7 @@ same("a product code that is not one",
 // What a person reads of it is written from Raoh's catalog, in their language, and nowhere here.
 {
   const answer = bound.modules.cart.price({
-    lines: [{ sku: "ABC-1234", quantity: 0, unitPrice: 1 }], member: "Standard",
+    lines: [{ sku: "ABC-1234", quantity: 0n, unitPrice: Decimal.of(1) }], member: "Standard",
   });
   same("what is read of a line of none, in English",
     answer.issues?.list.map((issue) => messageOf(issue, "en")),
@@ -106,9 +132,9 @@ same("a quantity that is not a number",
 for (let i = 1; i <= 10; i++) {
   same(`call ${i}`,
     subtotal({
-      lines: [{ sku: "ABC-1234", quantity: i, unitPrice: 1000 }], member: "Standard",
+      lines: [{ sku: "ABC-1234", quantity: BigInt(i), unitPrice: Decimal.of(1000) }], member: "Standard",
     }),
-    i * 1000);
+    Decimal.of(i * 1000));
 }
 
 // What a call with the wrong number of arguments comes to, which is an answer and not an ending:
@@ -118,48 +144,35 @@ same("a call given nothing",
   { issues: [{ path: "", code: "invalid_size", messageKey: "invalid_size",
     message: "must have exactly 1 elements", meta: { actual: 0, expected: 1 } }] });
 
-// An amount is held to whatever precision it was written with, and a JavaScript number is not. So
-// one is handed over as its digits and comes back as its digits wherever a number could not have
-// carried them — which is the only way a caller reads what the model worked out rather than what
-// survived being read.
+// A Decimal is held to whatever precision it was written with, and a JavaScript number is not. So
+// one is handed over as its digits and comes back as its digits, however many there are — which is
+// the only way a caller reads what the model worked out rather than what survived being read.
 const wide = "12345678901234567890.12345";
 const widely = subtotal({
-  lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount(wide) }], member: "Standard",
+  lines: [{ sku: "ABC-1234", quantity: 1n, unitPrice: Decimal.parse(wide)! }], member: "Standard",
 });
-same("an amount wider than a number holds", widely, amount(wide));
-same("an amount wider than a number holds, as its digits", numeral(widely as Numeric), wide);
-// What came back is handed over again as the number it is, and not as a string the model would
-// refuse: an answer is something a caller passes on.
-same("an amount handed back, handed over again",
+same("a Decimal wider than a number holds", widely, Decimal.parse(wide));
+// What came back is handed over again as the number it is: an answer is something a caller passes on.
+same("a Decimal handed back, handed over again",
   subtotal({
-    lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: widely as Numeric }], member: "Standard",
+    lines: [{ sku: "ABC-1234", quantity: 2n, unitPrice: widely as Decimal }], member: "Standard",
   }),
-  amount("24691357802469135780.2469"));
-same("an amount a number does hold",
+  Decimal.parse("24691357802469135780.2469"));
+same("a Decimal written with a power of ten",
   subtotal({
-    lines: [{ sku: "ABC-1234", quantity: 2, unitPrice: amount("1500.00") }], member: "Standard",
+    lines: [{ sku: "ABC-1234", quantity: 1n, unitPrice: Decimal.parse("1.5e3")! }], member: "Standard",
   }),
-  3000);
-// Written one way and written back another, and the same amount either way: what the two are
-// compared by is how much each is and not which digits each is written with.
-same("an amount written with a point where the answer has none",
-  subtotal({
-    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1500.000") }], member: "Standard",
-  }),
-  1500);
-// An amount a number holds exactly and writes another way round: the model writes the digits out
-// and a JavaScript number writes a power of ten, so the two texts differ and the two amounts do
-// not. Comparing the digits without the point would call these two amounts.
-same("an amount a number writes as a power of ten",
-  subtotal({
-    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1e21") }], member: "Standard",
-  }),
-  1e21);
-same("an amount written as a power of ten",
-  subtotal({
-    lines: [{ sku: "ABC-1234", quantity: 1, unitPrice: amount("1.5e3") }], member: "Standard",
-  }),
-  1500);
+  Decimal.of(1500));
+
+// What the page shows of an amount is every digit the Decimal holds, its whole part grouped: past
+// the places and the powers of ten a number formatter takes, nothing is rounded or dropped.
+same("an amount, shown",
+  ["1234567.89", "1.1234567890123456789012345", "1E+1000", "1E-1000", "-0.001", "1000", "999"]
+    .map((written) => yen(Decimal.parse(written)!)),
+  ["¥1,234,567.89", "¥1.1234567890123456789012345", "¥1E+1000", "¥1E-1000", "¥-0.001", "¥1,000", "¥999"]);
+same("the amount the model answered, shown",
+  yen(subtotal({ lines: [{ sku: "ABC-1234", quantity: 1n, unitPrice: Decimal.parse(wide)! }], member: "Standard" }) as Decimal),
+  "¥12,345,678,901,234,567,890.12345");
 
 // Everything a call made goes back when it is over. What is left standing after many calls is what
 // says the reset ran — a caller that never gave the arena back would leave it climbing.
@@ -189,12 +202,12 @@ let spread (pair, today, yesterday) = today(pair) - yesterday(pair)
   const jar = readdirSync("../../target").find((name) => name.endsWith("-cli.jar"))!;
   execFileSync("java", ["-jar", join("../../target", jar), at, "-o", join(at, "rates.wasm")]);
   const reaching = await loadModule(readFileSync(join(at, "rates.wasm")), {
-    "rates.today": (pair: string) => (pair === "USDJPY" ? 150 : 0),
-    "rates.yesterday": (pair: string) => (pair === "USDJPY" ? 147 : 0),
+    "rates.today": (pair: string) => (pair === "USDJPY" ? 150n : 0n),
+    "rates.yesterday": (pair: string) => (pair === "USDJPY" ? 147n : 0n),
   });
   same("what it reaches out for", reaching.reachesOutFor, ["rates.today", "rates.yesterday"]);
   same("what it answers from what was supplied", reaching.call("rates.spread", ["USDJPY"]),
-    { value: 3 });
+    { value: 3n });
 }
 
 // A module whose surface is of another version is refused when it is loaded, rather than read as

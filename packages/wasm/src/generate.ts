@@ -5,13 +5,7 @@
 // own. Nothing about a model is decided here, so a case renamed in the model is a type renamed in
 // the binding, and a page that still names the old one does not compile.
 
-import type { Declaration, Form, Shape, Surface } from "./surface.ts";
-
-/** How a primitive standing as a case of an answer is tagged: by its name in the language. */
-const PRIMITIVE_TAGS: Readonly<Record<string, string>> = {
-  string: "String", int: "Int", bool: "Bool", decimal: "Decimal",
-  date: "Date", time: "Time", datetime: "DateTime", instant: "Instant",
-};
+import { type Declaration, type Form, keyOf as key, type Shape, type Surface, tagOf } from "./surface.ts";
 
 /**
  * What no name the binding declares at its top may be: what TypeScript reserves, what a type alias
@@ -82,7 +76,7 @@ function identifier(name: string): string {
  *
  * What the model names is the binding's to call whatever it likes only where a property says it: a
  * module, a behavior and a type a value is read as are each a property, under the name the model
- * gives it, so `bound.modules.cart.price` and `bound.decode.cart.Sku`. What is declared at the top
+ * gives it, so `bound.modules.cart.price`, `bound.decode.cart.Sku` and `bound.form.cart.Cart`. What is declared at the top
  * — a type for each declaration — is named by `Names`, apart from what TypeScript reserves and what
  * the binding declares itself, and the runtime is read through one name, so no type of the model's
  * stands in for one of the runtime's.
@@ -135,7 +129,7 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
     decodable.set(declaration.module, [...decodable.get(declaration.module) ?? [], declaration]);
   }
 
-  out.push("/** The program, loaded: each module's behaviors, and a Raoh decoder of each type a value can be read as on its own. */");
+  out.push("/** The program, loaded: each module's behaviors, and Raoh decoders of each type a value can be read as on its own, of a value and of what a form gives. */");
   out.push(`export interface ${OWN.bound} {`);
   out.push(`  readonly program: ${R}.Program;`);
   out.push("  readonly modules: {");
@@ -147,15 +141,17 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
     out.push("    };");
   }
   out.push("  };");
-  out.push("  readonly decode: {");
-  for (const [module, declarations] of decodable) {
-    out.push(`    readonly ${property(module)}: {`);
-    for (const declaration of declarations) {
-      out.push(`      readonly ${property(declaration.name)}: ${R}.Decoder<${names.get(key(declaration))}>;`);
+  for (const [reading, decoderType] of [["decode", "Decoder"], ["form", "FormDecoder"]]) {
+    out.push(`  readonly ${reading}: {`);
+    for (const [module, declarations] of decodable) {
+      out.push(`    readonly ${property(module)}: {`);
+      for (const declaration of declarations) {
+        out.push(`      readonly ${property(declaration.name)}: ${R}.${decoderType}<${names.get(key(declaration))}>;`);
+      }
+      out.push("    };");
     }
-    out.push("    };");
+    out.push("  };");
   }
-  out.push("  };");
   out.push("}");
   out.push("");
 
@@ -179,15 +175,17 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
     out.push("      },");
   }
   out.push("    },");
-  out.push("    decode: {");
-  for (const [module, declarations] of decodable) {
-    out.push(`      ${property(module)}: {`);
-    for (const declaration of declarations) {
-      out.push(`        ${property(declaration.name)}: program.decoder(${JSON.stringify(key(declaration))}),`);
+  for (const [reading, made] of [["decode", "decoder"], ["form", "formDecoder"]]) {
+    out.push(`    ${reading}: {`);
+    for (const [module, declarations] of decodable) {
+      out.push(`      ${property(module)}: {`);
+      for (const declaration of declarations) {
+        out.push(`        ${property(declaration.name)}: program.${made}(${JSON.stringify(key(declaration))}),`);
+      }
+      out.push("      },");
     }
-    out.push("      },");
+    out.push("    },");
   }
-  out.push("    },");
   out.push("  };");
   out.push("  return bound;");
   out.push("}");
@@ -197,10 +195,6 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
 /** A property's name as TypeScript writes it: bare where it can be, quoted where it cannot. */
 function property(name: string): string {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
-}
-
-function key(declaration: { module: string; name: string }): string {
-  return `${declaration.module}.${declaration.name}`;
 }
 
 /**
@@ -296,25 +290,16 @@ function alternatives(
   }).join(" | ");
 }
 
-function tagOf(shape: Shape): string {
-  switch (shape.is) {
-    case "declared":
-      return shape.name;
-    case "scalar":
-      return PRIMITIVE_TAGS[shape.scalar];
-    default:
-      throw new Error(`a case is a declaration or a primitive, and this is ${shape.is}`);
-  }
-}
-
 function written(shape: Shape, names: Map<string, string>, declared: Map<string, Declaration>): string {
   const typeOf = (inner: Shape): string => written(inner, names, declared);
   switch (shape.is) {
     case "scalar":
       switch (shape.scalar) {
+        // As Raoh's long() and decimal() give them, so nothing counted or priced is rounded.
         case "int":
+          return "bigint";
         case "decimal":
-          return `${R}.Numeric`;
+          return `${R}.Decimal`;
         case "bool":
           return "boolean";
         default:
