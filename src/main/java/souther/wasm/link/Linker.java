@@ -23,7 +23,8 @@ import souther.wasm.link.WasmFragment.Segment;
  *
  * <p>The thunk exists because a start function takes and answers nothing, while the runtime has to
  * be told where its arena begins — a number that is not settled until the last segment is placed.
- * So the thunk pushes that number and calls {@link RuntimeAbi#RUNTIME_INIT}. Where the runtime
+ * So the thunk pushes that number, and where the program's descriptors of the primitives are, and
+ * calls {@link RuntimeAbi#RUNTIME_INIT}. Where the runtime
  * claimed the start slot itself, the thunk calls that first: a module has one start, and what the
  * runtime meant to run before anything else still has to run before anything else.
  *
@@ -95,7 +96,8 @@ public final class Linker {
         RuntimeLayout layout = plan.layout();
 
         int thunkType = fragment.functionType(List.of(), List.of());
-        int thunk = fragment.define(thunkType, startThunkBody(plan, layout, fragment.staticEnd()));
+        int thunk = fragment.define(thunkType,
+                startThunkBody(plan, layout, fragment.staticEnd(), fragment.primitives()));
 
         Map<Integer, byte[]> sections = new LinkedHashMap<>();
         for (RawSection section : new LayoutReader(runtime).rawSections()) {
@@ -219,7 +221,8 @@ public final class Linker {
      * <p>Nothing but what has to run before the first call: whatever the runtime already started
      * with, and then the arena's placement.
      */
-    private static byte[] startThunkBody(LinkPlan plan, RuntimeLayout layout, int staticEnd) {
+    private static byte[] startThunkBody(LinkPlan plan, RuntimeLayout layout, int staticEnd,
+            int primitives) {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         WasmWriter writer = new WasmWriter(body);
         writer.writeUnsignedLeb128(0); // no locals
@@ -228,6 +231,8 @@ public final class Linker {
                 .writeUnsignedLeb128(existing));
         writer.write((byte) OPCODE_I32_CONST)
                 .writeSignedLeb128(staticEnd)
+                .write((byte) OPCODE_I32_CONST)
+                .writeSignedLeb128(primitives)
                 .write((byte) OPCODE_CALL)
                 .writeUnsignedLeb128(plan.functionIndexOf(RuntimeAbi.RUNTIME_INIT))
                 .write((byte) OPCODE_END);

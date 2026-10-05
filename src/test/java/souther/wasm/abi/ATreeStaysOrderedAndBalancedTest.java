@@ -34,7 +34,7 @@ class ATreeStaysOrderedAndBalancedTest {
     /** Where a set's or a map's cell says which tree it is held as. */
     private static final int TREE = 16;
 
-    private final Running runtime = Running.bareRuntime();
+    private final Running runtime = Running.runtimeWithSlots(RuntimeAbi.Operations.ORDER_INT);
 
     @Test
     void keepsASetsTreeOrderedSizedAndBalancedThroughEveryChange() {
@@ -129,16 +129,23 @@ class ATreeStaysOrderedAndBalancedTest {
         return word(collection + TREE);
     }
 
-    /** A descriptor of that kind over those members, written into the runtime's memory. */
+    /**
+     * A descriptor of that kind over those members, written into the runtime's memory: an
+     * {@code Int}'s naming what orders two of them, which is what a set of them and a map keyed by
+     * them ask, and the rest naming nothing.
+     */
     private int descriptor(int kind, int... members) {
-        ByteBuffer words = ByteBuffer.allocate(8 + 12 * members.length).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer words = ByteBuffer.allocate(16 + 8 + 12 * members.length).order(ByteOrder.LITTLE_ENDIAN);
+        words.putInt(0).putInt(0)
+                .putInt(kind == KIND_INT ? runtime.slotOf(RuntimeAbi.Operations.ORDER_INT) : 0)
+                .putInt(0);
         words.putInt(kind).putInt(members.length);
         for (int member : members) {
             words.putInt(0).putInt(0).putInt(member);
         }
         int at = runtime.call(RuntimeAbi.ALLOC, words.capacity());
         runtime.write(at, words.array());
-        return at;
+        return at + 16;
     }
 
     /** What a kernel answers, a cell, for the cells and descriptors it was handed. */

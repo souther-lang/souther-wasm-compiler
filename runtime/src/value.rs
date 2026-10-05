@@ -32,8 +32,8 @@ use crate::decimal;
 use crate::descriptor::{
     self, Carried, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION,
     KIND_INSTANT, KIND_INT, KIND_NEWTYPE,
-    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING, KIND_SUM,
-    KIND_TIME, KIND_TUPLE, KIND_UNIT,
+    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING,
+    KIND_TIME,
 };
 use crate::temporal;
 use crate::order;
@@ -855,30 +855,149 @@ pub unsafe extern "C" fn __souther_read(
     if value == 0 {
         return 0;
     }
-    match descriptor::kind(descriptor) {
-        KIND_INT => integer(value, path, path_length),
-        KIND_BOOL => boolean(value, path, path_length),
-        KIND_STRING => text(value, path, path_length),
-        KIND_DECIMAL => amount(value, path, path_length),
-        KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
-            when(value, descriptor::kind(descriptor), path, path_length)
-        }
-        KIND_UNIT => unit(value, descriptor, path, path_length),
-        KIND_PRODUCT => product(value, descriptor, path, path_length),
-        KIND_NEWTYPE => named_for(value, descriptor, path, path_length),
-        KIND_SUM => sum(value, descriptor, path, path_length),
-        KIND_ENUMERATION => enumeration(value, descriptor, path, path_length),
-        // A tuple is how a body carries two things where one goes. Nothing outside the program is
-        // shown one, so nothing outside writes one either.
-        KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, 0),
-        KIND_LIST => list(value, descriptor, path, path_length, false),
-        KIND_SET => list(value, descriptor, path, path_length, true),
-        KIND_MAP => map(value, descriptor, path, path_length),
-        KIND_OPTION => option(value, descriptor, path, path_length),
-        // Nothing a caller wrote reaches this: a descriptor is placed by the emitter, so a kind
-        // no one knows means this compiler wrote it rather than that a document said something.
-        other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, 0),
+    // Read by the function the descriptor's slot names. A type nothing asked to be read has none:
+    // a tuple, which is how a body carries two things where one goes and which nothing outside the
+    // program is shown, and a kind the compiler wrote that no reader handles.
+    let slot = descriptor::reader(descriptor);
+    if slot == 0 {
+        abort(REASON_NOT_A_VALUE, descriptor, descriptor::kind(descriptor) as u64, 0);
     }
+    let reader: extern "C" fn(u32, u32, u32, u32) -> u32 = core::mem::transmute(slot as usize);
+    reader(value, descriptor, path, path_length)
+}
+
+/// Reads an `Int`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_int(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    integer(value, path, path_length)
+}
+
+/// Reads a `Bool`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_bool(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    boolean(value, path, path_length)
+}
+
+/// Reads a `String`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_string(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    text(value, path, path_length)
+}
+
+/// Reads a `Decimal`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_decimal(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    amount(value, path, path_length)
+}
+
+/// Reads a `Date`, a `Time`, a `DateTime` or an `Instant`, as its descriptor says which.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_temporal(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    when(value, descriptor::kind(descriptor), path, path_length)
+}
+
+/// Reads a value of a type with one value.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_unit(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    unit(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a shape.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_product(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    product(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a name for a value of another type.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_newtype(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    named_for(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a set of alternatives that carries something.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_sum(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    sum(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a set of alternatives that carry nothing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_enumeration(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    enumeration(value, descriptor, path, path_length)
+}
+
+/// Reads a list.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_list(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    list(value, descriptor, path, path_length, false)
+}
+
+/// Reads a set.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_set(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    list(value, descriptor, path, path_length, true)
+}
+
+/// Reads a map.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_map(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    map(value, descriptor, path, path_length)
+}
+
+/// Reads an option.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_option(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    option(value, descriptor, path, path_length)
 }
 
 unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
@@ -1633,80 +1752,142 @@ pub unsafe extern "C" fn __souther_write(cell: u32, descriptor: u32) -> u64 {
     json::packed(at, length)
 }
 
+/// Writes a value by the function its descriptor's slot names. A type nothing asked to be written
+/// has none: a tuple, which nothing outside the program is shown, and a kind no writer handles.
 pub(crate) unsafe fn written(cell: u32, descriptor: u32) {
-    match descriptor::kind(descriptor) {
-        KIND_INT => copied(json::__souther_json_write_int(__souther_int_value(cell))),
-        KIND_BOOL => copied(json::__souther_json_write_bool(__souther_bool_value(cell))),
-        KIND_STRING => copied(json::__souther_json_write_string(
-            __souther_string_bytes(cell),
-            __souther_string_length(cell),
-        )),
-        KIND_DECIMAL => {
-            // The one form of the amount, so that two ways of writing it are one document.
-            let (at, length) = decimal::external(cell);
-            text::push(at, length);
+    let slot = descriptor::writer(descriptor);
+    if slot == 0 {
+        abort(REASON_NOT_A_VALUE, descriptor, descriptor::kind(descriptor) as u64, cell as u64);
+    }
+    let writer: extern "C" fn(u32, u32) = core::mem::transmute(slot as usize);
+    writer(cell, descriptor)
+}
+
+/// Writes an `Int`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_int(cell: u32, _: u32) {
+    copied(json::__souther_json_write_int(__souther_int_value(cell)));
+}
+
+/// Writes a `Bool`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_bool(cell: u32, _: u32) {
+    copied(json::__souther_json_write_bool(__souther_bool_value(cell)));
+}
+
+/// Writes a `String`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_string(cell: u32, _: u32) {
+    copied(json::__souther_json_write_string(
+        __souther_string_bytes(cell),
+        __souther_string_length(cell),
+    ));
+}
+
+/// Writes a `Decimal`, in the one form of the amount, so that two ways of writing it are one
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_decimal(cell: u32, _: u32) {
+    let (at, length) = decimal::external(cell);
+    text::push(at, length);
+}
+
+/// Writes a `Date`, a `Time`, a `DateTime` or an `Instant`, as its descriptor says which.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_temporal(cell: u32, descriptor: u32) {
+    let (at, length) = match descriptor::kind(descriptor) {
+        KIND_DATE => temporal::written_day(cell),
+        KIND_TIME => temporal::written_time(cell),
+        KIND_INSTANT => temporal::written_moment(cell),
+        _ => temporal::written_both(cell),
+    };
+    write(b"\"");
+    text::push(at, length);
+    write(b"\"");
+}
+
+/// Writes a value of a type with one value.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_unit(_: u32, _: u32) {
+    write(b"{}");
+}
+
+/// Writes a value of a shape.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_product(cell: u32, descriptor: u32) {
+    fields(cell, descriptor, false);
+}
+
+/// Writes a value of a name for a value of another type, as the type it is a name for is written.
+/// The name is what a model reads it by and what a clause is about; it is not part of the value
+/// that crosses.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_newtype(cell: u32, descriptor: u32) {
+    written(__souther_record_get(cell, 0), descriptor::member(descriptor, 0));
+}
+
+/// Writes a value of a set of alternatives that carries something.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_sum(cell: u32, descriptor: u32) {
+    tagged(cell, descriptor);
+}
+
+/// Writes a value of a set of alternatives that carry nothing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_enumeration(cell: u32, descriptor: u32) {
+    named(cell, descriptor);
+}
+
+/// Writes a list.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_list(cell: u32, descriptor: u32) {
+    write(b"[");
+    let element = descriptor::member(descriptor, 0);
+    for i in 0..__souther_list_length(cell) {
+        if i > 0 {
+            write(b",");
         }
-        KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
-            let (at, length) = match descriptor::kind(descriptor) {
-                KIND_DATE => temporal::written_day(cell),
-                KIND_TIME => temporal::written_time(cell),
-                KIND_INSTANT => temporal::written_moment(cell),
-                _ => temporal::written_both(cell),
-            };
-            write(b"\"");
-            text::push(at, length);
-            write(b"\"");
+        written(__souther_list_get(cell, i), element);
+    }
+    write(b"]");
+}
+
+/// Writes a set.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_set(cell: u32, descriptor: u32) {
+    write(b"[");
+    members_written(cell, descriptor::member(descriptor, 0));
+    write(b"]");
+}
+
+/// Writes a map.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_map(cell: u32, descriptor: u32) {
+    write(b"{");
+    let keys = descriptor::member(descriptor, 0);
+    let values = descriptor::member(descriptor, 1);
+    for i in 0..__souther_map_length(cell) {
+        if i > 0 {
+            write(b",");
         }
-        KIND_UNIT => write(b"{}"),
-        KIND_PRODUCT => fields(cell, descriptor, false),
-        // Written as the type it is a name for is written. The name is what a model reads it by
-        // and what a clause is about; it is not part of the value that crosses.
-        KIND_NEWTYPE => written(__souther_record_get(cell, 0), descriptor::member(descriptor, 0)),
-        KIND_SUM => tagged(cell, descriptor),
-        KIND_ENUMERATION => named(cell, descriptor),
-        KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, cell as u64),
-        KIND_LIST => {
-            write(b"[");
-            let element = descriptor::member(descriptor, 0);
-            for i in 0..__souther_list_length(cell) {
-                if i > 0 {
-                    write(b",");
-                }
-                written(__souther_list_get(cell, i), element);
-            }
-            write(b"]");
-        }
-        KIND_SET => {
-            write(b"[");
-            members_written(cell, descriptor::member(descriptor, 0));
-            write(b"]");
-        }
-        KIND_MAP => {
-            write(b"{");
-            let keys = descriptor::member(descriptor, 0);
-            let values = descriptor::member(descriptor, 1);
-            for i in 0..__souther_map_length(cell) {
-                if i > 0 {
-                    write(b",");
-                }
-                let (spelt, spelt_length) = key_text(__souther_map_key(cell, i), keys);
-                copied(json::__souther_json_write_string(spelt, spelt_length));
-                write(b":");
-                written(__souther_map_value(cell, i), values);
-            }
-            write(b"}");
-        }
-        KIND_OPTION => {
-            if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
-                write(b"null");
-            } else {
-                written(
-                    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32),
-                    descriptor::member(descriptor, 0),
-                );
-            }
-        }
-        other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
+        let (spelt, spelt_length) = key_text(__souther_map_key(cell, i), keys);
+        copied(json::__souther_json_write_string(spelt, spelt_length));
+        write(b":");
+        written(__souther_map_value(cell, i), values);
+    }
+    write(b"}");
+}
+
+/// Writes an option.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_option(cell: u32, descriptor: u32) {
+    if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
+        write(b"null");
+    } else {
+        written(
+            core::ptr::read_unaligned((cell as usize + HEADER) as *const u32),
+            descriptor::member(descriptor, 0),
+        );
     }
 }
 

@@ -46,6 +46,21 @@
 //! A list and an option are written with one member so that everything with members is read the
 //! same way. What their member is called is nothing, because nothing names it.
 //!
+//! Before every descriptor, sixteen bytes say what reads, writes and orders a value of its type:
+//!
+//! ```text
+//! -16 u32 the slot of its reader       (`__souther_read_*`)
+//! -12 u32 the slot of its writer       (`__souther_write_*`)
+//! -8  u32 the slot of its order        (`__souther_order_*`)
+//! -4  u32 nothing
+//! ```
+//!
+//! Each is filled only where the program asks it of the type, and is nothing otherwise. Which
+//! function answers for a kind is the compiler's to say, because it is the compiler that knows
+//! which kinds a program reads, writes and orders: chosen here by the kind, every reader, writer
+//! and order would be reached from any one of them, and a module reading an `Int` would carry what
+//! normalizes text and what does exact arithmetic with it (issue #44).
+//!
 //! A unit carries its descriptor in its cell and a product carries its own, so which case of a sum
 //! a value is can be asked of the value: the case whose descriptor the cell holds. Both name
 //! themselves after their fields, so what a case is called is asked of the value too, and not of
@@ -139,6 +154,22 @@ pub unsafe fn own_name(descriptor: u32) -> (u32, u32) {
     (read(at), read(at + 4))
 }
 
+/// The slot of what reads a value of the type from a document, or nothing where none is asked.
+pub unsafe fn reader(descriptor: u32) -> u32 {
+    read(descriptor as usize - 16)
+}
+
+/// The slot of what writes a value of the type into a document, or nothing where none is asked.
+pub unsafe fn writer(descriptor: u32) -> u32 {
+    read(descriptor as usize - 12)
+}
+
+/// The slot of what places a value of the type among a set's members, or nothing where none is
+/// asked.
+pub unsafe fn orderer(descriptor: u32) -> u32 {
+    read(descriptor as usize - 8)
+}
+
 /// Where two exact quotients stand, by the function the slot their descriptor holds names.
 pub unsafe fn ordered_exactly(descriptor: u32, left: u32, right: u32) -> i32 {
     let order: extern "C" fn(u32, u32) -> i32 =
@@ -189,24 +220,25 @@ pub unsafe fn carried(case: u32) -> Carried {
     }
 }
 
-/// What a primitive value is, for a place that asks it of the value and not of a type: the
-/// descriptor this runtime holds for each primitive, one address per primitive, so two values of
-/// one primitive are values of one type wherever they were made. Laid out as the compiler lays a
-/// primitive's out, with nothing after the kind but the nought of a type that has no members.
-static PRIMITIVES: [[u32; 2]; 9] = [
-    [KIND_INT, 0],
-    [KIND_BOOL, 0],
-    [KIND_STRING, 0],
-    [KIND_DECIMAL, 0],
-    [KIND_RATIONAL, 0],
-    [KIND_DATE, 0],
-    [KIND_TIME, 0],
-    [KIND_DATE_TIME, 0],
-    [KIND_INSTANT, 0],
-];
+/// Where the program's descriptors of the primitives are: one word per primitive, in the order
+/// `primitive` reads them, nothing where the program holds no descriptor of that primitive.
+///
+/// The program's, and not this runtime's own. What a primitive value is is asked of the value and
+/// not of a type (`order::identity`), and the descriptor answering it is then asked what orders it.
+/// A descriptor this runtime held would have to name every primitive's order itself, and every one
+/// of them would be reached from any.
+static mut PRIMITIVES: u32 = 0;
 
-/// The descriptor this runtime holds for a primitive kind.
-pub fn primitive(kind: u32) -> u32 {
+/// Takes where the program's descriptors of the primitives are, at instantiation.
+pub unsafe fn held_primitives(at: u32) {
+    PRIMITIVES = at;
+}
+
+/// The program's descriptor of a primitive kind, for a value of it asked what it is.
+///
+/// A program holding a value of a primitive holds the primitive's descriptor, so one it does not
+/// hold is this compiler and this runtime disagreeing about what the program holds.
+pub unsafe fn primitive(kind: u32) -> u32 {
     let at = match kind {
         KIND_INT => 0,
         KIND_BOOL => 1,
@@ -217,11 +249,13 @@ pub fn primitive(kind: u32) -> u32 {
         KIND_TIME => 6,
         KIND_DATE_TIME => 7,
         KIND_INSTANT => 8,
-        other => unsafe {
-            crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, 0)
-        },
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, 0),
     };
-    PRIMITIVES[at].as_ptr() as u32
+    let held = if PRIMITIVES == 0 { 0 } else { read(PRIMITIVES as usize + 4 * at) };
+    if held == 0 {
+        crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, kind as u64, 0);
+    }
+    held
 }
 
 /// What a type is called, for telling one case from another where they are written: a unit's,

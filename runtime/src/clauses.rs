@@ -12,8 +12,15 @@
 //! +12 per clause: u32 where its name is, u32 how long, u32 where its constraints are,
 //!                 u32 how many, u32 whether they are the whole clause
 //!
-//! a constraint: u32 its rule, then four u32 its rule reads as it says
+//! a constraint: u32 the slot of what evaluates it, three u32 its rule reads as it says, and u32
+//!               its rule
 //! ```
+//!
+//! What evaluates a constraint is named by the constraint, not chosen here by its rule: a rule
+//! matching a pattern or comparing an amount reaches a machine and exact arithmetic, and chosen
+//! here, every module reading a value with any clause — or, through `__souther_read`, with none —
+//! would carry both (issue #44). One evaluator answers for each family of rules, which reads the
+//! same things of the value.
 //!
 //! What is decided here is only which of a clause's constraints the value breaks, which is asked
 //! of the value; what the clause is as constraints was decided by the checker, and the runtime
@@ -103,33 +110,82 @@ pub unsafe fn broken(cell: u32, descriptor: u32, clause: u32, path: u32, path_le
     issues::issue(issues::CODE_INVARIANT_VIOLATION, path, path_length, meta::end());
 }
 
-/// Whether `held` breaks the constraint at `at`, reporting it where it does.
+/// Whether `held` breaks the constraint at `at`, reporting it where it does: asked of the function
+/// the constraint's slot names.
 unsafe fn constrained(held: u32, of: u32, at: u32, path: u32, path_length: u32) -> bool {
-    let (a, b, c) = (read(at + 4), read(at + 8), read(at + 12));
-    match read(at) {
+    let slot = read(at);
+    if slot == 0 {
+        // Nothing a caller wrote reaches this: the table is the compiler's.
+        crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, at as u64, 0);
+    }
+    let evaluates: extern "C" fn(u32, u32, u32, u32, u32) -> u32 = core::mem::transmute(slot as usize);
+    evaluates(held, of, at, path, path_length) != 0
+}
+
+/// The rule a constraint at `at` is, among its family's, and the three words it reads.
+unsafe fn rule(at: u32) -> (u32, u32, u32, u32) {
+    (read(at + 16), read(at + 4), read(at + 8), read(at + 12))
+}
+
+/// A `String`'s length held to at least, at most, or exactly so many code points.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_constraint_length(held: u32, of: u32, at: u32, path: u32,
+    path_length: u32) -> u32 {
+    let (rule, a, _, _) = rule(at);
+    u32::from(match rule {
         RULE_MIN_LENGTH => sized(code_points(held), a as i64, None, b"too_short", b"too_short",
             b"min", path, path_length),
         RULE_MAX_LENGTH => sized(code_points(held), i64::MIN, Some(a as i64),
             b"too_long", b"too_long", b"max", path, path_length),
         RULE_FIXED_LENGTH => exactly(code_points(held), a as i64, b"invalid_length", path,
             path_length),
-        RULE_PATTERN => {
-            if value::__souther_bool_value(crate::kernel::__souther_string_matches(held, c)) != 0 {
-                return false;
-            }
-            meta::begin();
-            meta::text(b"pattern", a, b);
-            issues::issue(b"invalid_format", path, path_length, meta::end());
-            true
-        }
-        RULE_MIN => bounded(value::__souther_int_value(held), wide(a, b), b"out_of_range.minimum",
-            b"min", true, path, path_length),
-        RULE_MAX => bounded(value::__souther_int_value(held), wide(a, b), b"out_of_range.maximum",
-            b"max", false, path, path_length),
-        RULE_POSITIVE => bounded(value::__souther_int_value(held), 1, b"out_of_range.positive",
-            b"min", true, path, path_length),
-        RULE_NON_NEGATIVE => bounded(value::__souther_int_value(held), 0,
-            b"out_of_range.non_negative", b"min", true, path, path_length),
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, other as u64, 0),
+    })
+}
+
+/// A `String` matching a pattern: where the pattern is written and how long, and where its
+/// machine's image is.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_constraint_pattern(held: u32, of: u32, at: u32, path: u32,
+    path_length: u32) -> u32 {
+    let (rule, a, b, c) = rule(at);
+    if rule != RULE_PATTERN {
+        crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, rule as u64, 0);
+    }
+    if value::__souther_bool_value(crate::kernel::__souther_string_matches(held, c)) != 0 {
+        return 0;
+    }
+    meta::begin();
+    meta::text(b"pattern", a, b);
+    issues::issue(b"invalid_format", path, path_length, meta::end());
+    1
+}
+
+/// An `Int` held to at least, or at most, a bound.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_constraint_bound(held: u32, of: u32, at: u32, path: u32,
+    path_length: u32) -> u32 {
+    let (rule, a, b, _) = rule(at);
+    let actual = value::__souther_int_value(held);
+    u32::from(match rule {
+        RULE_MIN => bounded(actual, wide(a, b), b"out_of_range.minimum", b"min", true, path,
+            path_length),
+        RULE_MAX => bounded(actual, wide(a, b), b"out_of_range.maximum", b"max", false, path,
+            path_length),
+        RULE_POSITIVE => bounded(actual, 1, b"out_of_range.positive", b"min", true, path,
+            path_length),
+        RULE_NON_NEGATIVE => bounded(actual, 0, b"out_of_range.non_negative", b"min", true, path,
+            path_length),
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, other as u64, 0),
+    })
+}
+
+/// A `Decimal` held to at least, or at most, an amount.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_constraint_amount(held: u32, of: u32, at: u32, path: u32,
+    path_length: u32) -> u32 {
+    let (rule, a, b, _) = rule(at);
+    u32::from(match rule {
         RULE_DECIMAL_MIN => amount(held, crate::decimal::parse(a, b), b"out_of_range.minimum",
             b"min", true, path, path_length),
         RULE_DECIMAL_MAX => amount(held, crate::decimal::parse(a, b), b"out_of_range.maximum",
@@ -137,33 +193,61 @@ unsafe fn constrained(held: u32, of: u32, at: u32, path: u32, path_length: u32) 
         RULE_DECIMAL_POSITIVE => {
             let zero = crate::decimal::parse(b"0".as_ptr() as u32, 1);
             if crate::decimal::compare(held, zero) > 0 {
-                return false;
+                return 0;
             }
             out_of_range_amount(held, zero, b"out_of_range.positive", b"min", path, path_length);
             true
         }
         RULE_DECIMAL_NON_NEGATIVE => amount(held, crate::decimal::parse(b"0".as_ptr() as u32, 1),
             b"out_of_range.non_negative", b"min", true, path, path_length),
-        RULE_NON_EMPTY => {
-            let n = value::__souther_list_length(held) as i64;
-            sized(n, 1, None, b"too_small", b"too_small.nonempty", b"min", path, path_length)
-        }
-        RULE_MIN_SIZE => sized(value::__souther_list_length(held) as i64, a as i64, None,
-            b"too_small", b"too_small", b"min", path, path_length),
-        RULE_MAX_SIZE => sized(value::__souther_list_length(held) as i64, i64::MIN,
-            Some(a as i64), b"too_big", b"too_big", b"max", path, path_length),
-        RULE_FIXED_SIZE => exactly(value::__souther_list_length(held) as i64, a as i64,
-            b"invalid_size", path, path_length),
-        RULE_UNIQUE => duplicated(held, descriptor::member(of, 0), path, path_length),
-        RULE_MAP_NON_EMPTY => sized(value::__souther_map_length(held) as i64, 1, None,
-            b"too_small", b"too_small.nonempty", b"min", path, path_length),
-        RULE_MAP_MIN_SIZE => sized(value::__souther_map_length(held) as i64, a as i64, None,
-            b"too_small", b"too_small", b"min", path, path_length),
-        RULE_MAP_MAX_SIZE => sized(value::__souther_map_length(held) as i64, i64::MIN,
-            Some(a as i64), b"too_big", b"too_big", b"max", path, path_length),
-        // Nothing a caller wrote reaches this: the table is the compiler's.
-        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, 0),
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, other as u64, 0),
+    })
+}
+
+/// A list's length held to at least, at most, or exactly so many elements.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_constraint_size(held: u32, of: u32, at: u32, path: u32,
+    path_length: u32) -> u32 {
+    let (rule, a, _, _) = rule(at);
+    let n = value::__souther_list_length(held) as i64;
+    u32::from(match rule {
+        RULE_NON_EMPTY => sized(n, 1, None, b"too_small", b"too_small.nonempty", b"min", path,
+            path_length),
+        RULE_MIN_SIZE => sized(n, a as i64, None, b"too_small", b"too_small", b"min", path,
+            path_length),
+        RULE_MAX_SIZE => sized(n, i64::MIN, Some(a as i64), b"too_big", b"too_big", b"max", path,
+            path_length),
+        RULE_FIXED_SIZE => exactly(n, a as i64, b"invalid_size", path, path_length),
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, other as u64, 0),
+    })
+}
+
+/// A list holding no value twice.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_constraint_unique(held: u32, of: u32, at: u32, path: u32,
+    path_length: u32) -> u32 {
+    let (rule, _, _, _) = rule(at);
+    if rule != RULE_UNIQUE {
+        crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, rule as u64, 0);
     }
+    u32::from(duplicated(held, descriptor::member(of, 0), path, path_length))
+}
+
+/// A map's size held to at least, or at most, so many entries.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_constraint_entries(held: u32, of: u32, at: u32, path: u32,
+    path_length: u32) -> u32 {
+    let (rule, a, _, _) = rule(at);
+    let n = value::__souther_map_length(held) as i64;
+    u32::from(match rule {
+        RULE_MAP_NON_EMPTY => sized(n, 1, None, b"too_small", b"too_small.nonempty", b"min", path,
+            path_length),
+        RULE_MAP_MIN_SIZE => sized(n, a as i64, None, b"too_small", b"too_small", b"min", path,
+            path_length),
+        RULE_MAP_MAX_SIZE => sized(n, i64::MIN, Some(a as i64), b"too_big", b"too_big", b"max",
+            path, path_length),
+        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, of, other as u64, 0),
+    })
 }
 
 /// A count held to at least `min`, or to at most `max` where there is one.

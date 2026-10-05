@@ -7,6 +7,7 @@ import java.util.List;
 import souther.compiler.core.BoundaryConstraint;
 import souther.compiler.core.ValueShape;
 import souther.compiler.types.TypeSymbol;
+import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.emit.WasmWriter;
 import souther.wasm.link.WasmFragment;
 
@@ -27,8 +28,14 @@ import souther.wasm.link.WasmFragment;
  * +12 per clause: u32 where its name is, u32 how long (both nothing where it has none),
  *                 u32 where its constraints are, u32 how many, u32 whether they are the whole clause
  *
- * a constraint: u32 its rule, then four u32 its rule reads as it says
+ * a constraint: u32 the slot of what evaluates it, three u32 its rule reads as it says, and u32
+ *               its rule
  * </pre>
+ *
+ * <p>What evaluates a constraint is named by it ({@link RuntimeAbi.Constraints}), one function for
+ * each family of rules, so that a module carries what evaluates the constraints its types have
+ * and no others: a pattern's machine and exact arithmetic are reached only from a module whose
+ * types say to match one or to bound an amount.
  *
  * <p>A constraint is about the one value a newtype holds, so only a newtype's clauses carry any:
  * a product's are each the rule they are (spec §decoder-error).
@@ -149,11 +156,31 @@ final class Clauses {
                 case BoundaryConstraint.MapMaxSize it ->
                         new int[] {RULE_MAP_MAX_SIZE, it.n(), 0, 0, 0};
             };
-            for (int word : words) {
-                out.writeLittleEndian4(word);
-            }
+            // The rule's place goes to the end, and what evaluates it to the front.
+            out.writeLittleEndian4(fragment.slot(fragment.plan().functionIndexOf(evaluating(words[0]))))
+                    .writeLittleEndian4(words[1])
+                    .writeLittleEndian4(words[2])
+                    .writeLittleEndian4(words[3])
+                    .writeLittleEndian4(words[0]);
         }
         return fragment.place(table.toByteArray());
+    }
+
+    /** What evaluates a rule: the one function of its family. */
+    private static String evaluating(int rule) {
+        return switch (rule) {
+            case RULE_MIN_LENGTH, RULE_MAX_LENGTH, RULE_FIXED_LENGTH -> RuntimeAbi.Constraints.LENGTH;
+            case RULE_PATTERN -> RuntimeAbi.Constraints.PATTERN;
+            case RULE_MIN, RULE_MAX, RULE_POSITIVE, RULE_NON_NEGATIVE -> RuntimeAbi.Constraints.BOUND;
+            case RULE_DECIMAL_MIN, RULE_DECIMAL_MAX, RULE_DECIMAL_POSITIVE, RULE_DECIMAL_NON_NEGATIVE ->
+                    RuntimeAbi.Constraints.AMOUNT;
+            case RULE_NON_EMPTY, RULE_MIN_SIZE, RULE_MAX_SIZE, RULE_FIXED_SIZE ->
+                    RuntimeAbi.Constraints.SIZE;
+            case RULE_UNIQUE -> RuntimeAbi.Constraints.UNIQUE;
+            case RULE_MAP_NON_EMPTY, RULE_MAP_MIN_SIZE, RULE_MAP_MAX_SIZE ->
+                    RuntimeAbi.Constraints.ENTRIES;
+            default -> throw new IllegalArgumentException("no rule " + rule);
+        };
     }
 
     private static int[] wide(int rule, long n) {
