@@ -1,14 +1,15 @@
 # @souther/wasm
 
-Loads a Souther program compiled to WebAssembly by this repository, calls it, and writes the
-TypeScript binding of what it offers.
+Loads a Souther program compiled to WebAssembly by `souther compile --target wasm`, calls it, and
+writes the TypeScript binding of what it offers.
 
 ## A binding is read off the module
 
 A compiled module says what it offers in `souther:surface`: its behaviors, what each takes and
 answers, what it reaches out for, and what a value of each type looks like. The binding is written
-from that and nothing else:
+from that and nothing else, so a project compiles the module and then writes the binding from it:
 
+    souther compile --target wasm src/main/souther -o cart.wasm
     souther-wasm-bindings cart.wasm -o src/cart.ts
 
 ```ts

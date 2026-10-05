@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "description": "Load and call a Souther program compiled to WebAssembly, and generate its TypeScript binding",
   "license": "EPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/souther-lang/souther-wasm-compiler.git",
+    "directory": "packages/wasm"
+  },
+  "homepage": "https://github.com/souther-lang/souther-wasm-compiler/tree/develop/packages/wasm#readme",
+  "bugs": "https://github.com/souther-lang/souther-wasm-compiler/issues",
   "type": "module",
   "exports": {
     ".": {
@@ -23,6 +30,9 @@
     "NOTICE",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.0.0"
   },

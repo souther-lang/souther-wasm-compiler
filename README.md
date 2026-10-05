@@ -245,10 +245,25 @@ call reaches and what it does with a buffer too short to hold the answer.
 
 ## Running it
 
+    souther compile --target wasm src/ -o program.wasm
+    souther compile --target wasm src/ -o program.wasm --component
+    souther compile --target wasm src/ -o program.wasm --wit program.wit
+
+Everything after `wasm` is this backend's: the `souther` command line reads none of it, finds the
+backend's jar and runs it as a process of its own. It finds it in `$SOUTHER_HOME/backends`, or where
+a package manager installed it, by `META-INF/souther/backend.properties`, which names the target,
+`wasm`, and the Souther the jar was built against. Only a jar built against the Souther that runs it
+is chosen; under another, `souther compile --target wasm` is refused before anything is compiled.
+
+The jar `mvn package` writes is a backend like any other, and a clone installs it by putting it
+there. One in `$SOUTHER_HOME/backends` stands in for one a package manager installed:
+
     mvn package
-    java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm
-    java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm --component
-    java -jar target/souther-wasm-compiler-*-cli.jar src/ -o program.wasm --wit program.wit
+    mkdir -p "$SOUTHER_HOME/backends"
+    cp target/souther-wasm-compiler-*-cli.jar "$SOUTHER_HOME/backends/"
+
+`java -jar target/souther-wasm-compiler-*-cli.jar` takes the same arguments, for working on this
+repository. Nothing then checks which Souther it was built against.
 
 `--wit` writes what the program offers and what it has to be given, as a reader of interfaces reads
 them. The same either way: a component carries it and a core module does not, but what a program
@@ -305,7 +320,7 @@ whatever they held would fail whenever the two were a release apart, for a reaso
 this repository's change nor the compiler's. Compile them by hand where that is the question:
 
 ```sh
-java -jar target/*-cli.jar <project>/src/main/souther -o /tmp/<project>.wasm
+souther compile --target wasm <project>/src/main/souther -o /tmp/<project>.wasm
 ```
 
 `invoicing` is written against a module `sharedmoney` publishes, so it takes both directories.
@@ -316,6 +331,16 @@ java -jar target/*-cli.jar <project>/src/main/souther -o /tmp/<project>.wasm
 
 The compiler this reads a program through is a published artifact, so a build resolves it the way
 it resolves anything else and there is nothing to install first.
+
+## Releasing
+
+The backend is released at its own version, which the jar's manifest records as
+`Implementation-Version`; which Souther it works with is the descriptor's to say, so a fix here
+releases no Souther. A release is built against a released Souther and nothing else: `souther.version`
+in `pom.xml` names one on Maven Central, and `@souther/wasm` asks for a released `@raoh/core`.
+
+Nothing is published from CI. From a clean clone at the release's commit, the jar `mvn package`
+writes is attached to the GitHub release, and `npm publish` in `packages/wasm` publishes the package.
 
 ## Licence
 
