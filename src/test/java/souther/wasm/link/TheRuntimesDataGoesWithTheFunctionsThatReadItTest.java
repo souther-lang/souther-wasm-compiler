@@ -44,6 +44,9 @@ class TheRuntimesDataGoesWithTheFunctionsThatReadItTest {
 
     private static final byte[] RUNTIME = Running.runtimeModule();
 
+    /** The runtime's segments, read once: parsing the runtime is most of what this test costs. */
+    private static final DataSegment[] SEGMENTS = Parser.parse(RUNTIME).dataSection().dataSegments();
+
     @Test
     void saysWhichFunctionsReadEverySegmentOfTheRuntime() {
         List<OwnedDataSegment> owners = RuntimeData.owners(RUNTIME);
@@ -68,12 +71,11 @@ class TheRuntimesDataGoesWithTheFunctionsThatReadItTest {
     /** The bytes other than zeros the runtime's segments write, of those a kept function reads. */
     private static long read(byte[] unshaken) {
         WasmTreeShaker.Reach[] reached = WasmTreeShaker.reached(unshaken);
-        DataSegment[] segments = Parser.parse(RUNTIME).dataSection().dataSegments();
         long written = 0;
         for (OwnedDataSegment each : RuntimeData.owners(RUNTIME)) {
             for (int reader : each.ownerFuncIndices()) {
                 if (reached[reader] != null) {
-                    written += nonZero(segments[each.segmentIndex()].data());
+                    written += nonZero(SEGMENTS[each.segmentIndex()].data());
                     break;
                 }
             }
