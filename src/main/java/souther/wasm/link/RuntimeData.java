@@ -78,27 +78,16 @@ final class RuntimeData {
     private static volatile @Nullable Read lastRead;
 
     private static List<OwnedDataSegment> read(byte[] runtime) {
-        Map<String, byte[]> custom = new HashMap<>();
-        byte[] code = null;
-        byte[] data = null;
-        for (RawSection section : new LayoutReader(runtime).rawSections()) {
-            switch (section.id()) {
-                case SEC_CUSTOM -> {
-                    Reading at = new Reading(section.payload(), 0);
-                    String name = at.name();
-                    custom.put(name, Arrays.copyOfRange(section.payload(), at.position, section.payload().length));
-                }
-                case SEC_CODE -> code = section.payload();
-                case SEC_DATA -> data = section.payload();
-                default -> { }
-            }
-        }
-        byte[] linking = custom.get("linking");
+        Sections sections = sections(runtime);
+        byte[] linking = sections.custom().get("linking");
+        byte[] code = sections.code();
+        byte[] data = sections.data();
         if (linking == null || code == null || data == null) {
             return List.of();
         }
+        Map<String, byte[]> custom = sections.custom();
         int importedFunctions = new LayoutReader(runtime).read().importedFunctionCount();
-        int[] symbolSegments = symbolSegments(linking);
+        int[] symbolSegments = symbols(linking).segments();
         int[] bodies = bodyStarts(code);
         int[] segments = segmentStarts(data);
 
@@ -148,8 +137,50 @@ final class RuntimeData {
         return List.copyOf(owned);
     }
 
-    /** The data segment each symbol lies in, by the symbol's index, or minus one for another kind. */
-    private static int[] symbolSegments(byte[] linking) {
+    /**
+     * What the runtime's linker calls each function it defines, by the function's index: the
+     * symbol's name, mangled as the compiler that wrote the function mangles it. For saying what a
+     * module carries in the runtime's own words, which a test of what it carries reads.
+     *
+     * @param runtime the compiled runtime module
+     * @return the names, or none for a runtime its linker said nothing about
+     */
+    static Map<Integer, String> functionNames(byte[] runtime) {
+        byte[] linking = sections(runtime).custom().get("linking");
+        return linking == null ? Map.of() : symbols(linking).functions();
+    }
+
+    /** The sections of the runtime this reads: its custom ones by name, its code and its data. */
+    private record Sections(Map<String, byte[]> custom, byte @Nullable [] code, byte @Nullable [] data) {
+    }
+
+    private static Sections sections(byte[] runtime) {
+        Map<String, byte[]> custom = new HashMap<>();
+        byte[] code = null;
+        byte[] data = null;
+        for (RawSection section : new LayoutReader(runtime).rawSections()) {
+            switch (section.id()) {
+                case SEC_CUSTOM -> {
+                    Reading at = new Reading(section.payload(), 0);
+                    String name = at.name();
+                    custom.put(name, Arrays.copyOfRange(section.payload(), at.position, section.payload().length));
+                }
+                case SEC_CODE -> code = section.payload();
+                case SEC_DATA -> data = section.payload();
+                default -> { }
+            }
+        }
+        return new Sections(custom, code, data);
+    }
+
+    /**
+     * What the symbol table says: the data segment each symbol lies in, by the symbol's index, or
+     * minus one for a symbol of another kind; and the name of each function defined, by its index.
+     */
+    private record Symbols(int[] segments, Map<Integer, String> functions) {
+    }
+
+    private static Symbols symbols(byte[] linking) {
         Reading at = new Reading(linking, 0);
         at.unsigned(); // version
         while (at.position < linking.length) {
@@ -162,20 +193,25 @@ final class RuntimeData {
             }
             int count = at.unsigned();
             int[] segments = new int[count];
+            Map<Integer, String> functions = new HashMap<>();
             for (int i = 0; i < count; i++) {
                 int symbol = at.next();
                 int flags = at.unsigned();
+                boolean defined = (flags & FLAG_UNDEFINED) == 0;
                 segments[i] = -1;
                 switch (symbol) {
                     case SYMBOL_FUNCTION, SYMBOL_GLOBAL, SYMBOL_TAG, SYMBOL_TABLE -> {
-                        at.unsigned();
-                        if ((flags & FLAG_UNDEFINED) == 0 || (flags & FLAG_EXPLICIT_NAME) != 0) {
-                            at.name();
+                        int index = at.unsigned();
+                        if (defined || (flags & FLAG_EXPLICIT_NAME) != 0) {
+                            String name = at.name();
+                            if (symbol == SYMBOL_FUNCTION && defined) {
+                                functions.putIfAbsent(index, name);
+                            }
                         }
                     }
                     case SYMBOL_DATA -> {
                         at.name();
-                        if ((flags & FLAG_UNDEFINED) == 0) {
+                        if (defined) {
                             segments[i] = at.unsigned();
                             at.unsigned(); // offset within the segment
                             at.unsigned(); // size
@@ -187,7 +223,7 @@ final class RuntimeData {
                                     + ", which this does not read");
                 }
             }
-            return segments;
+            return new Symbols(segments, Map.copyOf(functions));
         }
         throw new IllegalArgumentException("the runtime's linking section holds no symbol table");
     }
