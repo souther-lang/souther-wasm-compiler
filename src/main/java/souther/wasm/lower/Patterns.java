@@ -15,7 +15,7 @@ import souther.wasm.link.WasmFragment;
  * A pattern the checker settled, placed once as the image of the machine that recognises it.
  *
  * <p>The checker hands over what the pattern means, not the text it was written as, so nothing
- * here reads a pattern. The machine is built by 199x-notation, the library the JVM backend builds
+ * here reads a pattern. The machine is built by notation-199x, the library the JVM backend builds
  * its machine with, and written out as an image in one of the formats that library defines. The
  * runtime reads the image back with the Rust implementation of the same library, so both backends
  * run the machine the checker's reading means, and neither has an engine of its own.

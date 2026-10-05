@@ -17,9 +17,9 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { it } from "node:test";
 import { promisify } from "node:util";
 import { compiled, PACKAGE, ROOT } from "./compiled.ts";
@@ -68,7 +68,8 @@ export async function counted(bytes: Uint8Array): Promise<unknown[]> {
 /** The files a project builds with its own tools, by the names they are kept under. */
 const BUILT = {
   souther: "souther-wasm.tgz",
-  raoh: "raoh-core.tgz",
+  // What each archive of the peer and of what it depends on is, by package name.
+  peers: "peers.json",
   model: "model.wasm",
   binding: "binding.ts",
   compiled: ["binding.js", "page.js", "entries.js"],
@@ -87,13 +88,17 @@ it("is used from where it is installed, as the README says", async () => {
   }
 
   const project = mkdtempSync(join(tmpdir(), "souther-installed-"));
+  const peers: Record<string, string> = JSON.parse(readFileSync(join(built, BUILT.peers), "utf-8"));
+  const archived = (name: string) => `file:${join(built, peers[name]!)}`;
   writeFileSync(join(project, "package.json"), JSON.stringify({
     type: "module",
     private: true,
     // The package asks the project for @raoh/core, as a peer, so the project depends on it itself.
-    dependencies: { "@raoh/core": `file:${join(built, BUILT.raoh)}` },
-    // The package names the peer it was built against by its version; the archive is that.
-    overrides: { "@raoh/core": "$@raoh/core" },
+    dependencies: { "@raoh/core": archived("@raoh/core") },
+    // The package names the peer it was built against by its version, and the peer names what it
+    // depends on by theirs; each archive is that version, so the install asks the registry nothing.
+    overrides: Object.fromEntries(Object.keys(peers).map((name) =>
+      [name, name === "@raoh/core" ? "$@raoh/core" : archived(name)])),
   }));
   await run("npm", ["install", "--offline", "--no-audit", "--no-fund", join(built, BUILT.souther)],
     { cwd: project });
@@ -136,18 +141,49 @@ it("is used from where it is installed, as the README says", async () => {
  * The archives a project installs from, and the module, built with the tools into `built`.
  *
  * Packing builds the package, as publishing does: what is installed is what would be published.
- * @raoh/core is archived from what this directory installed, so that installing reaches nothing
- * outside this machine, which an offline install of it from the registry would have to reach. Its
- * files are archived as they were installed, as the registry handed them over.
+ * @raoh/core is archived from what this directory installed, and so is everything it depends on,
+ * read off what was installed rather than listed here, so that installing reaches nothing outside
+ * this machine, which an offline install of any of them from the registry would have to reach.
+ * Their files are archived as they were installed, as the registry handed them over.
  */
 async function archive(built: string): Promise<void> {
   const packed = (await run("npm", ["pack", "--silent", "--pack-destination", built], { cwd: PACKAGE }))
     .stdout.trim();
   renameSync(join(built, packed), join(built, BUILT.souther));
-  const raoh = mkdtempSync(join(tmpdir(), "raoh-core-"));
-  cpSync(join(PACKAGE, "node_modules", "@raoh", "core"), join(raoh, "package"), { recursive: true });
-  await run("tar", ["-czf", join(built, BUILT.raoh), "package"], { cwd: raoh });
+  const peers: Record<string, string> = {};
+  for (const [name, at] of installedWithDependencies("@raoh/core")) {
+    const into = mkdtempSync(join(tmpdir(), "peer-"));
+    cpSync(at, join(into, "package"), { recursive: true });
+    peers[name] = `${name.replace(/^@/, "").replace("/", "-")}.tgz`;
+    await run("tar", ["-czf", join(built, peers[name]), "package"], { cwd: into });
+  }
+  writeFileSync(join(built, BUILT.peers), JSON.stringify(peers));
   writeFileSync(join(built, BUILT.model), (await compiled(MODEL)).bytes);
+}
+
+/**
+ * A package as this directory installed it, and every package it depends on, each found where Node
+ * finds it from the package that depends on it: in a node_modules there, or in one above it.
+ */
+function installedWithDependencies(name: string): Map<string, string> {
+  const found = new Map<string, string>();
+  const visit = (wanted: string, from: string) => {
+    if (found.has(wanted)) return;
+    let at: string | undefined;
+    for (let dir = from; at === undefined; dir = dirname(dir)) {
+      const candidate = join(dir, "node_modules", wanted);
+      if (existsSync(join(candidate, "package.json"))) at = candidate;
+      else if (dir === PACKAGE) break;
+    }
+    assert.ok(at !== undefined, `${wanted}, which ${from} depends on, is not installed`);
+    found.set(wanted, at);
+    const manifest = JSON.parse(readFileSync(join(at, "package.json"), "utf-8"));
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+      visit(dependency, at);
+    }
+  };
+  visit(name, PACKAGE);
+  return found;
 }
 
 /** The page, and an import of every entry the package has, compiled as a project compiles them. */

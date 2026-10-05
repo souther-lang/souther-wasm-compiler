@@ -99,7 +99,7 @@ pub unsafe extern "C" fn __souther_string_contains(part: u32, text: u32) -> u32 
 /// of the run as the image of its machine, and reaches here as where that image is: a `u32` length
 /// and the image's ASCII bytes after it.
 ///
-/// The image was written by 199x-notation's Java implementation, so one this runtime does not
+/// The image was written by notation-199x's Java implementation, so one this runtime does not
 /// read is the compiler and the runtime built against releases that do not agree, not a program's
 /// own failure.
 ///

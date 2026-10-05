@@ -14,7 +14,7 @@
 //! to this backend — it is `souther.runtime.Representations` — and it is asked of what was written,
 //! read back, so it answers about the document and nothing else. Null first, then false, true,
 //! numbers, strings, arrays and objects. Numbers by the amount and then by the way each is written;
-//! strings by scalar value, which is the language's order on text and 199x-notation's; arrays
+//! strings by scalar value, which is the language's order on text and notation-199x's; arrays
 //! element by element with the shorter first; objects as their members read in key order.
 //!
 //! Three because each is asked of something different, and two of them answered by one function

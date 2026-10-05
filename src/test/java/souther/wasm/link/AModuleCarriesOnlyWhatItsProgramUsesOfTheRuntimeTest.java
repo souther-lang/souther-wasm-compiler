@@ -27,6 +27,11 @@ import souther.wasm.emit.WasmTreeShaker;
  *
  * <p>The size of each module is held too, but loosely, at about half again what it is: a change
  * that carries a part back in is several times that, and a toolchain moving a few bytes is not one.
+ * A module that normalizes text is held closer, at a round number just above what it is. Since
+ * notation-199x 0.2.0 normalization reads tables a code point indexes, which made it faster and
+ * every such module about 220 KB larger, all of it data normalization reads; making those tables
+ * smaller is notation-199x's, raoh-project/notation-199x#68. Until then a bound of half again would
+ * let as much again through unseen, so these are held to what they are now.
  */
 class AModuleCarriesOnlyWhatItsProgramUsesOfTheRuntimeTest {
 
@@ -60,15 +65,15 @@ class AModuleCarriesOnlyWhatItsProgramUsesOfTheRuntimeTest {
             new Row("""
                     behavior same : (s: String) -> String
                     let same (s) = s
-                    """, Set.of(Part.NORMALIZATION), Set.of(), 110_000),
+                    """, Set.of(Part.NORMALIZATION), Set.of(), 300_000),
             new Row("""
                     behavior quiet : (s: String) -> String
                     let quiet (s) = String.lowercase(s)
-                    """, Set.of(Part.NORMALIZATION, Part.CASE), Set.of(), 200_000),
+                    """, Set.of(Part.NORMALIZATION, Part.CASE), Set.of(), 420_000),
             new Row("""
                     behavior digits : (s: String) -> Bool
                     let digits (s) = String.matches("[0-9]+", s)
-                    """, Set.of(Part.NORMALIZATION, Part.PATTERN), Set.of(), 160_000),
+                    """, Set.of(Part.NORMALIZATION, Part.PATTERN), Set.of(), 340_000),
             new Row("""
                     behavior same : (d: Decimal) -> Decimal
                     let same (d) = d
@@ -87,7 +92,7 @@ class AModuleCarriesOnlyWhatItsProgramUsesOfTheRuntimeTest {
             new Row("""
                     behavior same : (m: Map<String, Int>) -> Map<String, Int>
                     let same (m) = m
-                    """, Set.of(Part.NORMALIZATION), Set.of(Part.CALENDAR), 120_000),
+                    """, Set.of(Part.NORMALIZATION), Set.of(Part.CALENDAR), 305_000),
             new Row("""
                     data P = { x: Int, y: Int }
                     behavior eq : (a: P, b: P) -> Bool

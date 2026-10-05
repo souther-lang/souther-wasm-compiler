@@ -1,8 +1,8 @@
-//! A `String` as 199x-notation reads it.
+//! A `String` as notation-199x reads it.
 //!
 //! What a string means — its order, its length, its case, its canonical form, which characters are
 //! white space, which text is a day or a moment, which strings a pattern accepts — is a rule
-//! Souther shares with Raoh, and 199x-notation answers it. The JVM backend asks the library's Java
+//! Souther shares with Raoh, and notation-199x answers it. The JVM backend asks the library's Java
 //! implementation and this runtime asks its Rust one, so the two backends answer from one account
 //! rather than from two that are kept in step by hand.
 //!
@@ -58,7 +58,7 @@ pub unsafe fn canonical(text: &str) -> u32 {
 /// Whether text that starts here can follow canonical text and leave the two canonical together.
 ///
 /// A code point below U+0300 is a starter that composes with nothing before it, which is what
-/// 199x-notation's own normalization takes such a run as without working it out. U+0300 is written
+/// notation-199x's own normalization takes such a run as without working it out. U+0300 is written
 /// `CC 80`, so a first byte below `CC` is a code point below it, and so is no byte at all.
 pub fn starts_stable(text: &str) -> bool {
     text.as_bytes().first().map_or(true, |&first| first < 0xcc)

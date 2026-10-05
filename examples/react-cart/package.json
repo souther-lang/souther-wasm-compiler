@@ -11,7 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@raoh/core": "0.9.0-dev.17.20261004233405.g79260ab5b21b",
+    "@raoh/core": "0.9.0",
     "@souther/wasm": "file:../../packages/wasm",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

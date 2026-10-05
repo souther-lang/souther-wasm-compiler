@@ -44,7 +44,7 @@ public final class RuntimeAbi {
      * second time and started only representing {@code souther.compiler.abort.AbortKind} (issue
      * #23): see {@code runtime/src/lib.rs}'s own note on its {@code ABI_VERSION} for what changed.
      * Raised to 5 when what {@link Kernels#STRING_MATCHES} is told became the image of the
-     * pattern's machine that 199x-notation writes, in place of this compiler's own list of steps.
+     * pattern's machine that notation-199x writes, in place of this compiler's own list of steps.
      * Raised to 6 when the layout of a cell became something a generated body relies on
      * ({@link Cell}), and a walk began to grow a map in place. Raised to 7 when a call could end
      * for a reason it could not before, {@code NO_SUCH_TYPE}: a host naming reasons by the numbers
