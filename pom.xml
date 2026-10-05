@@ -101,20 +101,6 @@
     </dependencies>
 
     <build>
-        <resources>
-            <resource>
-                <directory>src/main/resources</directory>
-            </resource>
-            <!-- What the souther CLI reads to choose this jar for a target: the target it answers
-                 to and the Souther it is built against, and no other key, since the CLI refuses a
-                 descriptor with any other. The Souther is the one this build compiles against, so
-                 the two cannot disagree. Filtered apart from the resources above, which hold a
-                 module whose bytes a filter must not touch. -->
-            <resource>
-                <directory>src/main/descriptor</directory>
-                <filtering>true</filtering>
-            </resource>
-        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -132,6 +118,28 @@
                     <argLine>-Xmx256m</argLine>
                 </configuration>
             </plugin>
+            <!-- What only the jars can be asked: which of them says it is a backend, and whether
+                 that one runs. Read after they are written, so it runs in verify, not test. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.5.4</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <backend.built>${project.build.directory}</backend.built>
+                        <backend.souther>${souther.version}</backend.souther>
+                        <backend.release>${project.version}</backend.release>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- One jar that runs, because a command line is how this is reached from outside a
                  build. Bound to package rather than to a profile: a build that produced a jar
                  nothing could run would look the same as one that did. -->
@@ -143,6 +151,29 @@
                 <artifactId>maven-resources-plugin</artifactId>
                 <version>3.3.1</version>
                 <executions>
+                    <!-- What the souther CLI reads to choose this jar for a target: the target
+                         it answers to and the Souther it is built against, and no other key, since
+                         the CLI refuses a descriptor with any other. The Souther is the one this
+                         build compiles against, so the two cannot disagree. It says the jar it is
+                         in runs as a backend, so it is written apart from the classes, which the
+                         plain jar is made of too, and the shade below puts it in the jar that
+                         runs and in no other. -->
+                    <execution>
+                        <id>backend-descriptor</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/backend</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/descriptor</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>licences-into-the-jar</id>
                         <phase>process-resources</phase>
@@ -187,6 +218,10 @@
                                     <manifestEntries>
                                         <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>META-INF/souther/backend.properties</resource>
+                                    <file>${project.build.directory}/backend/backend.properties</file>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <!-- Only the licence transformer. The notice one writes a
