@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "model": "jar=$(ls ../../target/*-cli.jar 2>/dev/null | head -1); if [ -z \"$jar\" ]; then echo 'The compiler has not been built. From the repository root: mvn package' >&2; exit 1; fi; if [ ! -f ../../packages/wasm/dist/cli.js ]; then echo 'The glue has not been built. From packages/wasm: npm ci && npm run build' >&2; exit 1; fi; java -jar \"$jar\" model -o public/cart.wasm && souther-wasm-bindings public/cart.wasm -o src/cart.ts",
+    "model": "if ! command -v souther >/dev/null; then echo 'souther is not on the PATH. Install it, and the wasm backend beside it: see README.md' >&2; exit 1; fi; if [ ! -f ../../packages/wasm/dist/cli.js ]; then echo 'The glue has not been built. From packages/wasm: npm ci && npm run build' >&2; exit 1; fi; souther compile --target wasm model -o public/cart.wasm && souther-wasm-bindings public/cart.wasm -o src/cart.ts",
     "typecheck": "tsc --noEmit",
     "dev": "npm run model && vite",
     "build": "npm run model && tsc --noEmit && vite build",

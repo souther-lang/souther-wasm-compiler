@@ -5,12 +5,19 @@ page hands over what was typed and shows what came back. The shape of a product 
 quantity is at least one, appear nowhere in the TypeScript.
 
     (cd ../.. && mvn package)
+    export SOUTHER_HOME="$(cd ../.. && pwd)/.souther-home"
+    mkdir -p "$SOUTHER_HOME/backends"
+    ln -sf "$(cd ../.. && pwd)"/target/souther-wasm-compiler-*-cli.jar "$SOUTHER_HOME/backends/"
     (cd ../../packages/wasm && npm install && npm run build)
     npm install
     npm run dev
 
-The first line builds the compiler, which is what turns the model into a module, and the second
-the glue the page calls it through, which the page reads as a project installing it would:
+The model is compiled by `souther compile --target wasm`, so it takes
+[`souther`](https://github.com/souther-lang/souther) installed, and the wasm backend beside it built
+against the same Souther. The first line builds that backend from this repository, which is what
+turns the model into a module, and the next three install it where `souther` looks for one first,
+as [the compiler's README](../../README.md#running-it) says. The fifth builds the glue the page
+calls it through, which the page reads as a project installing it would:
 `npm install` installs a copy of it (`.npmrc` says `install-links`), beside the page's own
 `@raoh/core`, which the glue asks for as a peer. So the glue and the page share one Raoh, and a
 decoder of the model's can be a part of one the page writes. A copy is a copy, so run

@@ -27,6 +27,10 @@ import souther.wasm.lower.WasmCompiler;
 /**
  * Compiles Souther sources named on a command line.
  *
+ * <p>The command line is what {@code souther compile --target wasm} hands over after the target's
+ * name, verbatim: the CLI finds this jar by its {@code META-INF/souther/backend.properties} and runs
+ * it as a process of its own. Run with {@code java -jar}, it reads the same arguments.
+ *
  * <p>What it writes is a core module, or a component where one is asked for. Everything it can say
  * about why it did not goes to the error stream and nothing goes to the output file, so a build
  * that stopped leaves no half-written module for the next step to pick up.
@@ -34,9 +38,10 @@ import souther.wasm.lower.WasmCompiler;
 public final class Main {
 
     private static final String USAGE = """
-            souther-wasm — compiles a Souther program to WebAssembly
+            souther compile --target wasm — compiles a Souther program to WebAssembly
 
-              souther-wasm <source or directory>... -o <file> [--component]
+              souther compile --target wasm <source or directory>... -o <file> [--component]
+                  [--wit <file>]
 
               -o <file>     where to write. Required.
               --component   write a component, one interface per Souther module, rather than a
