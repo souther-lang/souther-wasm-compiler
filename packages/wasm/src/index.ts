@@ -72,8 +72,9 @@ export class Ended extends Error {
 /**
  * Loads a compiled Souther program.
  *
- * Refused where its surface or its runtime is of a version this does not read, and, where
- * `fingerprint` is given, where its surface is not the one a binding was generated from.
+ * Refused where its surface or its runtime is of a version this does not read, where `fingerprint`
+ * is given and its surface is not the one a binding was generated from, and where a behavior it
+ * reaches out for has no function supplied for it.
  *
  * @param source where the module is
  * @param supplied what answers each behavior the program reaches out for
@@ -156,27 +157,53 @@ interface Exports {
   readonly [behavior: string]: unknown;
 }
 
+/** A behavior a program reaches out for: what it is called, what it is, and what answers it. */
+interface Crossing {
+  readonly named: string;
+  readonly behavior: Behavior;
+  readonly answer: (...args: never[]) => unknown;
+}
+
 /** A loaded program, whose behaviors are called by name. */
 export class Program {
   #exports: Exports | undefined;
-  readonly #supplied: Supplied;
-  /** Each behavior the program reaches out for, and what it is called, by the number it reaches out under. */
-  readonly #crossings: ReadonlyMap<number, { readonly named: string; readonly behavior: Behavior }>;
+  /**
+   * Each behavior the program reaches out for, what it is called and what answers it, by the number
+   * it reaches out under.
+   */
+  readonly #crossings: ReadonlyMap<number, Crossing>;
   readonly #surface: Surface;
   readonly #decodable: ReadonlyMap<string, number>;
   readonly #values: Values;
   /** What each behavior a caller calls answers, by what it is exported as. */
   readonly #answers: ReadonlyMap<string, Shape>;
 
+  /**
+   * @throws where a behavior the program reaches out for has no function supplied for it, naming
+   * every such behavior: a program is not made without what answers each of them
+   */
   constructor(supplied: Supplied, surface: Surface) {
-    this.#supplied = supplied;
     // A call out carries a number and not a name, and the surface says which behavior each is: by
     // its module and its name, since one its module keeps is reached out for all the same and is
-    // exported as nothing.
-    this.#crossings = new Map(surface.modules
-      .flatMap((module) => module.behaviors
-        .filter((behavior) => behavior.reachOut !== undefined)
-        .map((behavior) => [behavior.reachOut as number, { named: `${module.name}.${behavior.name}`, behavior }])));
+    // exported as nothing. What answers each is taken here, once: a function put under its name
+    // after the program is made is not what it calls.
+    const crossings = new Map<number, Crossing>();
+    const unanswered: string[] = [];
+    for (const module of surface.modules) {
+      for (const behavior of module.behaviors.filter((each) => each.reachOut !== undefined)) {
+        const named = `${module.name}.${behavior.name}`;
+        const answer: unknown = supplied[named];
+        if (typeof answer === "function") {
+          crossings.set(behavior.reachOut as number, { named, behavior, answer: answer as Crossing["answer"] });
+        } else {
+          unanswered.push(named);
+        }
+      }
+    }
+    if (unanswered.length > 0) {
+      throw new Error(`this program reaches out for what no function was supplied for: ${unanswered.join(", ")}`);
+    }
+    this.#crossings = crossings;
     this.#answers = new Map(surface.modules
       .flatMap((module) => module.behaviors)
       .filter((behavior) => behavior.export !== undefined)
@@ -340,11 +367,8 @@ export class Program {
    */
   reachOut(ordinal: number, at: number, length: number, into: number, room: number): number {
     const crossing = this.#crossings.get(ordinal);
-    const supplied = crossing === undefined ? undefined : this.#supplied[crossing.named];
-    if (crossing === undefined || supplied === undefined) {
-      throw new Error(crossing === undefined
-        ? `this program reached out under a number it does not name: ${ordinal}`
-        : `${crossing.named} is reached out for and nothing was supplied for it`);
+    if (crossing === undefined) {
+      throw new Error(`this program reached out under a number it does not name: ${ordinal}`);
     }
     // What is asked is read as the behavior's parameters are, as a value the module answers is.
     const written = parse(decoder.decode(this.#bytes().subarray(at, at + length)));
@@ -353,7 +377,7 @@ export class Program {
       throw new Error(`${crossing.named} was asked something other than its ${parameters.length} arguments`);
     }
     const asked = written.map((each, place) => this.#values.read(parameters[place]!.type, each)) as never[];
-    const answer = encoder.encode(stringify(supplied(...asked)));
+    const answer = encoder.encode(stringify(crossing.answer(...asked)));
     if (answer.length <= room) {
       this.#bytes().set(answer, into);
     }

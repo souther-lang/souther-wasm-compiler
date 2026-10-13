@@ -143,7 +143,9 @@ A behavior the model declares and does not implement is one the page implements:
     });
 
 The binding types what has to be supplied (`Supplied`), so a page that leaves one out does not
-compile, and `program.reachesOutFor` says the same at run time — the module carries the list.
+compile, and `program.reachesOutFor` says the same at run time — the module carries the list. A
+page loading the module without the binding is refused when it loads, told each behavior it left
+out, rather than on the first call that reaches one.
 
 Answering is a call and not a promise. There is no stopping wasm in the middle and picking it up
 again, so what a model reaches out for has to be something the page already has: what it fetched

@@ -69,13 +69,17 @@ shapes; generate the binding again whenever the module is compiled again.
 
 ## What is checked when a module is loaded
 
-Three things, and they are different questions:
+Four things, and they are different questions:
 
 - the surface's `version`, which says how what the module says is to be read;
 - the runtime's ABI, which says how a call into the module is made and how it ends;
-- the binding's fingerprint, which says the module is the one the binding was written from.
+- the binding's fingerprint, which says the module is the one the binding was written from;
+- what is supplied, which has to be a function for every behavior the program reaches out for.
 
-A module failing any of them is refused when it is loaded, not when it is first called.
+A module failing any of them is refused when it is loaded, not when it is first called. A refusal
+for what is supplied names every behavior nothing answers. What answers each is taken when the
+module is loaded: a function put under the name afterwards is not the one the program calls, so a
+page that means to change what answers one supplies a function that asks something it can change.
 
 ## What the boundary would not read
 
