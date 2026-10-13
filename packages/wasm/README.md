@@ -69,17 +69,26 @@ shapes; generate the binding again whenever the module is compiled again.
 
 ## What is checked when a module is loaded
 
-Four things, and they are different questions:
+Each of these is a different question, and a module failing any of them is refused when it is
+loaded, not when it is first called:
 
 - the surface's `version`, which says how what the module says is to be read;
-- the runtime's ABI, which says how a call into the module is made and how it ends;
 - the binding's fingerprint, which says the module is the one the binding was written from;
-- what is supplied, which has to be a function for every behavior the program reaches out for.
+- what the module imports, which has to be the one function this glue hands it;
+- what is supplied, which has to be a function for every behavior the program reaches out for;
+- the runtime's ABI, which says how a call into the module is made and how it ends;
+- what the module exports, which has to hold everything this glue calls: what the runtime gives
+  every module, and each behavior the surface says is exported.
 
-A module failing any of them is refused when it is loaded, not when it is first called. A refusal
-for what is supplied names every behavior nothing answers. What answers each is taken when the
-module is loaded: a function put under the name afterwards is not the one the program calls, so a
+A refusal names every part it is about: each behavior nothing answers, each import, each export.
+What is supplied is checked before the module is instantiated, since instantiating it runs it.
+
+What answers each behavior is taken when the module is loaded, and called as a function, with
+`this` undefined: a function put under the name afterwards is not the one the program calls, so a
 page that means to change what answers one supplies a function that asks something it can change.
+
+`load` is the only way a program is made, so the package exports `Program` as a type and not as
+something to construct.
 
 ## What the boundary would not read
 

@@ -72,12 +72,16 @@ export class Ended extends Error {
 /**
  * Loads a compiled Souther program.
  *
- * Refused where its surface or its runtime is of a version this does not read, where `fingerprint`
- * is given and its surface is not the one a binding was generated from, and where a behavior it
- * reaches out for has no function supplied for it.
+ * Everything a call needs is made sure of here, so that a program, once loaded, is one each of its
+ * behaviors can be called on: refused where its surface or its runtime is of a version this does
+ * not read, where `fingerprint` is given and its surface is not the one a binding was generated
+ * from, where it imports anything but the one function this glue hands it, where a behavior it
+ * reaches out for has no function supplied for it, and where it lacks something this glue calls.
+ * What is supplied is checked before the module is instantiated, since instantiating it runs it.
  *
  * @param source where the module is
- * @param supplied what answers each behavior the program reaches out for
+ * @param supplied what answers each behavior the program reaches out for, taken as it is now: a
+ *   function put under a name afterwards is not the one the program calls
  * @param fingerprint what a binding was generated from, which the module's surface must be
  */
 export async function load(
@@ -94,16 +98,97 @@ export async function load(
         + `${of}, where the binding says ${fingerprint}`);
     }
   }
-  const program = new Program(supplied, surface);
+  const imported = WebAssembly.Module.imports(module)
+    .filter((each) => !(each.module === HOST_CALL.module && each.name === HOST_CALL.name && each.kind === "function"))
+    .map((each) => `${each.module}.${each.name} (${each.kind})`);
+  if (imported.length > 0) {
+    throw new Error(`this module imports what this glue, which calls ABI ${READS.abi}, does not hand it: `
+      + imported.join(", "));
+  }
+  const crossings = answering(surface, supplied);
+  const values = new Values(surface);
+  // The module is handed what it reaches out through before there is a memory to read what it asks
+  // from: one reaching out while it is instantiated is told so, and not answered from nothing.
+  let reach: ((ordinal: number, at: number, length: number, into: number, room: number) => number) | undefined;
   const instance = await WebAssembly.instantiate(module, {
-    souther: { host_call: program.reachOut },
+    [HOST_CALL.module]: {
+      [HOST_CALL.name]: (ordinal: number, at: number, length: number, into: number, room: number) => {
+        if (reach === undefined) {
+          throw new Error("this program reached out while it was being instantiated, before anything could answer");
+        }
+        return reach(ordinal, at, length, into, room);
+      },
+    },
   });
   const abi = (instance.exports.__souther_abi_version as (() => number) | undefined)?.();
   if (abi !== READS.abi) {
     throw new Error(`this module's runtime is ABI ${abi}, and this glue calls ABI ${READS.abi}`);
   }
-  program.ready(instance);
-  return program;
+  const exports = exported(instance, surface);
+  reach = (ordinal, at, length, into, room) => reachOut(crossings, values, exports.memory, ordinal, at, length, into, room);
+  return new Program(exports, surface, values);
+}
+
+/** What the module imports: the one function it reaches out through, under the name it imports it by. */
+const HOST_CALL = { module: "souther", name: "host_call" } as const;
+
+/**
+ * What answers each behavior a program reaches out for, by the number it reaches out under.
+ *
+ * Taken from `supplied` once, and refused where something other than a function is under a name,
+ * naming every one: a program that would find out on a call is not made. A call out carries a number
+ * and not a name, and the surface says which behavior each is: by its module and its name, since one
+ * its module keeps is reached out for all the same and is exported as nothing.
+ */
+function answering(surface: Surface, supplied: Supplied): ReadonlyMap<number, Crossing> {
+  const crossings = new Map<number, Crossing>();
+  const unanswered: string[] = [];
+  for (const { named, behavior } of reachedFor(surface)) {
+    const answer: unknown = supplied[named];
+    if (typeof answer === "function") {
+      crossings.set(behavior.reachOut as number, { named, behavior, answer: answer as Crossing["answer"] });
+    } else {
+      unanswered.push(named);
+    }
+  }
+  if (unanswered.length > 0) {
+    throw new Error(`this program reaches out for what no function was supplied for: ${unanswered.join(", ")}`);
+  }
+  return crossings;
+}
+
+/** Each behavior a program reaches out for, and the name it is supplied under. */
+function reachedFor(surface: Surface): { readonly named: string; readonly behavior: Behavior }[] {
+  return surface.modules.flatMap((module) => module.behaviors
+    .filter((behavior) => behavior.reachOut !== undefined)
+    .map((behavior) => ({ named: `${module.name}.${behavior.name}`, behavior })));
+}
+
+/**
+ * What the instance exports, refused where it lacks something this glue calls: what the runtime
+ * gives every module, and each behavior the surface says is exported. Each is named, as what it
+ * should have been, so a module missing one is refused when it is loaded and not on the call that
+ * first reaches for it.
+ */
+function exported(instance: WebAssembly.Instance, surface: Surface): Exports {
+  const held = instance.exports;
+  const behaviors = surface.modules.flatMap((module) => module.behaviors)
+    .filter((behavior) => behavior.export !== undefined)
+    .map((behavior) => [behavior.export as string, "function"] as const);
+  const lacking = [...Object.entries(RUNTIME), ...behaviors]
+    .filter(([name, kind]) => !isA(held[name], kind))
+    .map(([name, kind]) => `${name} (${kind})`);
+  if (lacking.length > 0) {
+    throw new Error(`this module does not export what this glue calls: ${lacking.join(", ")}`);
+  }
+  return held as unknown as Exports;
+}
+
+/** What an export of the module is, as far as this glue calls it: a function, or the memory. */
+type Kind = "function" | "memory";
+
+function isA(value: WebAssembly.ExportValue | undefined, kind: Kind): boolean {
+  return kind === "function" ? typeof value === "function" : value instanceof WebAssembly.Memory;
 }
 
 /**
@@ -146,16 +231,31 @@ export function surfaceOf(module: WebAssembly.Module): [Surface, Uint8Array<Arra
   return [surface, bytes];
 }
 
-interface Exports {
+/** What the runtime exports in every module, which this glue calls. */
+interface Runtime {
   readonly memory: WebAssembly.Memory;
   readonly __ronto_alloc: (length: number) => number;
   readonly __ronto_alloc_mark: () => number;
   readonly __ronto_alloc_reset: (mark: number) => void;
+  readonly __souther_abi_version: () => number;
   readonly __souther_failure_addr: () => number;
   readonly __souther_failure_generation: () => number;
   readonly __souther_decode: (number: number, at: number, length: number) => [number, number];
-  readonly [behavior: string]: unknown;
 }
+
+/** What each export of the runtime is, by its name: one for each the glue calls, and no other. */
+const RUNTIME = {
+  memory: "memory",
+  __ronto_alloc: "function",
+  __ronto_alloc_mark: "function",
+  __ronto_alloc_reset: "function",
+  __souther_abi_version: "function",
+  __souther_failure_addr: "function",
+  __souther_failure_generation: "function",
+  __souther_decode: "function",
+} as const satisfies { readonly [name in keyof Runtime]: Kind };
+
+type Exports = Runtime & { readonly [behavior: string]: unknown };
 
 /** A behavior a program reaches out for: what it is called, what it is, and what answers it. */
 interface Crossing {
@@ -164,62 +264,33 @@ interface Crossing {
   readonly answer: (...args: never[]) => unknown;
 }
 
-/** A loaded program, whose behaviors are called by name. */
-export class Program {
-  #exports: Exports | undefined;
-  /**
-   * Each behavior the program reaches out for, what it is called and what answers it, by the number
-   * it reaches out under.
-   */
-  readonly #crossings: ReadonlyMap<number, Crossing>;
+/**
+ * A loaded program, whose behaviors are called by name.
+ *
+ * Made by {@link load} and nothing else, which is why the package exports it as a type: a program is
+ * not made before everything a call needs has been made sure of.
+ */
+class Program {
+  readonly #exports: Exports;
   readonly #surface: Surface;
   readonly #decodable: ReadonlyMap<string, number>;
   readonly #values: Values;
   /** What each behavior a caller calls answers, by what it is exported as. */
   readonly #answers: ReadonlyMap<string, Shape>;
 
-  /**
-   * @throws where a behavior the program reaches out for has no function supplied for it, naming
-   * every such behavior: a program is not made without what answers each of them
-   */
-  constructor(supplied: Supplied, surface: Surface) {
-    // A call out carries a number and not a name, and the surface says which behavior each is: by
-    // its module and its name, since one its module keeps is reached out for all the same and is
-    // exported as nothing. What answers each is taken here, once: a function put under its name
-    // after the program is made is not what it calls.
-    const crossings = new Map<number, Crossing>();
-    const unanswered: string[] = [];
-    for (const module of surface.modules) {
-      for (const behavior of module.behaviors.filter((each) => each.reachOut !== undefined)) {
-        const named = `${module.name}.${behavior.name}`;
-        const answer: unknown = supplied[named];
-        if (typeof answer === "function") {
-          crossings.set(behavior.reachOut as number, { named, behavior, answer: answer as Crossing["answer"] });
-        } else {
-          unanswered.push(named);
-        }
-      }
-    }
-    if (unanswered.length > 0) {
-      throw new Error(`this program reaches out for what no function was supplied for: ${unanswered.join(", ")}`);
-    }
-    this.#crossings = crossings;
+  constructor(exports: Exports, surface: Surface, values: Values) {
+    this.#exports = exports;
     this.#answers = new Map(surface.modules
       .flatMap((module) => module.behaviors)
       .filter((behavior) => behavior.export !== undefined)
       .map((behavior) => [behavior.export as string, behavior.answers]));
-    this.#values = new Values(surface);
+    this.#values = values;
     this.#surface = surface;
     // Resolved once, by name: the numbers are this module's, and only its own surface says which
     // type each one is.
     this.#decodable = new Map(surface.declarations
       .filter((declared) => declared.decode !== undefined)
       .map((declared) => [`${declared.module}.${declared.name}`, declared.decode as number]));
-    this.reachOut = this.reachOut.bind(this);
-  }
-
-  ready(instance: WebAssembly.Instance): void {
-    this.#exports = instance.exports as unknown as Exports;
   }
 
   /** What this program offers a caller, as the module says it. */
@@ -229,12 +300,12 @@ export class Program {
 
   /** What this program offers, which is one name per behavior the model declares. */
   get behaviors(): string[] {
-    return Object.keys(this.#held()).filter((name) => name.includes("."));
+    return Object.keys(this.#exports).filter((name) => name.includes("."));
   }
 
   /** What this program reaches out for, which is what has to be supplied to load it. */
   get reachesOutFor(): string[] {
-    return [...this.#crossings.values()].map((crossing) => crossing.named);
+    return reachedFor(this.#surface).map((each) => each.named);
   }
 
   /**
@@ -242,7 +313,7 @@ export class Program {
    * where it is after every one of them.
    */
   arenaTop(): number {
-    return this.#held().__ronto_alloc_mark();
+    return this.#exports.__ronto_alloc_mark();
   }
 
   /**
@@ -252,7 +323,7 @@ export class Program {
    * @param args the call's arguments, in the order the behavior declares them
    */
   call<T = unknown>(behavior: string, args: readonly unknown[]): Reading<T> {
-    const reach = this.#held()[behavior] as ((at: number, length: number) => [number, number])
+    const reach = this.#exports[behavior] as ((at: number, length: number) => [number, number])
       | undefined;
     const answers = this.#answers.get(behavior);
     if (reach === undefined || answers === undefined) {
@@ -318,7 +389,7 @@ export class Program {
     const shape = this.#shapeOf(type);
     return (input) =>
       this.#crossed(input === undefined ? null : given(input),
-        (at, length) => this.#held().__souther_decode(number, at, length), shape) as Reading<T>;
+        (at, length) => this.#exports.__souther_decode(number, at, length), shape) as Reading<T>;
   }
 
   /** The shape a type the program declares is written as: the type itself, by its module and name. */
@@ -337,7 +408,7 @@ export class Program {
    */
   #crossed(document: unknown, reach: (at: number, length: number) => [number, number], answers: Shape):
     Result<unknown> {
-    const exports = this.#held();
+    const exports = this.#exports;
     const generation = exports.__souther_failure_generation();
     const mark = exports.__ronto_alloc_mark();
     try {
@@ -359,40 +430,8 @@ export class Program {
     }
   }
 
-  /**
-   * What the model reaches out for, answered by whoever loaded it.
-   *
-   * Answering is a call and not a promise. There is no stopping wasm in the middle and picking it
-   * up again, so what a model reaches out for has to be something the page already has.
-   */
-  reachOut(ordinal: number, at: number, length: number, into: number, room: number): number {
-    const crossing = this.#crossings.get(ordinal);
-    if (crossing === undefined) {
-      throw new Error(`this program reached out under a number it does not name: ${ordinal}`);
-    }
-    // What is asked is read as the behavior's parameters are, as a value the module answers is.
-    const written = parse(decoder.decode(this.#bytes().subarray(at, at + length)));
-    const parameters = crossing.behavior.parameters;
-    if (!Array.isArray(written) || written.length !== parameters.length) {
-      throw new Error(`${crossing.named} was asked something other than its ${parameters.length} arguments`);
-    }
-    const asked = written.map((each, place) => this.#values.read(parameters[place]!.type, each)) as never[];
-    const answer = encoder.encode(stringify(crossing.answer(...asked)));
-    if (answer.length <= room) {
-      this.#bytes().set(answer, into);
-    }
-    return answer.length;
-  }
-
-  #held(): Exports {
-    if (this.#exports === undefined) {
-      throw new Error("this program is not instantiated yet");
-    }
-    return this.#exports;
-  }
-
   #bytes(): Uint8Array {
-    return new Uint8Array(this.#held().memory.buffer);
+    return new Uint8Array(this.#exports.memory.buffer);
   }
 
   /**
@@ -400,7 +439,7 @@ export class Program {
    * and the record carries a generation, so a trap with an unchanged one came from wasm itself.
    */
   #whyItEnded(generation: number, trapped: unknown): unknown {
-    const exports = this.#held();
+    const exports = this.#exports;
     const at = exports.__souther_failure_addr();
     const words = new DataView(exports.memory.buffer);
     if (words.getUint32(at + FAILURE.generation, true) === generation) {
@@ -408,6 +447,35 @@ export class Program {
     }
     return new Ended(words.getUint32(at + FAILURE.reason, true), trapped);
   }
+}
+
+export type { Program };
+
+/**
+ * What the model reaches out for, answered by whoever loaded it.
+ *
+ * Answering is a call and not a promise. There is no stopping wasm in the middle and picking it up
+ * again, so what a model reaches out for has to be something the page already has. What answers is
+ * called as a function and not as anything's method, so `this` in it is `undefined`.
+ */
+function reachOut(crossings: ReadonlyMap<number, Crossing>, values: Values, memory: WebAssembly.Memory,
+  ordinal: number, at: number, length: number, into: number, room: number): number {
+  const crossing = crossings.get(ordinal);
+  if (crossing === undefined) {
+    throw new Error(`this program reached out under a number it does not name: ${ordinal}`);
+  }
+  // What is asked is read as the behavior's parameters are, as a value the module answers is.
+  const written = parse(decoder.decode(new Uint8Array(memory.buffer).subarray(at, at + length)));
+  const parameters = crossing.behavior.parameters;
+  if (!Array.isArray(written) || written.length !== parameters.length) {
+    throw new Error(`${crossing.named} was asked something other than its ${parameters.length} arguments`);
+  }
+  const asked = written.map((each, place) => values.read(parameters[place]!.type, each)) as never[];
+  const answer = encoder.encode(stringify(Reflect.apply(crossing.answer, undefined, asked)));
+  if (answer.length <= room) {
+    new Uint8Array(memory.buffer).set(answer, into);
+  }
+  return answer.length;
 }
 
 /** A type a module publishes, read by the module: the issues it gives below where it is read. */
