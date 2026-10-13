@@ -278,7 +278,9 @@ them. The same either way: a component carries it and a core module does not, bu
 offers is the program's.
 
 A directory is read for the `.sou` files under it, in the order their paths sort, so one command
-line is one program every time. Nothing is written where the module would go unless the whole
+line is one program every time. Sources are read as `souther compile` reads them: a link under a
+named directory is refused rather than followed, and a lone file with no `module` header is the
+module its file names. Nothing is written where the module would go unless the whole
 program compiled: what stopped goes to the error stream, and it says which kind of stop it was —
 a program the language refuses answers differently from one this backend does not write yet, and
 both differently from a command line that named no compile.

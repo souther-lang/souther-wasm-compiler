@@ -63,6 +63,49 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void namesALoneSourceWithNoHeaderAfterItsFile(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), """
+                behavior doubled : (n: Int) -> Int
+
+                let doubled (n) = n + n
+                """);
+        Path offers = room.resolve("counting.wit");
+
+        Ran ran = run(source.toString(), "-o", room.resolve("out.wasm").toString(),
+                "--wit", offers.toString());
+
+        // A single file may leave its header out and is the module its file names, as
+        // `souther compile` takes it.
+        assertThat(ran.complained()).isEmpty();
+        assertThat(ran.status()).isZero();
+        assertThat(Files.readString(offers)).contains("interface counting {");
+    }
+
+    @Test
+    void refusesALinkUnderADirectoryRatherThanReadingWhatItPointsAt(@TempDir Path room)
+            throws IOException {
+        Path tree = Files.createDirectories(room.resolve("tree"));
+        Files.writeString(tree.resolve("counting.sou"), COUNTING);
+        Path elsewhere = Files.writeString(room.resolve("elsewhere.txt"), """
+                module linked
+
+                behavior one : (n: Int) -> Int
+
+                let one (n) = 1
+                """);
+        Files.createSymbolicLink(tree.resolve("linked.sou"), elsewhere);
+        Path into = room.resolve("out.wasm");
+
+        Ran ran = run(tree.toString(), "-o", into.toString());
+
+        // What a link points at may never have been meant as a source, and a report quotes the
+        // source it is about.
+        assertThat(ran.status()).isEqualTo(2);
+        assertThat(ran.complained()).contains("linked.sou");
+        assertThat(into).doesNotExist();
+    }
+
+    @Test
     void writesAComponentWhereOneIsAskedFor(@TempDir Path room) throws IOException {
         Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
         Path core = room.resolve("core.wasm");
