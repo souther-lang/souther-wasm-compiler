@@ -106,6 +106,14 @@ public final class Main {
                 }
             }
         }
+        // Each part left out is said on its own, so a reader is not left to compare the line with
+        // the usage to find which it was.
+        if (sources.isEmpty()) {
+            problems.println("nothing named to compile");
+        }
+        if (into == null) {
+            problems.println("-o is required: it names where to write the module");
+        }
         if (sources.isEmpty() || into == null) {
             problems.print(USAGE);
             return WRONG_COMMAND;

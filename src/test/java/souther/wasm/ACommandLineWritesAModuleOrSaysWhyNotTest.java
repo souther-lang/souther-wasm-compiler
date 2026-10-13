@@ -417,6 +417,21 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void saysWhichPartOfTheCommandWasLeftOut(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+
+        assertThat(run(source.toString()).complained())
+                .contains("-o is required")
+                .doesNotContain("nothing named to compile");
+        assertThat(run("-o", room.resolve("out.wasm").toString()).complained())
+                .contains("nothing named to compile")
+                .doesNotContain("-o is required");
+        assertThat(run().complained())
+                .contains("nothing named to compile")
+                .contains("-o is required");
+    }
+
+    @Test
     void saysSoRatherThanWritingAnEmptyModuleWhenNothingNamedIsASource(@TempDir Path room)
             throws IOException {
         Files.writeString(room.resolve("notes.txt"), "not a source");
