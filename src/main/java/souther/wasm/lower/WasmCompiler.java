@@ -27,6 +27,8 @@ import souther.compiler.program.CheckedHelper;
 import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
+import souther.compiler.program.CheckedValue;
+import souther.compiler.program.CheckedValueEntry;
 import souther.compiler.program.Publication;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
@@ -266,6 +268,9 @@ public final class WasmCompiler {
             reachOut.put(each.name(), reachOut.size());
         }
         List<Composed> composed = new ArrayList<>();
+        // The entry another module reads a published value through, by the value. Apart from
+        // `reached`, which holds the value's own function under the same name.
+        Map<ValueName, Integer> entries = new HashMap<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedHelper helper : module.helpers()) {
                 int index = fragment.declare(overCells(fragment, helper.parameters().size()));
@@ -273,6 +278,21 @@ public final class WasmCompiler {
                 written.add(new Written(index, helper.parameters().stream()
                         .map(CheckedHelper.Parameter::binder).toList(), helper.body(),
                         helper.declares(), Set.of()));
+            }
+            // A value is built where it is read, every time it is read. A call's values live in its
+            // arena and go when the caller pops it, so a value kept from one call to the next would
+            // be kept in memory that is no longer its own.
+            for (CheckedValue value : module.values()) {
+                int index = fragment.declare(overCells(fragment, value.handovers().size()));
+                reached.put(value.name(), index);
+                written.add(new Written(index, value.handovers().stream()
+                        .map(CheckedValue.Handover::binder).toList(), value.body(),
+                        value.name(), Set.of()));
+            }
+            for (CheckedValueEntry entry : module.valueEntries()) {
+                int index = fragment.declare(overCells(fragment, 0));
+                entries.put(entry.value(), index);
+                written.add(new Written(index, List.of(), entry.body(), entry.value(), Set.of()));
             }
             for (CheckedBehavior behavior : module.behaviors()) {
                 int arity = behavior.signature().takes().size();
@@ -295,7 +315,7 @@ public final class WasmCompiler {
             }
         }
 
-        Emitter emitter = new Emitter(program, fragment, calls, shapes, reached, name -> {
+        Emitter emitter = new Emitter(program, fragment, calls, shapes, reached, entries, name -> {
             // Asking for the descriptor is what declares the check, so it is asked first.
             shapes.ofDeclared(name);
             Integer check = checks.get(name);
@@ -667,6 +687,8 @@ public final class WasmCompiler {
         private final Runtime calls;
         private final Descriptors shapes;
         private final Map<ValueName, Integer> reached;
+        /** The entry each published value is read through from another module, by the value. */
+        private final Map<ValueName, Integer> entries;
         private final Cells cells;
         /** The function checking what must hold of a type, by the type. */
         private final java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf;
@@ -677,9 +699,10 @@ public final class WasmCompiler {
         private Set<ValueName.Behavior> requirementsInScope = Set.of();
 
         Emitter(CheckedProgram program, WasmFragment fragment, Runtime calls, Descriptors shapes,
-                Map<ValueName, Integer> reached,
+                Map<ValueName, Integer> reached, Map<ValueName, Integer> entries,
                 java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf) {
             this.program = program;
+            this.entries = entries;
             this.fragment = fragment;
             this.patterns = shapes.patterns();
             this.cells = new Cells(fragment);
@@ -1313,17 +1336,33 @@ public final class WasmCompiler {
                 kernel(out, call, intrinsic.kernel());
                 return;
             }
+            // A value of this module is its own function, handed the values its root region built
+            // already; one another module publishes is that module's entry for it, which takes
+            // nothing.
+            if (call.fn() instanceof Core.Reached.OfValue value) {
+                reach(out, call, reached, value.denotes(), "body");
+                return;
+            }
+            if (call.fn() instanceof Core.Reached.OfPublishedValue value) {
+                reach(out, call, entries, value.denotes(), "entry");
+                return;
+            }
             if (!(call.fn() instanceof Core.Reached.OfDeclaration declaration)) {
                 throw new NotLowered(writing + " reaches " + call.fn()
-                        + ", and this backend reaches a helper and a behavior");
+                        + ", and this backend reaches a helper, a value and a behavior");
             }
-            // A helper, a value and a behavior are each a body this program reaches by the name it
-            // was declared under, so which of them it is decides nothing here.
-            ValueName name = declaration.reaches().declaration();
-            Integer index = reached.get(name);
+            // A helper and a behavior are each a body this program reaches by the name it was
+            // declared under, so which of them it is decides nothing here.
+            reach(out, call, reached, declaration.reaches().declaration(), "body");
+        }
+
+        /** A call to the function {@code functions} holds for {@code name}, with its arguments. */
+        private void reach(BodyWriter out, Core.Call call, Map<ValueName, Integer> functions,
+                           ValueName name, String what) {
+            Integer index = functions.get(name);
             if (index == null) {
                 throw new NotLowered(writing + " reaches " + name
-                        + ", which this program declares no body for here");
+                        + ", which this program declares no " + what + " for here");
             }
             for (Core argument : call.args()) {
                 value(out, argument);
