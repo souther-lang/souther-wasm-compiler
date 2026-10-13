@@ -7,19 +7,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
-import java.util.stream.Stream;
-import souther.compiler.cst.SourceLayout;
+import souther.compiler.CompilationSources;
+import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
-import souther.compiler.diag.DiagnosticRenderer;
-import souther.compiler.diag.HumanRenderer;
-import souther.compiler.diag.SourceContext;
-import souther.compiler.diag.SourceContextResolver;
-import souther.compiler.diag.SourceNames;
+import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
-import souther.compiler.query.Compilation;
 import souther.wasm.link.WitText;
 import souther.wasm.lower.NotLowered;
 import souther.wasm.lower.WasmCompiler;
@@ -49,7 +42,9 @@ public final class Main {
               --wit <file>  also write what the program offers, as a reader of interfaces reads
                             it. The same whether a component is written or not.
 
-            A directory is read for the .sou files under it, in the order their paths sort.
+            A directory is read for the .sou files under it, in the order their paths sort; a
+            link under it is refused rather than followed. A lone file with no module header is
+            named after the file.
             """;
 
     private Main() {
@@ -116,26 +111,23 @@ public final class Main {
             return WRONG_COMMAND;
         }
 
-        List<Path> files;
+        CompilationSources read;
         try {
-            files = under(sources);
+            read = read(sources);
         } catch (IOException | UncheckedIOException e) {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
         }
-        if (files.isEmpty()) {
+        int count = read.texts().size();
+        if (count == 0) {
             problems.println("nothing to compile: no .sou file among what was named");
             return WRONG_COMMAND;
         }
 
         byte[] written;
         String offers = null;
-        List<String> read = new ArrayList<>(files.size());
         try {
-            for (Path file : files) {
-                read.add(Files.readString(file, StandardCharsets.UTF_8));
-            }
-            CheckedProgram program = CheckedProgram.of(read);
+            CheckedProgram program = CheckedProgram.of(read, ModulePath.EMPTY);
             written = component
                     ? WasmCompiler.compileAsComponent(program)
                     : WasmCompiler.compile(program);
@@ -143,7 +135,7 @@ public final class Main {
                 offers = WitText.written(WasmCompiler.offering(program));
             }
         } catch (CompileException e) {
-            say(e, files, read, problems);
+            Refusal.lines(e, read).forEach(problems::println);
             return REFUSED;
         } catch (IllegalArgumentException e) {
             // A program that compiles but offers two behaviors one name, which is a refusal of
@@ -155,9 +147,6 @@ public final class Main {
             // language refuses — so it says which it was rather than one word for both.
             problems.println("this backend does not write that yet: " + e.getMessage());
             return REFUSED;
-        } catch (IOException e) {
-            problems.println(e.getMessage());
-            return WRONG_COMMAND;
         }
 
         try {
@@ -175,8 +164,7 @@ public final class Main {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
         }
-        out.println("wrote " + into + " from " + files.size()
-                + (files.size() == 1 ? " source" : " sources"));
+        out.println("wrote " + into + " from " + count + (count == 1 ? " source" : " sources"));
         return NOTHING_WRONG;
     }
 
@@ -188,80 +176,26 @@ public final class Main {
     private static final int WRONG_COMMAND = 2;
 
     /**
-     * Says why the language refused a program, quoting the source each diagnostic points into.
+     * The sources a command line named, read: a file as itself, and a directory as every
+     * {@code .sou} under it, read the way Souther reads a tree of sources.
      *
-     * <p>Where a report points is a place in a text; a line and a column are what that text is laid
-     * out as, so they belong to whoever holds the text rather than to an exception on its way up a
-     * stack. This command holds the texts it compiled, which is why the numbers are worked out here.
-     * An error that carries no diagnostic is a site not yet reporting through the catalog, and what
-     * it says is the whole of what there is to say about it.
-     *
-     * <p>No colour and English: this stream is as often a log or a pipe as a terminal, and every
-     * other sentence this command writes is English.
+     * <p>Held as one value from here on, because what the program is checked from, what a lone file
+     * with no header is called, and what a refusal is quoted from are one list of texts in one
+     * order, and the compile is the one that says which id each gets. A link found under a named
+     * directory is refused rather than followed, as {@code souther compile} refuses it.
      */
-    private static void say(CompileException e, List<Path> files, List<String> texts,
-                            PrintStream problems) {
-        if (e.diagnostic() == null) {
-            problems.println(e.getMessage());
-            return;
-        }
-        for (String line : DiagnosticRenderer.renderAll(e.locatedDiagnostics(),
-                quoting(files, texts), new HumanRenderer(false), Locale.ENGLISH)) {
-            problems.println(line);
-        }
-    }
-
-    /**
-     * What to quote for each source a report names: the text this command read, under the name a
-     * reader is shown it by.
-     *
-     * <p>A report names a source by the position it was handed over in, which is the one thing this
-     * knows its own list by. A name that is none of them is about a source this compile did not hand
-     * over, and answering it with a file that happens to be here would draw a caret in a text the
-     * report says nothing about.
-     *
-     * <p>The layout is told which source its text is, so that the same thing is refused a second
-     * time where it is a type error rather than a missed comparison: a layout that knows its source
-     * will not resolve a place from another one. A text handed over with no name is a text nobody
-     * can tell apart, and this one is told apart by the id it was compiled under.
-     *
-     * <p>The names are {@link SourceNames}, so a reader is shown {@code model.sou} where that is
-     * unambiguous and enough of the path to tell two apart where it is not — the naming every other
-     * report of this language is read under.
-     */
-    private static SourceContextResolver quoting(List<Path> files, List<String> texts) {
-        List<String> names = SourceNames.of(files.stream().map(Path::toString).toList());
-        return SourceContextResolver.memoized(id -> {
-            for (int i = 0; i < texts.size(); i++) {
-                if (Compilation.idOfSourceIndex(i).equals(id)) {
-                    return new SourceContext(names.get(i), texts.get(i),
-                            SourceLayout.of(texts.get(i), id));
-                }
-            }
-            return null;
-        });
-    }
-
-    /**
-     * The sources a command line named: a file as itself, a directory as the {@code .sou} files
-     * under it, in the order their paths sort so that one command line is one program every time.
-     */
-    private static List<Path> under(List<Path> named) throws IOException {
-        List<Path> found = new ArrayList<>();
+    private static CompilationSources read(List<Path> named) throws IOException {
+        List<SourceFile> files = new ArrayList<>();
         for (Path each : named) {
             if (Files.isDirectory(each)) {
-                try (Stream<Path> walked = Files.walk(each)) {
-                    walked.filter(Files::isRegularFile)
-                            .filter(path -> path.toString().endsWith(".sou"))
-                            .sorted(Comparator.comparing(Path::toString))
-                            .forEach(found::add);
-                }
+                files.addAll(CompilationSources.readTree(each));
             } else if (Files.isRegularFile(each)) {
-                found.add(each);
+                files.add(new SourceFile(each.toString(),
+                        Files.readString(each, StandardCharsets.UTF_8)));
             } else {
                 throw new IOException("no such file: " + each);
             }
         }
-        return found;
+        return CompilationSources.files(files);
     }
 }
