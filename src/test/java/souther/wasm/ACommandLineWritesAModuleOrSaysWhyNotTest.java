@@ -1,6 +1,8 @@
 package souther.wasm;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -8,6 +10,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -267,6 +271,87 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
                 .contains("let broken (n) = n + missing")
                 .doesNotContain("a.sou")
                 .doesNotContain("let fine (n) = n + 1");
+    }
+
+    @Test
+    void quotesTwoSourcesOfOneNameEachUnderTheDirectoryThatTellsThemApart(@TempDir Path room)
+            throws IOException {
+        Files.createDirectories(room.resolve("a"));
+        Files.createDirectories(room.resolve("b"));
+        Files.writeString(room.resolve("a/model.sou"), """
+                module first
+
+                behavior x : (n: Int) -> Int
+
+                let x (n) = n + missingInA
+                """);
+        Files.writeString(room.resolve("b/model.sou"), """
+                module second
+
+                behavior y : (n: Int) -> Int
+
+                let y (n) = n + missingInB
+                """);
+
+        Ran ran = run(room.toString(), "-o", room.resolve("out.wasm").toString());
+
+        // Two sources a reader would both call model.sou are told apart by as much of the path as
+        // it takes, and each line is quoted under the name of the source it came from. Names and
+        // texts worked out apart from the ids the compile gave them would put a line under the
+        // other file's name.
+        String a = Path.of("a", "model.sou").toString();
+        String b = Path.of("b", "model.sou").toString();
+        assertThat(ran.status()).isEqualTo(1);
+        assertThat(quotedUnder(ran.complained(), a + ":5:17")).contains("n + missingInA")
+                .doesNotContain("missingInB");
+        assertThat(quotedUnder(ran.complained(), b + ":5:17")).contains("n + missingInB")
+                .doesNotContain("missingInA");
+    }
+
+    /** What a report says from the header naming {@code place} up to the next report's header. */
+    private static String quotedUnder(String said, String place) {
+        int at = said.indexOf(place);
+        assertThat(at).as("a report at " + place + " in\n" + said).isNotNegative();
+        int next = said.indexOf("\n-- ", at);
+        return said.substring(at, next < 0 ? said.length() : next);
+    }
+
+    @Test
+    void refusesADirectoryItCannotReadAllOfRatherThanCompilingWhatItCould(@TempDir Path room)
+            throws IOException {
+        Path tree = Files.createDirectories(room.resolve("project"));
+        Files.createDirectories(tree.resolve("public"));
+        Files.writeString(tree.resolve("public/counting.sou"), COUNTING);
+        Path closed = Files.createDirectories(tree.resolve("private"));
+        Files.writeString(closed.resolve("hidden.sou"), """
+                module hidden
+
+                behavior one : (n: Int) -> Int
+
+                let one (n) = 1
+                """);
+        Path into = room.resolve("out.wasm");
+        Set<PosixFilePermission> had;
+        try {
+            had = Files.getPosixFilePermissions(closed);
+        } catch (UnsupportedOperationException e) {
+            assumeTrue(false, "permissions cannot be taken away here: " + e);
+            return;
+        }
+        Files.setPosixFilePermissions(closed, Set.of());
+        Ran ran;
+        try {
+            assumeFalse(Files.isReadable(closed), "this process reads a directory with no permissions");
+            ran = run(tree.toString(), "-o", into.toString());
+        } finally {
+            Files.setPosixFilePermissions(closed, had);
+        }
+
+        // Nothing need import hidden, so what could be read compiles. A module written from it is a
+        // program nobody named.
+        assertThat(ran.status()).isEqualTo(2);
+        assertThat(ran.complained()).contains("private");
+        assertThat(into).doesNotExist();
     }
 
     @Test
