@@ -7,7 +7,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import souther.compiler.CompilationSources;
 import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
@@ -70,54 +74,55 @@ public final class Main {
      * @return nothing wrong, a program refused, or a command line that named no compile
      */
     public static int run(String[] arguments, PrintStream out, PrintStream problems) {
+        // Every part of the line is read before anything is said of it, and each part that is
+        // wrong is said on its own, so a reader is not left to compare the line with the usage to
+        // find which part it was.
         List<Path> sources = new ArrayList<>();
-        Path into = null;
-        Path offering = null;
+        Map<String, Path> files = new HashMap<>();
+        Set<String> asked = new HashSet<>();
         boolean component = false;
+        List<String> complaints = new ArrayList<>();
         for (int i = 0; i < arguments.length; i++) {
             String held = arguments[i];
             switch (held) {
-                case "-o" -> {
-                    if (i + 1 == arguments.length) {
-                        problems.println("-o names no file");
-                        return WRONG_COMMAND;
+                case "-o", "--wit" -> {
+                    asked.add(held);
+                    // What follows an option that names a file is that file, unless it is another
+                    // option: a line that left the file out does not write to a file named
+                    // after the option that came next.
+                    if (i + 1 == arguments.length || arguments[i + 1].startsWith("-")) {
+                        complaints.add(held + " names no file");
+                    } else if (files.putIfAbsent(held, Path.of(arguments[++i])) != null) {
+                        complaints.add(held + " is given more than once, and names one file");
                     }
-                    into = Path.of(arguments[++i]);
                 }
                 case "--component" -> component = true;
-                case "--wit" -> {
-                    if (i + 1 == arguments.length) {
-                        problems.println("--wit names no file");
-                        return WRONG_COMMAND;
-                    }
-                    offering = Path.of(arguments[++i]);
-                }
                 case "-h", "--help" -> {
                     out.print(USAGE);
                     return NOTHING_WRONG;
                 }
                 default -> {
                     if (held.startsWith("-")) {
-                        problems.println("no such option: " + held);
-                        problems.print(USAGE);
-                        return WRONG_COMMAND;
+                        complaints.add("no such option: " + held);
+                    } else {
+                        sources.add(Path.of(held));
                     }
-                    sources.add(Path.of(held));
                 }
             }
         }
-        // Each part left out is said on its own, so a reader is not left to compare the line with
-        // the usage to find which it was.
         if (sources.isEmpty()) {
-            problems.println("nothing named to compile");
+            complaints.add("nothing named to compile");
         }
-        if (into == null) {
-            problems.println("-o is required: it names where to write the module");
+        if (!asked.contains("-o")) {
+            complaints.add("-o is required: it names where to write the module");
         }
-        if (sources.isEmpty() || into == null) {
+        if (!complaints.isEmpty()) {
+            complaints.forEach(problems::println);
             problems.print(USAGE);
             return WRONG_COMMAND;
         }
+        Path into = files.get("-o");
+        Path offering = files.get("--wit");
 
         CompilationSources read;
         try {

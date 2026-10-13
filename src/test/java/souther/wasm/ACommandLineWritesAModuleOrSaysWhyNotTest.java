@@ -432,6 +432,58 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void saysEveryPartThatIsWrongAndNotOnlyTheFirst(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+
+        Ran ran = run(source.toString(), "--fast", "--wit");
+
+        assertThat(ran.status()).isEqualTo(2);
+        assertThat(ran.complained())
+                .contains("no such option: --fast")
+                .contains("--wit names no file")
+                .contains("-o is required");
+    }
+
+    // An option that names a file, followed by another option, left the file out: what came next
+    // is not taken for the file, nor is the option it is lost.
+    @Test
+    void takesNoOptionForTheFileAnOptionNames(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+
+        for (String[] arguments : new String[][] {
+            {source.toString(), "-o", "--component"},
+            {source.toString(), "-o", room.resolve("out.wasm").toString(), "--wit", "--component"},
+        }) {
+            Ran ran = run(arguments);
+            assertThat(ran.status()).describedAs(String.join(" ", arguments)).isEqualTo(2);
+            assertThat(ran.complained()).describedAs(String.join(" ", arguments))
+                    .containsPattern("(-o|--wit) names no file");
+        }
+        assertThat(Path.of("--component")).doesNotExist();
+        assertThat(room.resolve("out.wasm")).doesNotExist();
+    }
+
+    @Test
+    void refusesAFileNamedTwiceRatherThanWritingOneOfThem(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+        Path first = room.resolve("a.wasm");
+        Path second = room.resolve("b.wasm");
+
+        for (String[] arguments : new String[][] {
+            {source.toString(), "-o", first.toString(), "-o", second.toString()},
+            {source.toString(), "-o", first.toString(), "--wit", room.resolve("a.wit").toString(),
+                "--wit", room.resolve("b.wit").toString()},
+        }) {
+            Ran ran = run(arguments);
+            assertThat(ran.status()).describedAs(String.join(" ", arguments)).isEqualTo(2);
+            assertThat(ran.complained()).describedAs(String.join(" ", arguments))
+                    .contains("is given more than once");
+        }
+        assertThat(first).doesNotExist();
+        assertThat(second).doesNotExist();
+    }
+
+    @Test
     void saysSoRatherThanWritingAnEmptyModuleWhenNothingNamedIsASource(@TempDir Path room)
             throws IOException {
         Files.writeString(room.resolve("notes.txt"), "not a source");
