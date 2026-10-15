@@ -51,7 +51,7 @@ let counted (lines) = List.length(lines)
 // @raoh/core and the one the package was built against have to be one, or the part's issues could
 // not be said at the part's path.
 const PAGE = `import { field, int, list, object } from "@raoh/core";
-import { messageOf } from "@souther/wasm";
+import { messageOf } from "@souther-lang/wasm";
 import { load } from "./binding.ts";
 
 export async function counted(bytes: Uint8Array): Promise<unknown[]> {
@@ -77,7 +77,7 @@ const BUILT = {
 
 /** The entries of the package, as a project imports them. */
 const ENTRIES = Object.keys(JSON.parse(readFileSync(join(PACKAGE, "package.json"), "utf-8")).exports)
-  .map((entry) => entry.replace(/^\./, "@souther/wasm"));
+  .map((entry) => entry.replace(/^\./, "@souther-lang/wasm"));
 
 it("is used from where it is installed, as the README says", async () => {
   const handed = process.env.SOUTHER_WASM_BUILT;
@@ -102,7 +102,7 @@ it("is used from where it is installed, as the README says", async () => {
   }));
   await run("npm", ["install", "--offline", "--no-audit", "--no-fund", join(built, BUILT.souther)],
     { cwd: project });
-  const installed = join(project, "node_modules", "@souther", "wasm");
+  const installed = join(project, "node_modules", "@souther-lang", "wasm");
   // One copy, the project's: the package brought none of its own.
   assert.throws(() => readFileSync(join(installed, "node_modules", "@raoh", "core", "package.json")),
     /ENOENT/);
@@ -114,7 +114,7 @@ it("is used from where it is installed, as the README says", async () => {
   await run(join(project, "node_modules", ".bin", "souther-wasm-bindings"),
     [BUILT.model, "-o", BUILT.binding], { cwd: project });
   const binding = readFileSync(join(project, BUILT.binding), "utf-8");
-  assert.match(binding, /import \* as souther from "@souther\/wasm";/);
+  assert.match(binding, /import \* as souther from "@souther-lang\/wasm";/);
   if (handed === undefined) {
     await compile(project);
     for (const each of [BUILT.binding, ...BUILT.compiled]) {

@@ -1,6 +1,6 @@
 // How an amount the model answers is shown.
 
-import type { Decimal } from "@souther/wasm";
+import type { Decimal } from "@souther-lang/wasm";
 
 /**
  * An amount of yen as a person reads it: the digits of its whole part in groups of three, and the

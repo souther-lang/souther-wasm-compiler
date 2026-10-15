@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Decimal, field, object, string } from "@raoh/core";
-import { load as loadModule, messageOf, READS } from "@souther/wasm";
+import { load as loadModule, messageOf, READS } from "@souther-lang/wasm";
 import { yen } from "./src/amount.ts";
 import { load, type Cart } from "./src/cart.ts";
 

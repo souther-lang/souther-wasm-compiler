@@ -92,7 +92,7 @@ The compiler turns `cart.sou` into a WebAssembly module. Not a component — a p
 which is what a browser reads, so nothing is transpiled and nothing is bundled between the compiler
 and the page.
 
-[`@souther/wasm`](../../packages/wasm) is the whole of the calling. It knows nothing about the
+[`@souther-lang/wasm`](../../packages/wasm) is the whole of the calling. It knows nothing about the
 model, so it is the same package whatever program it loads: the arguments go over as one JSON array
 written into the module's own memory, a call is bracketed by `__ronto_alloc_mark` and
 `__ronto_alloc_reset`, and one JSON object comes back — either `{"value": ...}` or `{"issues": [...]}`.
