@@ -4,24 +4,29 @@ What a basket costs is written in [`model/src/cart.sou`](model/src/cart.sou) and
 page hands over what was typed and shows what came back. The shape of a product code, and that a
 quantity is at least one, appear nowhere in the TypeScript.
 
+    npm install
+    npm run dev
+
+The model is compiled by `souther compile --target wasm`, so it takes
+[`souther`](https://github.com/souther-lang/souther) installed; the first compile fetches the wasm
+backend built against that Souther from Maven Central. `npm install` installs the glue the page
+calls the module through, `@souther-lang/wasm` from npm, beside the page's own `@raoh/core`, which
+the glue asks for as a peer. So the glue and the page share one Raoh, and a decoder of the model's
+can be a part of one the page writes.
+
+To run the page against this repository's backend and glue instead of the released ones, build
+both and put them where `souther` and the page look first:
+
     (cd ../.. && mvn package)
     export SOUTHER_HOME="$(cd ../.. && pwd)/.souther-home"
     mkdir -p "$SOUTHER_HOME/backends"
     ln -sf "$(cd ../.. && pwd)"/target/souther-wasm-compiler-*-cli.jar "$SOUTHER_HOME/backends/"
     (cd ../../packages/wasm && npm install && npm run build)
-    npm install
-    npm run dev
+    npm install --no-save ../../packages/wasm
 
-The model is compiled by `souther compile --target wasm`, so it takes
-[`souther`](https://github.com/souther-lang/souther) installed, and the wasm backend beside it built
-against the same Souther. The first line builds that backend from this repository, which is what
-turns the model into a module, and the next three install it where `souther` looks for one first,
-as [the compiler's README](../../README.md#running-it) says. The fifth builds the glue the page
-calls it through, which the page reads as a project installing it would:
-`npm install` installs a copy of it (`.npmrc` says `install-links`), beside the page's own
-`@raoh/core`, which the glue asks for as a peer. So the glue and the page share one Raoh, and a
-decoder of the model's can be a part of one the page writes. A copy is a copy, so run
-`npm install` here again after changing the glue.
+The last line installs a copy of the glue over the release (`.npmrc` says `install-links`), so
+run it again after changing the glue.
+
 `npm run dev`
 compiles the model with it, writes the module's TypeScript binding into `src/cart.ts`, and then
 starts Vite, so it is what to run again after changing the model. `npm run build` checks the page

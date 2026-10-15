@@ -198,10 +198,13 @@ jobs:
           npm run typecheck
           npm run build
           npm test
+      # The example names the released package, as a project would. What is checked here is this
+      # commit's glue against this commit's module, so the package built above is installed over it.
       - name: Build the example
         working-directory: examples/react-cart
         run: |
           npm ci
+          npm install --no-save ../../packages/wasm
           npm run build
           test -s dist/cart.wasm
 
