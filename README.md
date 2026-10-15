@@ -349,8 +349,19 @@ The backend is released at its own version, which the jar's manifest records as
 releases no Souther. A release is built against a released Souther and nothing else: `souther.version`
 in `pom.xml` names one on Maven Central, and `@souther/wasm` asks for a released `@raoh/core`.
 
-Nothing is published from CI. From a clean clone at the release's commit, the jar `mvn package`
-writes is attached to the GitHub release, and `npm publish` in `packages/wasm` publishes the package.
+The `souther` CLI fetches the backend from Maven Central where none is installed, and trusts it
+because a released file there cannot change. It reads `souther.version` out of each release's pom
+and takes the newest release built against itself, so each Souther release needs a release of this
+backend built against it.
+
+Nothing is published from CI. A release sets the version and `souther.version` on `main`, tags the
+commit `v<version>`, and from a clean clone at that tag runs
+
+    mvn -Prelease deploy
+    (cd packages/wasm && npm publish)
+
+The `release` profile refuses a snapshot version or dependency, a tree with changes HEAD does not
+record, and a HEAD not tagged for the version, and cleans before it builds.
 
 ## Licence
 
