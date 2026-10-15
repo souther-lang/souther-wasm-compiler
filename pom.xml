@@ -28,6 +28,12 @@
         </developer>
     </developers>
 
+    <scm>
+        <connection>scm:git:https://github.com/souther-lang/souther-wasm-compiler.git</connection>
+        <developerConnection>scm:git:git@github.com:souther-lang/souther-wasm-compiler.git</developerConnection>
+        <url>https://github.com/souther-lang/souther-wasm-compiler</url>
+    </scm>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
@@ -244,4 +250,148 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- `mvn -Prelease deploy`, run by hand from a clean clone at the tag; CI publishes nothing.
+             What goes to Maven Central is the plain jar, the `cli` jar the souther CLI fetches, and
+             this pom, whose `souther.version` is how the CLI tells which Souther a release is built
+             against. Central does not let a released file change, which is what the CLI trusts. -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>3.5.0</version>
+                        <executions>
+                            <execution>
+                                <id>a-release-depends-on-releases</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireReleaseVersion>
+                                            <message>A release is published at a version that is not a snapshot.</message>
+                                        </requireReleaseVersion>
+                                        <requireReleaseDeps>
+                                            <message>A release is what its tag builds, and a snapshot dependency builds to whatever was published under it last.</message>
+                                        </requireReleaseDeps>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- What is published is what the tag names: HEAD is a commit tagged for this
+                         version, and nothing an earlier build wrote goes into the jars. -->
+                    <plugin>
+                        <groupId>io.github.git-commit-id</groupId>
+                        <artifactId>git-commit-id-maven-plugin</artifactId>
+                        <version>9.0.1</version>
+                        <executions>
+                            <execution>
+                                <id>read-revision</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>revision</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>validate-release-source</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>validateRevision</goal>
+                                </goals>
+                                <configuration>
+                                    <validationProperties>
+                                        <validationProperty>
+                                            <name>the tree is what HEAD records</name>
+                                            <value>${git.dirty}</value>
+                                            <shouldMatchTo>false</shouldMatchTo>
+                                        </validationProperty>
+                                        <validationProperty>
+                                            <name>HEAD is tagged for this version</name>
+                                            <value>${git.tags}</value>
+                                            <shouldMatchTo>(^|,)v${project.version}(,|$)</shouldMatchTo>
+                                        </validationProperty>
+                                    </validationProperties>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-clean-plugin</artifactId>
+                        <version>3.5.0</version>
+                        <executions>
+                            <execution>
+                                <id>clean-before-building</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>clean</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.4.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.12.0</version>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.8</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.11.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
