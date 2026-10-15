@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.abi.RuntimeAbi;
 
 /**
@@ -109,7 +109,7 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
         }
 
         static Host answering(String source, Function<String, String> implementation) {
-            byte[] module = WasmCompiler.compile(CheckedProgram.of(List.of(source)));
+            byte[] module = Compiled.module(Compiled.program(List.of(source)));
             Host[] holder = new Host[1];
             HostFunction crossing = new HostFunction(
                     RuntimeAbi.IMPORT_MODULE,

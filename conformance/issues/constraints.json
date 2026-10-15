@@ -1,0 +1,526 @@
+{
+  "model": "module rules\n\ndata AtLeastTwo = String\n    invariant String.length(value) >= 2\n\ndata AtMostThree = String\n    invariant String.length(value) <= 3\n\ndata ExactlyFour = String\n    invariant String.length(value) == 4\n\ndata Between = String\n    invariant String.length(value) >= 2\n    invariant String.length(value) <= 3\n\ndata Positive = Int\n    invariant value > 0\n\ndata NonNegative = Int\n    invariant value >= 0\n\ndata Above = Int\n    invariant value > 10\n\ndata Ranged = Int\n    invariant value >= 1 && value <= 9\n\ndata Even = Int\n    invariant value >= 0 && value /= 5\n\ndata Price = Decimal\n    invariant value > 0.00m\n\ndata Rate = Decimal\n    invariant value >= 0.5m\n    invariant value <= 1.5m\n\ndata Nonempty = List<Int>\n    invariant List.length(value) >= 1\n\ndata Pair = List<Int>\n    invariant List.length(value) == 2\n\ndata Few = List<Int>\n    invariant List.length(value) <= 2\n\ndata Distinct = List<Int>\n    invariant List.allDistinctBy(x -> x, value)\n\ndata Filled = Map<String, Int>\n    invariant Map.size(value) >= 1\n\ndata Small = Map<String, Int>\n    invariant Map.size(value) <= 1\n",
+  "cases": [
+    {
+      "about": "too short",
+      "type": "rules.AtLeastTwo",
+      "input": "a",
+      "expect": [
+        {
+          "path": "",
+          "code": "too_short",
+          "messageKey": "too_short",
+          "meta": {
+            "actual": 1,
+            "min": 2
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at least 2 characters"
+        ],
+        "ja": [
+          "2文字以上で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "too long",
+      "type": "rules.AtMostThree",
+      "input": "abcd",
+      "expect": [
+        {
+          "path": "",
+          "code": "too_long",
+          "messageKey": "too_long",
+          "meta": {
+            "actual": 4,
+            "max": 3
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at most 3 characters"
+        ],
+        "ja": [
+          "3文字以内で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "not exactly as long",
+      "type": "rules.ExactlyFour",
+      "input": "abc",
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_length",
+          "messageKey": "invalid_length",
+          "meta": {
+            "actual": 3,
+            "expected": 4
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be exactly 4 characters"
+        ],
+        "ja": [
+          "4文字で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "the first of two length clauses broken",
+      "type": "rules.Between",
+      "input": "a",
+      "expect": [
+        {
+          "path": "",
+          "code": "too_short",
+          "messageKey": "too_short",
+          "meta": {
+            "actual": 1,
+            "min": 2
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at least 2 characters"
+        ],
+        "ja": [
+          "2文字以上で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "the second of two length clauses broken",
+      "type": "rules.Between",
+      "input": "abcd",
+      "expect": [
+        {
+          "path": "",
+          "code": "too_long",
+          "messageKey": "too_long",
+          "meta": {
+            "actual": 4,
+            "max": 3
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at most 3 characters"
+        ],
+        "ja": [
+          "3文字以内で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "not positive",
+      "type": "rules.Positive",
+      "input": 0,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.positive",
+          "meta": {
+            "actual": 0,
+            "min": 1
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be positive"
+        ],
+        "ja": [
+          "正の値で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "negative",
+      "type": "rules.NonNegative",
+      "input": -1,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.non_negative",
+          "meta": {
+            "actual": -1,
+            "min": 0
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be non-negative"
+        ],
+        "ja": [
+          "0以上で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "at a strict lower bound",
+      "type": "rules.Above",
+      "input": 10,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.minimum",
+          "meta": {
+            "actual": 10,
+            "min": 11
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at least 11"
+        ],
+        "ja": [
+          "11以上で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "below a range written as one clause",
+      "type": "rules.Ranged",
+      "input": 0,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.minimum",
+          "meta": {
+            "actual": 0,
+            "min": 1
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at least 1"
+        ],
+        "ja": [
+          "1以上で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "above a range written as one clause",
+      "type": "rules.Ranged",
+      "input": 10,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.maximum",
+          "meta": {
+            "actual": 10,
+            "max": 9
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at most 9"
+        ],
+        "ja": [
+          "9以下で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "a clause only partly a constraint, broken in the part that is",
+      "type": "rules.Even",
+      "input": -2,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.non_negative",
+          "meta": {
+            "actual": -2,
+            "min": 0
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be non-negative"
+        ],
+        "ja": [
+          "0以上で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "a clause only partly a constraint, broken in the part that is not",
+      "type": "rules.Even",
+      "input": 5,
+      "expect": [
+        {
+          "path": "",
+          "code": "invariant_violation",
+          "messageKey": "invariant_violation",
+          "meta": {
+            "module": "rules",
+            "type": "Even"
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "invariant violated on rules.Even"
+        ],
+        "ja": [
+          "invariant violated on rules.Even"
+        ]
+      }
+    },
+    {
+      "about": "an amount not positive",
+      "type": "rules.Price",
+      "input": 0,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.positive",
+          "meta": {
+            "actual": 0,
+            "min": 0
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be positive"
+        ],
+        "ja": [
+          "正の値で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "an amount below its minimum",
+      "type": "rules.Rate",
+      "input": 0.4,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.minimum",
+          "meta": {
+            "actual": 0.4,
+            "min": 0.5
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at least 0.5"
+        ],
+        "ja": [
+          "0.5以上で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "an amount above its maximum",
+      "type": "rules.Rate",
+      "input": 1.6,
+      "expect": [
+        {
+          "path": "",
+          "code": "out_of_range",
+          "messageKey": "out_of_range.maximum",
+          "meta": {
+            "actual": 1.6,
+            "max": 1.5
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must be at most 1.5"
+        ],
+        "ja": [
+          "1.5以下で入力してください"
+        ]
+      }
+    },
+    {
+      "about": "an empty list",
+      "type": "rules.Nonempty",
+      "input": [],
+      "expect": [
+        {
+          "path": "",
+          "code": "too_small",
+          "messageKey": "too_small.nonempty",
+          "meta": {
+            "actual": 0,
+            "min": 1
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must not be empty"
+        ],
+        "ja": [
+          "空にはできません"
+        ]
+      }
+    },
+    {
+      "about": "a list not of its size",
+      "type": "rules.Pair",
+      "input": [
+        1
+      ],
+      "expect": [
+        {
+          "path": "",
+          "code": "invalid_size",
+          "messageKey": "invalid_size",
+          "meta": {
+            "actual": 1,
+            "expected": 2
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must have exactly 2 elements"
+        ],
+        "ja": [
+          "2個の要素が必要です"
+        ]
+      }
+    },
+    {
+      "about": "a list too long",
+      "type": "rules.Few",
+      "input": [
+        1,
+        2,
+        3
+      ],
+      "expect": [
+        {
+          "path": "",
+          "code": "too_big",
+          "messageKey": "too_big",
+          "meta": {
+            "actual": 3,
+            "max": 2
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must have at most 2 elements"
+        ],
+        "ja": [
+          "2個以内の要素が必要です"
+        ]
+      }
+    },
+    {
+      "about": "a list holding a value twice",
+      "type": "rules.Distinct",
+      "input": [
+        1,
+        2,
+        1,
+        3,
+        2
+      ],
+      "expect": [
+        {
+          "path": "",
+          "code": "duplicate_element",
+          "messageKey": "duplicate_element",
+          "meta": {
+            "duplicates": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must not contain duplicates: [1, 2]"
+        ],
+        "ja": [
+          "重複があります: [1, 2]"
+        ]
+      }
+    },
+    {
+      "about": "an empty map",
+      "type": "rules.Filled",
+      "input": {},
+      "expect": [
+        {
+          "path": "",
+          "code": "too_small",
+          "messageKey": "too_small.nonempty",
+          "meta": {
+            "actual": 0,
+            "min": 1
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must not be empty"
+        ],
+        "ja": [
+          "空にはできません"
+        ]
+      }
+    },
+    {
+      "about": "a map too big",
+      "type": "rules.Small",
+      "input": {
+        "a": 1,
+        "b": 2
+      },
+      "expect": [
+        {
+          "path": "",
+          "code": "too_big",
+          "messageKey": "too_big",
+          "meta": {
+            "actual": 2,
+            "max": 1
+          }
+        }
+      ],
+      "messages": {
+        "en": [
+          "must have at most 1 elements"
+        ],
+        "ja": [
+          "1個以内の要素が必要です"
+        ]
+      }
+    }
+  ]
+}

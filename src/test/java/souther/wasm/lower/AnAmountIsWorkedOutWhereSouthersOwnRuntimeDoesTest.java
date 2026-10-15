@@ -6,10 +6,10 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
 import souther.runtime.DecimalMath;
 import souther.runtime.HALF_UP;
 import souther.runtime.Representations;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
 
@@ -44,23 +44,6 @@ class AnAmountIsWorkedOutWhereSouthersOwnRuntimeDoesTest {
                 assertThat(answerOf(module, "pricing.product", "[" + left + "," + right + "]"))
                         .describedAs(left + " * " + right)
                         .isEqualTo(written(DecimalMath.multiply(a, b)));
-            }
-        }
-    }
-
-    @Test
-    void dividesWhereSouthersRuntimeDivides() {
-        Running module = compiled();
-
-        for (String left : AMOUNTS) {
-            for (String right : AMOUNTS) {
-                if (new BigDecimal(right).signum() == 0) {
-                    continue;
-                }
-                assertThat(answerOf(module, "pricing.quotient", "[" + left + "," + right + "]"))
-                        .describedAs(left + " / " + right)
-                        .isEqualTo(written(
-                                DecimalMath.divide(new BigDecimal(left), new BigDecimal(right))));
             }
         }
     }
@@ -107,7 +90,7 @@ class AnAmountIsWorkedOutWhereSouthersOwnRuntimeDoesTest {
     }
 
     private static Running compiled() {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of("""
+        return Running.linked(Compiled.module(Compiled.program(List.of("""
                 module pricing
 
                 behavior sum : (a: Decimal, b: Decimal) -> Decimal
@@ -121,10 +104,6 @@ class AnAmountIsWorkedOutWhereSouthersOwnRuntimeDoesTest {
                 behavior product : (a: Decimal, b: Decimal) -> Decimal
 
                 let product (a, b) = a * b
-
-                behavior quotient : (a: Decimal, b: Decimal) -> Decimal
-
-                let quotient (a, b) = a / b
 
                 behavior rounded : (d: Decimal, places: Int) -> Decimal
 

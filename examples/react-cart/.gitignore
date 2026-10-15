@@ -1,3 +1,4 @@
 node_modules/
 dist/
 public/cart.wasm
+src/cart.ts

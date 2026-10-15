@@ -24,15 +24,21 @@
 
 #![no_std]
 
+extern crate alloc as heap;
+
+mod captures;
+mod clauses;
 mod decimal;
 mod descriptor;
 mod issues;
 mod kernel;
 mod json;
+mod notation;
 mod order;
-mod regex;
+mod rational;
 mod temporal;
 mod text;
+mod tree;
 mod value;
 
 use core::panic::PanicInfo;
@@ -42,7 +48,54 @@ const PAGE: usize = 65536;
 
 /// What this module's callers are compiled against. A linker that reads a different number is
 /// looking at a runtime it was not built for.
-const ABI_VERSION: u32 = 1;
+///
+/// Raised to 4 when the reason vocabulary stopped naming Souther's own abort semantics a second
+/// time and started only representing `souther.compiler.abort.AbortKind` (issue #23): several
+/// reason numbers kept their value but changed what they mean (5 generalised from `Int` overflow
+/// alone to every `REQUIRED_FORM_HAS_NO_PLACE` case, 7 from a match falling through alone to any
+/// internal invariant breaking, 8 and 9 were renamed to the language's own names), and 11 is new.
+///
+/// Raised to 5 when what `__souther_string_matches` is told became the image of the pattern's
+/// machine that notation-199x writes, in place of the compiler's own list of steps: a module
+/// linked by the older compiler would hand this runtime steps it reads as an image.
+///
+/// Raised to 6 when a body began to read a cell's payload itself and to place literals in static
+/// memory as the cells this runtime makes, so the layout of a cell became part of what the two
+/// sides agree on; and when a walk began to grow a map in place, and to add one value to a list
+/// without a list of one around it.
+///
+/// Raised to 7 when a call could end for a reason it could not before, `NO_SUCH_TYPE`, which a host
+/// naming reasons by the numbers of 6 would not know.
+///
+/// Raised to 8 when an issue became Raoh's, with a message key and the metadata its constraint
+/// carries, and a descriptor of a type with rules came to point at what each rule is reported as.
+///
+/// Raised to 9 when `++` stopped having entries of its own (issue #26): on strings it is
+/// `__souther_string_append` and on lists `__souther_list_append`, the operations `String.append`
+/// and `List.append` already were, and `__souther_concat` and `__souther_list_concat` are gone.
+///
+/// Raised to 10 when a list came to point at its elements rather than hold them, read through
+/// `__souther_list_elements`, and a set and a map changed one member at a time came to be held as a
+/// tree, so that changing one from a walk costs as much as the JVM's persistent collections do.
+///
+/// Raised to 11 when a `Rational` came to be a value here, held in a cell of its own and read
+/// through the `__souther_rational_*` functions, and `/` came to answer one: `__souther_divide` and
+/// `__souther_decimal_divide_by`, which answered `/` as a truncated `Int` and a rounded `Decimal`,
+/// are gone, the language having answered an exact quotient since before either was reachable.
+///
+/// Raised to 12 when a call this runtime ends came to be left through `__souther_end_call`, whose
+/// body a component's link replaces with a throw (issue #41), and a component's lifted result came
+/// to be a `result<string, ended>`: `__souther_lift_area` writes which case it is before the
+/// string, into one static area rather than the arena, and `__souther_lift_ended` writes the other
+/// case there from the record.
+///
+/// Raised to 13 when what reads, writes and orders a value of a type came to be named by the type's
+/// descriptor rather than chosen here by its kind (issue #44): the sixteen bytes before a descriptor
+/// hold the slots of its reader, its writer and its order, each filled only where the program asks
+/// for it; a constraint names the slot of what evaluates it where it named its rule; and
+/// `__souther_runtime_init` is handed the descriptors the program holds for the primitives, which
+/// this runtime no longer holds itself.
+const ABI_VERSION: u32 = 13;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -68,8 +121,12 @@ const ALIGN: usize = 8;
 /// The generated start thunk calls this with the end of the last data segment the linker wrote.
 /// The failure record is taken from there, and the arena begins after it. Runs before any export
 /// does, because a start function runs at instantiation.
+///
+/// It is handed too where the program's descriptors of the primitives are (`descriptor::primitive`),
+/// or nothing where the program holds none.
 #[no_mangle]
-pub unsafe extern "C" fn __souther_runtime_init(static_end: u32) {
+pub unsafe extern "C" fn __souther_runtime_init(static_end: u32, primitives: u32) {
+    descriptor::held_primitives(primitives);
     let failure = align_up(static_end as usize);
     FAILURE = failure;
     let base = align_up(failure + FAILURE_BYTES);
@@ -85,10 +142,22 @@ pub unsafe extern "C" fn __souther_runtime_init(static_end: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn __ronto_alloc(size: u32) -> u32 {
     let start = ARENA_TOP;
-    let end = start + size as usize;
+    // Past the last address there is, the end wraps round to a small one and would read as room
+    // already mapped: an arena that ran out has to say so rather than hand out what it already has.
+    let Some(end) = start.checked_add(size as usize) else {
+        __souther_abort(REASON_OUT_OF_MEMORY, 0, size as u64, 0);
+    };
     if end > memory_bytes() {
-        let wanted = (end - memory_bytes()).div_ceil(PAGE);
-        if core::arch::wasm32::memory_grow(0, wanted) == usize::MAX {
+        // At least as much again as there is, and not only what this allocation is short of. An
+        // engine may move all of memory to grow it, so growing by what each allocation lacks makes
+        // an arena that climbs a page at a time cost the square of how far it climbs: a call
+        // reading a list of sixteen thousand elements took twenty seconds the first time and a
+        // fifth of a second after, once memory was wide enough.
+        let short = (end - memory_bytes()).div_ceil(PAGE);
+        let wanted = short.max(core::arch::wasm32::memory_size(0));
+        if core::arch::wasm32::memory_grow(0, wanted) == usize::MAX
+            && core::arch::wasm32::memory_grow(0, short) == usize::MAX
+        {
             __souther_abort(REASON_OUT_OF_MEMORY, 0, size as u64, 0);
         }
     }
@@ -118,25 +187,53 @@ pub unsafe extern "C" fn __ronto_alloc_reset(mark: u32) {
         __souther_abort(REASON_BAD_MARK, 0, mark as u64, ARENA_TOP as u64);
     }
     ARENA_TOP = mark;
+    arena_popped();
 }
 
-/// Where a string a call answered with is, in the one place a component reads a result from.
+/// Where the string a call answered with is, as the `ok` of the `result<string, ended>` a
+/// component reads a call's outcome as.
 ///
-/// The canonical ABI reads a string result out of an area in this memory rather than off the
-/// stack, so an answer that crossed as two values is put in one. The area is arena memory like
-/// everything else the call made, and goes back with it at the post-return.
+/// The canonical ABI reads that result out of an area in this memory rather than off the stack: a
+/// byte saying which case it is, and from the fourth byte on what the case holds.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
-    // The arena hands out a run exactly as long as it was asked for, so that text written piece by
-    // piece is one run. What reads this area asks it to begin on a four-byte boundary, so the
-    // padding is taken here rather than by the arena, where it would break the runs.
-    let over = ARENA_TOP % 4;
-    if over != 0 {
-        let _ = __ronto_alloc(4 - over as u32);
-    }
-    let area = __ronto_alloc(8);
-    core::ptr::write_unaligned(area as *mut u32, at);
-    core::ptr::write_unaligned((area + 4) as *mut u32, length);
+    let area = lifted(LIFTED_ANSWERED);
+    core::ptr::write_unaligned((area + 4) as *mut u32, at);
+    core::ptr::write_unaligned((area + 8) as *mut u32, length);
+    area
+}
+
+/// The reason the record holds for the call just ended, as the `err` of the result
+/// [`__souther_lift_area`] answers the `ok` of.
+///
+/// Read from the record, which is the one place a call's reason is kept: what left the call says
+/// only that it was left.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_lift_ended() -> u32 {
+    let area = lifted(LIFTED_ENDED);
+    let reason = core::ptr::read((FAILURE + OFF_REASON) as *const u32);
+    core::ptr::write_unaligned((area + 4) as *mut u32, reason);
+    area
+}
+
+/// The case of a lifted result that holds the answer.
+const LIFTED_ANSWERED: u8 = 0;
+/// The case of a lifted result that holds why the call ended.
+const LIFTED_ENDED: u8 = 1;
+
+/// Where a lifted result is written: twelve bytes, the larger case's, a string's two words after
+/// the case byte and its padding.
+///
+/// Static and not the arena's, because writing an outcome must not be able to fail. The call may
+/// have ended because nothing more could be handed out, and answering why by handing something out
+/// would end it a second time, outside anything that would catch it. One area is enough: a
+/// component's caller reads the result before the post-return, and no call begins before that.
+static mut LIFTED: [u32; 3] = [0; 3];
+
+/// The result area, saying which case it holds.
+unsafe fn lifted(case: u8) -> u32 {
+    let area = core::ptr::addr_of_mut!(LIFTED) as u32;
+    core::ptr::write(area as *mut u8, case);
     area
 }
 
@@ -148,6 +245,21 @@ pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_arena_rewind() {
     ARENA_TOP = ARENA_BASE;
+    arena_popped();
+}
+
+/// Forgets everything this crate keeps between calls that lives in the arena, as the arena is
+/// popped.
+///
+/// The one place such state ends, and the only two ways the arena is popped both come here, so
+/// what is kept is never read after the memory under it has been handed out again. Not left to the
+/// next call to set straight: a caller that pops and then reaches the runtime some other way than
+/// through an export's start would otherwise read, or write through, memory that is something
+/// else's by then.
+unsafe fn arena_popped() {
+    kernel::forget_kept_pattern();
+    issues::forget();
+    text::forget();
 }
 
 /// What the canonical ABI allocates and reallocates with.
@@ -157,6 +269,11 @@ pub unsafe extern "C" fn __souther_arena_rewind() {
 /// and the old one is copied into it: an allocator that hands back what it was given cannot also
 /// be the one handing out the run being written next to it, and the arena is a bump pointer. What
 /// is left over goes back at the post-return, which is when the whole call goes back.
+///
+/// Where memory cannot hold what is lowered, the call it was lowered for never begins: this runs
+/// before any lifted function does, so nothing catches what ends it, and the host is told the call
+/// failed as it would be of a trap. The component model lets a realloc answer a place or fail the
+/// call, nothing else.
 #[no_mangle]
 pub unsafe extern "C" fn cabi_realloc(
     original: u32,
@@ -209,6 +326,22 @@ pub unsafe extern "C" fn __souther_abort(reason: u32, descriptor: u32, aux0: u64
     core::ptr::write((FAILURE + OFF_DESCRIPTOR) as *mut u32, descriptor);
     core::ptr::write_unaligned((FAILURE + OFF_AUX0) as *mut u64, aux0);
     core::ptr::write_unaligned((FAILURE + OFF_AUX1) as *mut u64, aux1);
+    __souther_end_call()
+}
+
+/// Leaves a call whose reason the record now holds.
+///
+/// A function of its own, under a name, so that how a call is left is chosen where the module is
+/// linked and not here. A core module traps, and its host reads the record out of memory. A
+/// component's link puts a throw in this body's place, which the lifted function the call came in
+/// through catches, and answers with what the record holds ([`__souther_lift_ended`]): a component
+/// that has trapped cannot be asked anything again, its memory included.
+///
+/// It carries nothing. Why the call ended is the record's to say, for a core module's host and a
+/// component's lifted function alike, and this says only that the call is being left.
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn __souther_end_call() -> ! {
     core::arch::wasm32::unreachable()
 }
 
@@ -275,32 +408,111 @@ const OFF_DESCRIPTOR: usize = 8;
 const OFF_AUX0: usize = 12;
 const OFF_AUX1: usize = 20;
 
-/// The arena asked for more than the engine would map. `aux0` is the size that did not fit.
-pub const REASON_OUT_OF_MEMORY: u32 = 1;
-/// A reset was handed a mark the arena never issued. `aux0` is the mark, `aux1` the top.
-pub const REASON_BAD_MARK: u32 = 2;
-/// What was handed in is not one JSON document. `aux0` is where the reading stopped.
-pub const REASON_MALFORMED_JSON: u32 = 3;
-/// A whole number's arithmetic left the range an `Int` holds. `aux0` and `aux1` are the operands.
-pub const REASON_INT_OVERFLOW: u32 = 5;
-/// A division by zero, which the `/` operator treats as a model bug rather than a case.
-pub const REASON_DIVISION_BY_ZERO: u32 = 6;
-/// A value was made inside a behavior that its type says nothing may be. `aux0` is which of the
-/// type's invariants it breaks.
-pub const REASON_INVARIANT_VIOLATION: u32 = 8;
-/// A position the program said gets no value. `aux0` is where the reason it was written with is
-/// and `aux1` how long it is — in static memory, so it is there after the arena has been reset.
-/// Raised by generated code and named here so that the numbers are all in one list.
-pub const REASON_NOTHING_TO_ANSWER_WITH: u32 = 9;
-/// An index or a count outside what the operation admits. `aux0` is what was asked for.
-pub const REASON_OUT_OF_RANGE: u32 = 10;
-/// A match ran out of arms. The checker settles that one always answers, so reaching this means
-/// the emitter tested for the wrong thing rather than that the model left a case out.
-pub const REASON_NO_ARM: u32 = 7;
+// Two families of reason live in this one number space, and only one of them is this crate's own
+// to define. `REQUIRED_FORM_HAS_NO_PLACE`, `DIVISION_BY_ZERO`, `INVARIANT_NOT_HELD`,
+// `UNREACHABLE_REACHED`, `INVALID_BOUNDS` and `ENSURES_NOT_HELD` represent
+// `souther.compiler.abort.AbortKind` — a Souther program ending without a value, for a reason the
+// specification states as its own. Which number each gets is decided once, by
+// `souther.wasm.abi.WasmAbortMapping`, and repeated here as the same number under the same name so
+// that raising one and reading it agree; nothing here may raise a Souther program abort under a
+// name `WasmAbortMapping` does not also use for it (`TheTwoSidesOfAReasonAgreeOnItsNumberTest`
+// holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE`,
+// `BACKEND_INVARIANT_BROKEN` and `NO_SUCH_TYPE` are this crate's own — a carrier failing to carry an answer through,
+// or this backend's own machinery reaching a state the checker settled it never would — and are
+// this crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
+/// The arena asked for more than the engine would map. `aux0` is the size that did not fit. A
+/// platform failure, not a Souther program ending without a value: `WasmFault::OUT_OF_MEMORY`.
+pub const REASON_OUT_OF_MEMORY: u32 = 1;
+/// A reset was handed a mark the arena never issued. `aux0` is the mark, `aux1` the top. An ABI
+/// failure by whoever calls this module, not a Souther program's own: `WasmFault::BAD_MARK`.
+pub const REASON_BAD_MARK: u32 = 2;
+/// What was handed in is not one JSON document. `aux0` is where the reading stopped. A boundary
+/// failure carrying an argument in, not a Souther program's own: `WasmFault::MALFORMED_JSON`.
+pub const REASON_MALFORMED_JSON: u32 = 3;
 /// A value whose tag nothing here knows. What a decoder was handed never reaches this: a value is
 /// made by generated code, so a tag no one knows means the emitter is wrong rather than the input.
+/// An internal value-representation failure, not a Souther program's own: `WasmFault::NOT_A_VALUE`.
 pub const REASON_NOT_A_VALUE: u32 = 4;
+/// The value an operation would answer with, or a form its own semantics needs on the way there,
+/// has no place in the type it is declared to be (spec
+/// `an-operation-refuses-only-what-its-own-answer-has-no-place-for`): an `Int` or `Decimal` sum,
+/// difference, product or arithmetic result outside what its type holds, a `Decimal` scale outside
+/// what the runtime takes, a temporal shift off the end of what it holds, or `String.repeat`'s,
+/// the padding operations' and `List.rangeInclusive`'s count or span no answer could hold.
+/// `aux0`/`aux1` are what of, where the site has them.
+/// Represents `AbortKind::REQUIRED_FORM_HAS_NO_PLACE`.
+pub const REASON_REQUIRED_FORM_HAS_NO_PLACE: u32 = 5;
+/// A division by zero, which the `/` operator treats as a model bug rather than a case.
+/// Represents `AbortKind::DIVISION_BY_ZERO`.
+pub const REASON_DIVISION_BY_ZERO: u32 = 6;
+/// This backend, or the boundary between it and the compiler that emitted the module calling it,
+/// reached a state the checker settled it never would: a match or an attempted construction fell
+/// through every arm it lowered, or an ordinal this module was handed names no case the compiler
+/// and this crate agreed on — a compiler bug or an ABI mismatch, never a Souther program's own
+/// abort. `WasmFault::BACKEND_INVARIANT_BROKEN`.
+pub const REASON_BACKEND_INVARIANT_BROKEN: u32 = 7;
+/// A value was made inside a behavior that its type says nothing may be. `aux0` is which of the
+/// type's invariants it breaks. Represents `AbortKind::INVARIANT_NOT_HELD`.
+pub const REASON_INVARIANT_NOT_HELD: u32 = 8;
+/// A position the program said gets no value. `aux0` is where the reason it was written with is
+/// and `aux1` how long it is — in static memory, so it is there after the arena has been reset.
+/// Raised by generated code and named here so that the numbers are all in one list. Represents
+/// `AbortKind::UNREACHABLE_REACHED`.
+pub const REASON_UNREACHABLE_REACHED: u32 = 9;
+/// The bounds an operation was given do not name the thing they are asked to name, independent of
+/// what any answer would be: `String.slice` with an index the string has not got, or a
+/// `toExclusive` before `fromInclusive`. `aux0`/`aux1` are what was asked for.
+/// Represents `AbortKind::INVALID_BOUNDS`.
+pub const REASON_INVALID_BOUNDS: u32 = 10;
+/// A behavior's `ensures` did not hold of what it answered. Not yet raised by this crate — nothing
+/// lowered here emits an `ensures` check (see the Java `WasmCompiler`) — reserved here so the
+/// number is fixed before anything does. Represents `AbortKind::ENSURES_NOT_HELD`.
+pub const REASON_ENSURES_NOT_HELD: u32 = 11;
+/// A caller asked to read a value as a type under a number the module gives no type. `aux0` is
+/// the number, `aux1` how many the module gives. Raised by generated code, and an ABI failure by
+/// whoever calls this module, as `BAD_MARK` is: `WasmFault::NO_SUCH_TYPE`.
+pub const REASON_NO_SUCH_TYPE: u32 = 12;
+
+/// The arena, as what `alloc` allocates from: for notation-199x, and for the text this crate
+/// builds to hand to it.
+///
+/// Nothing is given back one allocation at a time: what a call made goes back with the arena when
+/// the caller pops it, so `dealloc` does nothing. What the library builds lives no longer than the
+/// call that asked for it, and nothing here keeps any of it past that call.
+///
+/// The arena hands out exactly what it is asked for, so that a run written piece by piece stays
+/// one run, and an alignment is taken here by padding first. A caller writing a run therefore asks
+/// the library for nothing between its first piece and its last.
+struct Arena;
+
+unsafe impl core::alloc::GlobalAlloc for Arena {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        let over = ARENA_TOP % layout.align();
+        if over != 0 {
+            let _ = __ronto_alloc((layout.align() - over) as u32);
+        }
+        __ronto_alloc(layout.size() as u32) as *mut u8
+    }
+
+    unsafe fn dealloc(&self, _at: *mut u8, _layout: core::alloc::Layout) {}
+
+    /// Grows in place where the allocation is the last the arena handed out, which is what a
+    /// string being built usually is, and moves it otherwise.
+    unsafe fn realloc(&self, at: *mut u8, layout: core::alloc::Layout, wanted: usize) -> *mut u8 {
+        if at as usize + layout.size() == ARENA_TOP && wanted >= layout.size() {
+            let _ = __ronto_alloc((wanted - layout.size()) as u32);
+            return at;
+        }
+        let moved = self.alloc(core::alloc::Layout::from_size_align_unchecked(wanted, layout.align()));
+        let kept = if layout.size() < wanted { layout.size() } else { wanted };
+        core::ptr::copy_nonoverlapping(at, moved, kept);
+        moved
+    }
+}
+
+#[global_allocator]
+static ARENA: Arena = Arena;
 
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says

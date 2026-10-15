@@ -7,9 +7,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.compiler.abort.AbortKind;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
-import souther.wasm.abi.AbortReason;
+import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.RuntimeAbi;
 
 /**
@@ -34,10 +35,6 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
 
                 let product (a, b) = a * b
 
-                behavior quotient : (a: Int, b: Int) -> Int
-
-                let quotient (a, b) = a / b
-
                 behavior difference : (a: Int, b: Int) -> Int
 
                 let difference (a, b) = a - b
@@ -46,8 +43,6 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
         assertThat(answerOf(module, "counting.sum", "[2, 3]")).isEqualTo("{\"value\":5}");
         assertThat(answerOf(module, "counting.difference", "[2, 3]")).isEqualTo("{\"value\":-1}");
         assertThat(answerOf(module, "counting.product", "[2, 3]")).isEqualTo("{\"value\":6}");
-        assertThat(answerOf(module, "counting.quotient", "[7, 2]")).isEqualTo("{\"value\":3}");
-        assertThat(answerOf(module, "counting.quotient", "[-7, 2]")).isEqualTo("{\"value\":-3}");
     }
 
     @Test
@@ -58,16 +53,83 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
                 behavior sum : (a: Int, b: Int) -> Int
 
                 let sum (a, b) = a + b
-
-                behavior quotient : (a: Int, b: Int) -> Int
-
-                let quotient (a, b) = a / b
                 """);
 
-        assertThat(abortOf(module, "counting.sum",
-                "[9223372036854775807, 1]")).contains(AbortReason.INT_OVERFLOW);
-        assertThat(abortOf(module, "counting.quotient", "[1, 0]"))
-                .contains(AbortReason.DIVISION_BY_ZERO);
+        assertThat(abortOf(module, "counting.sum", "[9223372036854775807, 1]"))
+                .contains(new FailureCause.Language(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+    }
+
+    /**
+     * Unlike {@code +}/{@code -}/{@code *}, unary {@code -} is total: {@code AbortSites} answers
+     * {@code Core.Neg} with {@code AbortSet.NONE}, not {@code REQUIRED_FORM_HAS_NO_PLACE}, because
+     * two's-complement negation of {@code MIN_VALUE} wraps back to {@code MIN_VALUE} rather than
+     * overflowing — the same {@code lneg} bytecode the JVM backend emits for it, uncontested.
+     * Regression for the fix that read {@code checked_neg}'s one refusal as an abort instead.
+     */
+    @Test
+    void negatesTheOneIntWhoseOppositeIsItself() {
+        Running module = compiled("""
+                module counting
+
+                behavior negated : (a: Int) -> Int
+
+                let negated (a) = -a
+                """);
+
+        // answerOf itself is the regression: it would throw ChicoryException, uncaught, where
+        // this still trapped.
+        assertThat(answerOf(module, "counting.negated", "[-9223372036854775808]"))
+                .isEqualTo("{\"value\":-9223372036854775808}");
+        assertThat(answerOf(module, "counting.negated", "[5]")).isEqualTo("{\"value\":-5}");
+    }
+
+    /**
+     * A truncating remainder's magnitude never exceeds the divisor's, so it always has a place —
+     * unlike {@code Int.truncatingDivide}, which does refuse the one pair whose quotient does not
+     * (spec §stdlib-int; {@code KernelContracts.INT_TRUNCATING_REMAINDER -> AbortSet.NONE}). Rust's
+     * {@code checked_rem} answers {@code None} for {@code MIN_VALUE % -1} because computing the
+     * quotient first would overflow, not because the remainder does — its true value is 0, the same
+     * answer the JVM's raw {@code lrem} gives for the identical pair — and a runtime call site that
+     * read that {@code None} as an abort broke this operation's own totality (regression for the
+     * fix that stopped it).
+     */
+    @Test
+    void aTruncatingRemainderNeverOverflowsEvenWhereItsQuotientWould() {
+        Running module = compiled("""
+                module counting
+
+                behavior remainder : (a: Int, b: Int) -> Int
+
+                let remainder (a, b) = match Int.truncatingRemainder(a, b) with
+                    | Int as r -> r
+                    | DivisionByZero -> 0
+                """);
+
+        // answerOf itself is the regression: it would throw ChicoryException, uncaught, where this
+        // still trapped.
+        assertThat(answerOf(module, "counting.remainder", "[-9223372036854775808, -1]"))
+                .isEqualTo("{\"value\":0}");
+    }
+
+    /**
+     * A quotient of two Ints is a Rational while its operands stay Ints, so the operands say
+     * nothing about it: seven over two is three and a half, and an Int division written for it
+     * would answer three.
+     */
+    @Test
+    void dividesTwoIntsIntoTheirExactQuotient() {
+        Running module = compiled("""
+                module counting
+
+                behavior halved : (a: Int, b: Int) -> Decimal
+
+                let halved (a, b) = Rational.toDecimal(1, HALF_EVEN, a / b)
+                """);
+
+        assertThat(answerOf(module, "counting.halved", "[7, 2]")).isEqualTo("{\"value\":3.5}");
+        assertThat(answerOf(module, "counting.halved", "[-7, 2]")).isEqualTo("{\"value\":-3.5}");
+        assertThat(abortOf(module, "counting.halved", "[7, 0]"))
+                .contains(new FailureCause.Language(AbortKind.DIVISION_BY_ZERO));
     }
 
     @Test
@@ -150,21 +212,21 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
 
                 behavior safe : (a: Int, b: Int) -> Bool
 
-                let safe (a, b) = b == 0 || a / b > 1
+                let safe (a, b) = b == 0 || Int.floorMod(a, b) > 1
 
                 behavior both : (a: Int, b: Int) -> Bool
 
-                let both (a, b) = b /= 0 && a / b > 1
+                let both (a, b) = b /= 0 && Int.floorMod(a, b) > 1
                 """);
 
-        // The division would end the call if it ran, and the first operand says it does not.
+        // The floor modulo would end the call if it ran, and the first operand says it does not.
         assertThat(answerOf(module, "guarding.safe", "[1, 0]")).isEqualTo("{\"value\":true}");
         assertThat(answerOf(module, "guarding.both", "[1, 0]")).isEqualTo("{\"value\":false}");
-        assertThat(answerOf(module, "guarding.safe", "[4, 2]")).isEqualTo("{\"value\":true}");
-        assertThat(answerOf(module, "guarding.both", "[4, 2]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "guarding.safe", "[5, 3]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "guarding.both", "[5, 3]")).isEqualTo("{\"value\":true}");
     }
 
-    private static Optional<AbortReason> abortOf(Running module, String export, String arguments) {
+    private static Optional<FailureCause> abortOf(Running module, String export, String arguments) {
         int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
         int mark = module.call(RuntimeAbi.ALLOC_MARK);
         try {
@@ -173,12 +235,12 @@ class ABodyRunsItsOperatorsAndItsConditionsTest {
         } catch (ChicoryException trapped) {
             var record = module.failureRecord();
             module.call(RuntimeAbi.ALLOC_RESET, mark);
-            return record.describesTrapAfter(snapshot) ? record.namedReason() : Optional.empty();
+            return record.describesTrapAfter(snapshot) ? record.cause() : Optional.empty();
         }
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

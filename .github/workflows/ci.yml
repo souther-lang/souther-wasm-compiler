@@ -21,20 +21,44 @@ jobs:
           java-version: '25'
           cache: maven
 
-      # The compiler this reads a program through is not published anywhere, so a runner has to
-      # build it. Only what a CheckedProgram is reachable from is wanted, which is why this
-      # installs rather than builds the whole of it.
-      - name: Check out the Souther compiler
+      # `-U`: this build depends on `souther-runtime` as a SNAPSHOT from a separate repository.
+      # setup-java's Maven cache persists `~/.m2/repository` (and Maven's own "already checked
+      # today" markers) across runs, so without `-U` a same-day run can keep resolving a
+      # SNAPSHOT version cached before an upstream souther-runtime change landed, and fail on a
+      # symbol that already exists upstream — not a build failure, a stale-dependency failure
+      # wearing one. `-U` forces every SNAPSHOT (this one and any other) to be checked against
+      # the remote repository on every run, trading a little time for never resolving stale.
+      - name: Build and test
+        run: mvn -B -U --no-transfer-progress verify
+
+      # A user reaches this backend through `souther compile --target wasm`, which chooses the jar
+      # by its descriptor and refuses one built against another Souther. The CLI is not published as
+      # a SNAPSHOT, so it is built here, and from the commit the Souther artifacts this build
+      # resolved were built from: a SNAPSHOT version is whichever build was last published under it,
+      # so a CLI built from anything else would agree with the descriptor in its version string and
+      # be another Souther.
+      - name: Read which Souther the build compiled against
+        id: souther
+        # Assigned first, so that the script failing fails the step: inside echo's arguments its
+        # status is lost, and an empty ref checks out the default branch.
+        run: |
+          revision=$(scripts/souther-revision.sh)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out that Souther
         uses: actions/checkout@v5
         with:
           repository: souther-lang/souther
-          ref: develop
+          ref: ${{ steps.souther.outputs.revision }}
           path: souther
-      - name: Install the Souther compiler
-        run: mvn -B --no-transfer-progress -f souther/pom.xml install -DskipTests -Dmaven.javadoc.skip=true
-
-      - name: Build and test
-        run: mvn -B --no-transfer-progress verify
+      - name: Install the souther CLI, with this backend beside it
+        run: |
+          mvn -B -U --no-transfer-progress -f souther/pom.xml -pl souther-cli -am -DskipTests package
+          mkdir -p "$RUNNER_TEMP/souther/bin" "$RUNNER_TEMP/souther/home/backends"
+          cp souther/souther-cli/target/souther "$RUNNER_TEMP/souther/bin/souther"
+          cp target/*-cli.jar "$RUNNER_TEMP/souther/home/backends/"
+          rm -rf souther
+          echo "$RUNNER_TEMP/souther/bin" >> "$GITHUB_PATH"
+          echo "SOUTHER_HOME=$RUNNER_TEMP/souther/home" >> "$GITHUB_ENV"
 
       # What no test can see: a test runs with the whole build's classpath, and the jar carries
       # only what the pom says it does. A program with an example is what tells them apart,
@@ -44,6 +68,8 @@ jobs:
           mkdir -p /tmp/asked
           cat > /tmp/asked/shipping.sou <<'SOURCE'
           module shipping
+
+          data Parcel = { weight: Int }
 
           behavior fee : (total: Int) -> Int
 
@@ -56,7 +82,7 @@ jobs:
               | "five thousand is free" : (5000) -> 0
               | "under it is five hundred" : (4999) -> 500
           SOURCE
-          java -jar target/*-cli.jar /tmp/asked -o /tmp/asked/out.wasm --wit /tmp/asked/out.wit
+          souther compile --target wasm /tmp/asked -o /tmp/asked/out.wasm --wit /tmp/asked/out.wit
           test -s /tmp/asked/out.wasm
           test -s /tmp/asked/out.wit
 
@@ -84,7 +110,7 @@ jobs:
           let priced (n, today) = n * today("JPY")
           SOURCE
           for source in /tmp/asked /tmp/component; do
-            java -jar target/*-cli.jar "$source" --component \
+            souther compile --target wasm "$source" --component \
               -o "$source/out.wasm" --wit "$source/out.wit"
             wasm-tools validate --features all "$source/out.wasm"
             wasm-tools component wit "$source/out.wasm" > "$source/read-back.wit"
@@ -92,39 +118,86 @@ jobs:
           # What it says it needs is what it says it needs whichever end says it.
           grep -q 'import souther:reached/rates' /tmp/component/out.wit
           grep -q 'import souther:reached/rates' /tmp/component/read-back.wit
+          grep -q 'export souther:decode/shipping' /tmp/asked/out.wit
+          grep -q 'export souther:decode/shipping' /tmp/asked/read-back.wit
+          # A call that ended is answered as the err of a result, and both ends say so.
+          grep -q 'fee: func(arguments: string) -> result<string, ended>' /tmp/asked/out.wit
+          grep -q 'fee: func(arguments: string) -> result<string, ended>' /tmp/asked/read-back.wit
+          # What a program asks for answers a string; a call the host ended is the host's to say.
+          grep -q 'today: func(arguments: string) -> string' /tmp/component/read-back.wit
+          # Each WIT file this writes is one a reader of interfaces reads.
+          wasm-tools component wit /tmp/asked/out.wit > /dev/null
+          wasm-tools component wit /tmp/component/out.wit > /dev/null
 
-      # The programs this is meant to compile, which are not in this repository and are not written
-      # against it. What the tests here compile was written to make a point about one thing at a
-      # time; these were written to model something, and every defect the tests did not have a
-      # fixture for came from running them.
-      - name: Check out the Souther examples
-        uses: actions/checkout@v5
-        with:
-          repository: souther-lang/examples
-          path: souther-examples
-      - name: Compile every one of them
+      # Validating says each index names something of the right type, and not that a function
+      # lifts the right one: every function here takes a string and answers the same result, so a lift
+      # naming another behavior's core function, or another type's reading, is still valid. A
+      # component runtime calling each one is what tells them apart.
+      - name: Install wasmtime
         run: |
-          shared=souther-examples/sharedmoney/src/main/souther
-          for project in souther-examples/*/src/main/souther; do
-            name=$(basename "$(dirname "$(dirname "$(dirname "$project")")")")
-            # One of them is written against a module another one publishes, and a build gives it
-            # both. Handing over only its own directory is a missing source, not a missing feature.
-            with=""
-            if [ "$name" = invoicing ]; then with="$shared"; fi
-            if ! java -jar target/*-cli.jar "$project" $with -o "/tmp/$name.wasm"; then
-              echo "::error::$name no longer compiles"
+          version=47.0.4
+          curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v$version/wasmtime-v$version-x86_64-linux.tar.xz" \
+            | tar xJ -C /tmp
+          echo "/tmp/wasmtime-v$version-x86_64-linux" >> "$GITHUB_PATH"
+      - name: Call each function a component this writes offers
+        run: |
+          answers() {
+            got=$(wasmtime run --invoke "$1" /tmp/asked/out.wasm)
+            if [ "$got" != "$2" ]; then
+              echo "$1 answered $got, where $2 was expected"
               exit 1
             fi
-          done
+          }
+          answers 'fee("[4999]")' 'ok("{\"value\":500}")'
+          answers 'parcel("{\"weight\":2}")' 'ok("{\"value\":{\"weight\":2}}")'
+          answers 'parcel("{}")' 'ok("{\"issues\":[{\"path\":\"/weight\",\"code\":\"required\",\"messageKey\":\"required\",\"meta\":{}}]}")'
+          # Text that is not JSON ends the call, and a component says why rather than trapping:
+          # an instance that has trapped cannot be asked anything again.
+          answers 'fee("nope")' 'err({reason: 3})'
+          answers 'parcel("{")' 'err({reason: 3})'
 
       # The example is a program compiled by this and then called from a browser. Nothing else
       # here calls a compiled program from outside the JVM, so it is the only place that would
       # notice the boundary changing shape — and only while it is still built.
+      #
+      # Two Nodes, each read from packages/wasm/package.json: the oldest the tests need, which run
+      # as the TypeScript they are written in (devEngines), and the oldest a project that installs
+      # the package may run it on (engines). The tools run on the first; the package is run on the
+      # second below, by the one test that runs only what a project runs.
+      - name: Read the Nodes the package names
+        id: floor
+        run: |
+          echo "tooling=$(scripts/oldest-node.sh packages/wasm tooling)" >> "$GITHUB_OUTPUT"
+          echo "runtime=$(scripts/oldest-node.sh packages/wasm runtime)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: ${{ steps.floor.outputs.tooling }}
           cache: npm
-          cache-dependency-path: examples/react-cart/package-lock.json
+          cache-dependency-path: |
+            examples/react-cart/package-lock.json
+            packages/wasm/package-lock.json
+
+      # A lockfile copies what a package.json says of the repository's own packages, and npm ci
+      # installs one whose copy of a command or of the Node it needs has gone stale.
+      - name: Require every lockfile to say what its packages say
+        run: node scripts/lockfiles-agree.mjs
+
+      # What a TypeScript caller is handed: the runtime, the binding generated from a module, and the
+      # sentences Raoh's catalog writes of an issue — each held to what the compiler built above
+      # writes, the binding to a page that stops compiling when the model it reads changes, and the
+      # issues and their sentences to the same fixtures the JVM and the wasm module are held to.
+      #
+      # The installed test keeps what it built with the tools — the archives, the module and the
+      # page compiled to JavaScript — for the oldest Node engines names to be handed below.
+      - name: Test the TypeScript package
+        working-directory: packages/wasm
+        env:
+          SOUTHER_WASM_BUILD_INTO: ${{ runner.temp }}/built
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
       - name: Build the example
         working-directory: examples/react-cart
         run: |
@@ -138,12 +211,36 @@ jobs:
       # come back. So the glue is run against a module, by the same file the page loads.
       - name: Call a compiled program through the glue the page uses
         working-directory: examples/react-cart
-        run: node check.mjs
+        run: node check.ts
+
+      # The package on the oldest Node engines names, run as a project runs it: what the project
+      # built with its tools, kept by the installed test above, is installed with the npm of that
+      # Node, the package's command run, and the page's JavaScript run. The test is compiled with the
+      # tools' Node, and the repository's node_modules taken away before the Node changes, so no
+      # tool of the repository's can be run on the oldest Node, and a test that ran one fails.
+      - name: Compile the installed test, and take the tools away
+        working-directory: packages/wasm
+        run: |
+          npm run compile-tests
+          rm -rf node_modules
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.floor.outputs.runtime }}
+      - name: Use the installed package on the oldest Node engines names
+        working-directory: packages/wasm
+        env:
+          SOUTHER_WASM_BUILT: ${{ runner.temp }}/built
+        run: |
+          test "$(node --version)" = "v${{ steps.floor.outputs.runtime }}"
+          node --test target/runtime/test/installed.test.js
 
   runtime:
     # The compiled runtime is carried in the repository so that building the Java half needs no
     # Rust. That only holds while the two agree, and nothing but this notices when they stop:
     # every test would keep passing against the copy that is checked in.
+    #
+    # On x86-64 Linux, which is the host runtime/build.sh builds on: what the runtime compiles to
+    # follows the host's triple through the hash Cargo gives a dependency with a build script.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -159,7 +256,7 @@ jobs:
           carried=src/main/resources/souther/wasm/runtime.wasm
           if ! cmp -s "$built" "$carried"; then
             echo "The runtime carried in src/main/resources is not what runtime/src builds."
-            echo "Rebuild it and commit the result — see the README."
+            echo "Rebuild it with runtime/build.sh, which builds on this host as CI does, and commit the result."
             cmp "$built" "$carried" || true
             exit 1
           fi

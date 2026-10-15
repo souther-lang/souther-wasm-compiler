@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 
 /**
@@ -83,8 +83,8 @@ class AShapeCrossesTheBoundaryAsAnObjectTest {
         Running module = compiled(POINT);
 
         assertThat(answerOf(module, "geometry.flip", "[{\"x\": 1}]")).isEqualTo(
-                "{\"issues\":[{\"path\":\"/0/y\",\"code\":\"missing_field\","
-                        + "\"meta\":{\"actual\":\"nothing\",\"expected\":\"a field\"}}]}");
+                "{\"issues\":[{\"path\":\"/0/y\",\"code\":\"required\","
+                        + "\"messageKey\":\"required\",\"meta\":{}}]}");
     }
 
     @Test
@@ -121,11 +121,11 @@ class AShapeCrossesTheBoundaryAsAnObjectTest {
         Running module = compiled(POINT);
 
         assertThat(answerOf(module, "geometry.flip", "[7]"))
-                .contains("\"path\":\"/0\"", "\"expected\":\"an object\"", "\"actual\":\"number\"");
+                .contains("\"path\":\"/0\"", "\"expected\":\"object\"", "\"actual\":\"number\"");
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

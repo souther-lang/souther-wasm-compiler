@@ -6,3 +6,5 @@ runtime/target/
 examples/**/node_modules/
 examples/**/dist/
 examples/**/public/*.wasm
+packages/**/dist/
+.souther-home/

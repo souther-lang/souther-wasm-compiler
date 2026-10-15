@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "target/runtime",
+    "rootDir": ".",
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": [],
+  "files": ["test/installed.test.ts"]
+}

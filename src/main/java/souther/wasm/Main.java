@@ -7,10 +7,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.stream.Stream;
+import java.util.Map;
+import java.util.Set;
+import souther.compiler.CompilationSources;
+import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
+import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
 import souther.wasm.link.WitText;
 import souther.wasm.lower.NotLowered;
@@ -19,6 +24,10 @@ import souther.wasm.lower.WasmCompiler;
 /**
  * Compiles Souther sources named on a command line.
  *
+ * <p>The command line is what {@code souther compile --target wasm} hands over after the target's
+ * name, verbatim: the CLI finds this jar by its {@code META-INF/souther/backend.properties} and runs
+ * it as a process of its own. Run with {@code java -jar}, it reads the same arguments.
+ *
  * <p>What it writes is a core module, or a component where one is asked for. Everything it can say
  * about why it did not goes to the error stream and nothing goes to the output file, so a build
  * that stopped leaves no half-written module for the next step to pick up.
@@ -26,9 +35,10 @@ import souther.wasm.lower.WasmCompiler;
 public final class Main {
 
     private static final String USAGE = """
-            souther-wasm — compiles a Souther program to WebAssembly
+            souther compile --target wasm — compiles a Souther program to WebAssembly
 
-              souther-wasm <source or directory>... -o <file> [--component]
+              souther compile --target wasm <source or directory>... -o <file> [--component]
+                  [--wit <file>]
 
               -o <file>     where to write. Required.
               --component   write a component, one interface per Souther module, rather than a
@@ -36,7 +46,9 @@ public final class Main {
               --wit <file>  also write what the program offers, as a reader of interfaces reads
                             it. The same whether a component is written or not.
 
-            A directory is read for the .sou files under it, in the order their paths sort.
+            A directory is read for the .sou files under it, in the order their paths sort; a
+            link under it is refused rather than followed. A lone file with no module header is
+            named after the file.
             """;
 
     private Main() {
@@ -62,55 +74,65 @@ public final class Main {
      * @return nothing wrong, a program refused, or a command line that named no compile
      */
     public static int run(String[] arguments, PrintStream out, PrintStream problems) {
+        // Every part of the line is read before anything is said of it, and each part that is
+        // wrong is said on its own, so a reader is not left to compare the line with the usage to
+        // find which part it was.
         List<Path> sources = new ArrayList<>();
-        Path into = null;
-        Path offering = null;
+        Map<String, Path> files = new HashMap<>();
+        Set<String> asked = new HashSet<>();
         boolean component = false;
+        List<String> complaints = new ArrayList<>();
         for (int i = 0; i < arguments.length; i++) {
             String held = arguments[i];
             switch (held) {
-                case "-o" -> {
-                    if (i + 1 == arguments.length) {
-                        problems.println("-o names no file");
-                        return WRONG_COMMAND;
+                case "-o", "--wit" -> {
+                    asked.add(held);
+                    // What follows an option that names a file is that file, unless it is another
+                    // option: a line that left the file out does not write to a file named
+                    // after the option that came next.
+                    if (i + 1 == arguments.length || arguments[i + 1].startsWith("-")) {
+                        complaints.add(held + " names no file");
+                    } else if (files.putIfAbsent(held, Path.of(arguments[++i])) != null) {
+                        complaints.add(held + " is given more than once, and names one file");
                     }
-                    into = Path.of(arguments[++i]);
                 }
                 case "--component" -> component = true;
-                case "--wit" -> {
-                    if (i + 1 == arguments.length) {
-                        problems.println("--wit names no file");
-                        return WRONG_COMMAND;
-                    }
-                    offering = Path.of(arguments[++i]);
-                }
                 case "-h", "--help" -> {
                     out.print(USAGE);
                     return NOTHING_WRONG;
                 }
                 default -> {
                     if (held.startsWith("-")) {
-                        problems.println("no such option: " + held);
-                        problems.print(USAGE);
-                        return WRONG_COMMAND;
+                        complaints.add("no such option: " + held);
+                    } else {
+                        sources.add(Path.of(held));
                     }
-                    sources.add(Path.of(held));
                 }
             }
         }
-        if (sources.isEmpty() || into == null) {
+        if (sources.isEmpty()) {
+            complaints.add("nothing named to compile");
+        }
+        if (!asked.contains("-o")) {
+            complaints.add("-o is required: it names where to write the module");
+        }
+        if (!complaints.isEmpty()) {
+            complaints.forEach(problems::println);
             problems.print(USAGE);
             return WRONG_COMMAND;
         }
+        Path into = files.get("-o");
+        Path offering = files.get("--wit");
 
-        List<Path> files;
+        CompilationSources read;
         try {
-            files = under(sources);
+            read = read(sources);
         } catch (IOException | UncheckedIOException e) {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
         }
-        if (files.isEmpty()) {
+        int count = read.texts().size();
+        if (count == 0) {
             problems.println("nothing to compile: no .sou file among what was named");
             return WRONG_COMMAND;
         }
@@ -118,20 +140,15 @@ public final class Main {
         byte[] written;
         String offers = null;
         try {
-            List<String> read = new ArrayList<>(files.size());
-            for (Path file : files) {
-                read.add(Files.readString(file, StandardCharsets.UTF_8));
-            }
-            CheckedProgram program = CheckedProgram.of(read);
+            CheckedProgram program = CheckedProgram.of(read, ModulePath.EMPTY);
             written = component
                     ? WasmCompiler.compileAsComponent(program)
                     : WasmCompiler.compile(program);
             if (offering != null) {
-                offers = WitText.written(
-                        WasmCompiler.offered(program), WasmCompiler.reachedOutFor(program));
+                offers = WitText.written(WasmCompiler.offering(program));
             }
         } catch (CompileException e) {
-            problems.println(e.getMessage());
+            Refusal.lines(e, read).forEach(problems::println);
             return REFUSED;
         } catch (IllegalArgumentException e) {
             // A program that compiles but offers two behaviors one name, which is a refusal of
@@ -143,9 +160,6 @@ public final class Main {
             // language refuses — so it says which it was rather than one word for both.
             problems.println("this backend does not write that yet: " + e.getMessage());
             return REFUSED;
-        } catch (IOException e) {
-            problems.println(e.getMessage());
-            return WRONG_COMMAND;
         }
 
         try {
@@ -163,8 +177,7 @@ public final class Main {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
         }
-        out.println("wrote " + into + " from " + files.size()
-                + (files.size() == 1 ? " source" : " sources"));
+        out.println("wrote " + into + " from " + count + (count == 1 ? " source" : " sources"));
         return NOTHING_WRONG;
     }
 
@@ -176,25 +189,26 @@ public final class Main {
     private static final int WRONG_COMMAND = 2;
 
     /**
-     * The sources a command line named: a file as itself, a directory as the {@code .sou} files
-     * under it, in the order their paths sort so that one command line is one program every time.
+     * The sources a command line named, read: a file as itself, and a directory as every
+     * {@code .sou} under it, read the way Souther reads a tree of sources.
+     *
+     * <p>Held as one value from here on, because what the program is checked from, what a lone file
+     * with no header is called, and what a refusal is quoted from are one list of texts in one
+     * order, and the compile is the one that says which id each gets. A link found under a named
+     * directory is refused rather than followed, as {@code souther compile} refuses it.
      */
-    private static List<Path> under(List<Path> named) throws IOException {
-        List<Path> found = new ArrayList<>();
+    private static CompilationSources read(List<Path> named) throws IOException {
+        List<SourceFile> files = new ArrayList<>();
         for (Path each : named) {
             if (Files.isDirectory(each)) {
-                try (Stream<Path> walked = Files.walk(each)) {
-                    walked.filter(Files::isRegularFile)
-                            .filter(path -> path.toString().endsWith(".sou"))
-                            .sorted(Comparator.comparing(Path::toString))
-                            .forEach(found::add);
-                }
+                files.addAll(CompilationSources.readTree(each));
             } else if (Files.isRegularFile(each)) {
-                found.add(each);
+                files.add(new SourceFile(each.toString(),
+                        Files.readString(each, StandardCharsets.UTF_8)));
             } else {
                 throw new IOException("no such file: " + each);
             }
         }
-        return found;
+        return CompilationSources.files(files);
     }
 }

@@ -8,9 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.compiler.abort.AbortKind;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
-import souther.wasm.abi.AbortReason;
+import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.RuntimeAbi;
 
 /**
@@ -46,7 +47,9 @@ class WhatMustHoldOfAValueIsCheckedWhereItIsMadeTest {
 
         assertThat(answerOf(module, "counting.same", "[{\"n\": 0}]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0\",\"code\":\"invariant_violation\","
-                        + "\"meta\":{\"actual\":\"0\",\"expected\":\"Positive\"}}]}");
+                        + "\"messageKey\":\"invariant_violation\","
+                        + "\"meta\":{\"module\":\"counting\",\"type\":\"Positive\","
+                        + "\"clause\":\"kept\"}}]}");
     }
 
     @Test
@@ -64,7 +67,7 @@ class WhatMustHoldOfAValueIsCheckedWhereItIsMadeTest {
         assertThat(answerOf(module, "counting.lowered", "[{\"n\": 5}, 2]"))
                 .isEqualTo("{\"value\":{\"n\":3}}");
         assertThat(abortOf(module, "counting.lowered", "[{\"n\": 5}, 5]"))
-                .contains(AbortReason.INVARIANT_VIOLATION);
+                .contains(new FailureCause.Language(AbortKind.INVARIANT_NOT_HELD));
     }
 
     @Test
@@ -81,8 +84,8 @@ class WhatMustHoldOfAValueIsCheckedWhereItIsMadeTest {
                 let same (b) = b
                 """);
 
-        assertThat(answerOf(module, "ranging.same", "[{\"n\": 0}]")).contains("\"actual\":\"0\"");
-        assertThat(answerOf(module, "ranging.same", "[{\"n\": 20}]")).contains("\"actual\":\"1\"");
+        assertThat(answerOf(module, "ranging.same", "[{\"n\": 0}]")).contains("\"clause\":\"low\"");
+        assertThat(answerOf(module, "ranging.same", "[{\"n\": 20}]")).contains("\"clause\":\"high\"");
     }
 
     @Test
@@ -104,7 +107,7 @@ class WhatMustHoldOfAValueIsCheckedWhereItIsMadeTest {
                 .contains("\"path\":\"/0/right\"", "\"code\":\"invariant_violation\"");
     }
 
-    private static Optional<AbortReason> abortOf(Running module, String export, String arguments) {
+    private static Optional<FailureCause> abortOf(Running module, String export, String arguments) {
         int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
         int mark = module.call(RuntimeAbi.ALLOC_MARK);
         try {
@@ -113,12 +116,12 @@ class WhatMustHoldOfAValueIsCheckedWhereItIsMadeTest {
         } catch (ChicoryException trapped) {
             var record = module.failureRecord();
             module.call(RuntimeAbi.ALLOC_RESET, mark);
-            return record.describesTrapAfter(snapshot) ? record.namedReason() : Optional.empty();
+            return record.describesTrapAfter(snapshot) ? record.cause() : Optional.empty();
         }
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

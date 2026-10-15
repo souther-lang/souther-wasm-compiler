@@ -25,6 +25,24 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
     }
 
     @Test
+    void keepsUnrelatedCellsInACaptureEnvironmentWithoutClaimingATypeForThem() {
+        Running runtime = Running.bareRuntime();
+
+        int number = runtime.call(RuntimeAbi.INT, 7);
+        byte[] kept = "kept".getBytes(StandardCharsets.UTF_8);
+        int text = runtime.call(RuntimeAbi.STRING, runtime.staged("kept"), kept.length);
+        int truth = runtime.call(RuntimeAbi.BOOL, 1);
+        int cells = runtime.call(RuntimeAbi.CAPTURES, 3);
+        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 0, number);
+        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 1, text);
+        runtime.run(RuntimeAbi.CAPTURE_SET, cells, 2, truth);
+
+        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 0)).isEqualTo(number);
+        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 1)).isEqualTo(text);
+        assertThat(runtime.call(RuntimeAbi.CAPTURE_GET, cells, 2)).isEqualTo(truth);
+    }
+
+    @Test
     void placesTheArenaAboveEverythingStaticItWasToldAbout() {
         Running runtime = Running.bareRuntime();
         byte[] module = Running.runtimeModule();
@@ -81,7 +99,7 @@ class TheRuntimeAnswersTheAbiItIsCompiledAgainstTest {
         runtime.call(RuntimeAbi.ALLOC_RESET, mark);
         FailureRecord record = runtime.failureRecord();
         assertThat(record.describesTrapAfter(snapshot)).isTrue();
-        assertThat(record.namedReason()).contains(AbortReason.BAD_MARK);
+        assertThat(record.cause()).contains(new FailureCause.Wasm(WasmFault.BAD_MARK));
         assertThat(record.aux1()).isEqualTo(mark);
     }
 

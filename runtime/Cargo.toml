@@ -4,11 +4,25 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[dependencies]
+# The rules for reading text Souther shares with Raoh: case conversion, normalization, White_Space,
+# order and length in scalar values, temporal text, and the image a pattern's machine is written as.
+# Exactly the version whose Java implementation souther-compiler takes, which writes the image of a
+# pattern this reads: TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest holds Cargo.lock to the
+# one Maven resolves, so a Souther that moves the library stops the build until this moves too.
+notation199x = "=0.2.0"
+# Exact arithmetic: what a `Decimal` and a `Rational` are and what each operation on one answers,
+# the native runtime's answers from the same source, with neither backend depending on the other.
+# Where one is kept and what a failure ends the call as are this runtime's (`decimal`,
+# `rational`). A commit, so that what the runtime builds is the same everywhere and the carried
+# copy can be compared with it.
+souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "2d779816a0bb7d7d6bb7b40de09f275a40113d16" }
+
 [lib]
 crate-type = ["cdylib"]
 
 [profile.release]
-opt-level = "z"
+opt-level = "s"
 lto = true
 panic = "abort"
 codegen-units = 1

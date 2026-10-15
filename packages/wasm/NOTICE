@@ -1,0 +1,8 @@
+@souther/wasm
+Copyright the Souther contributors
+
+This package is licensed under the Eclipse Public License 2.0.
+
+It depends on @raoh/core (https://github.com/raoh-project/raoh-ts), licensed
+under the Apache License, Version 2.0, which is installed beside it and not
+carried in it.

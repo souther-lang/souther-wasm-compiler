@@ -28,16 +28,32 @@
         </developer>
     </developers>
 
+    <scm>
+        <connection>scm:git:https://github.com/souther-lang/souther-wasm-compiler.git</connection>
+        <developerConnection>scm:git:git@github.com:souther-lang/souther-wasm-compiler.git</developerConnection>
+        <url>https://github.com/souther-lang/souther-wasm-compiler</url>
+    </scm>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <souther.version>0.1.1-SNAPSHOT</souther.version>
+        <souther.version>0.3.1-SNAPSHOT</souther.version>
         <jspecify.version>1.0.0</jspecify.version>
         <chicory.version>1.7.5</chicory.version>
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
     </properties>
+
+    <!-- A SNAPSHOT of the compiler is published here and not to Maven Central proper. -->
+    <repositories>
+        <repository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases><enabled>false</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
 
     <dependencies>
         <dependency>
@@ -45,6 +61,12 @@
             <artifactId>souther-compiler</artifactId>
             <version>${souther.version}</version>
         </dependency>
+        <!-- notation-199x, which writes the machine a settled pattern means as the image the
+             runtime reads, is not declared here: it is the one souther-compiler takes, so the
+             image is written by the version that settled the pattern, and a version stated here as
+             well would win over Souther's without either saying so. The runtime reads the image
+             with the same version of the library's Rust implementation, which
+             TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest holds runtime/Cargo.lock to. -->
         <dependency>
             <groupId>org.jspecify</groupId>
             <artifactId>jspecify</artifactId>
@@ -92,6 +114,34 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.4</version>
+                <configuration>
+                    <!-- A heap the suite fits twice over, so that what a test keeps alive for good
+                         — a cache with no bound, a module held after its test — fails the build
+                         rather than growing with every test added. The suite fits in 128 MB. -->
+                    <argLine>-Xmx256m</argLine>
+                </configuration>
+            </plugin>
+            <!-- What only the jars can be asked: which of them says it is a backend, and whether
+                 that one runs. Read after they are written, so it runs in verify, not test. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.5.4</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <backend.built>${project.build.directory}</backend.built>
+                        <backend.souther>${souther.version}</backend.souther>
+                        <backend.release>${project.version}</backend.release>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <!-- One jar that runs, because a command line is how this is reached from outside a
                  build. Bound to package rather than to a profile: a build that produced a jar
@@ -104,6 +154,29 @@
                 <artifactId>maven-resources-plugin</artifactId>
                 <version>3.3.1</version>
                 <executions>
+                    <!-- What the souther CLI reads to choose this jar for a target: the target
+                         it answers to and the Souther it is built against, and no other key, since
+                         the CLI refuses a descriptor with any other. The Souther is the one this
+                         build compiles against, so the two cannot disagree. It says the jar it is
+                         in runs as a backend, so it is written apart from the classes, which the
+                         plain jar is made of too, and the shade below puts it in the jar that
+                         runs and in no other. -->
+                    <execution>
+                        <id>backend-descriptor</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/backend</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/descriptor</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>licences-into-the-jar</id>
                         <phase>process-resources</phase>
@@ -143,6 +216,15 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>souther.wasm.Main</mainClass>
+                                    <!-- The release of this backend, which is its own: which
+                                         Souther it works with is the descriptor's to say. -->
+                                    <manifestEntries>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>META-INF/souther/backend.properties</resource>
+                                    <file>${project.build.directory}/backend/backend.properties</file>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <!-- Only the licence transformer. The notice one writes a
@@ -168,4 +250,148 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- `mvn -Prelease deploy`, run by hand from a clean clone at the tag; CI publishes nothing.
+             What goes to Maven Central is the plain jar, the `cli` jar the souther CLI fetches, and
+             this pom, whose `souther.version` is how the CLI tells which Souther a release is built
+             against. Central does not let a released file change, which is what the CLI trusts. -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>3.5.0</version>
+                        <executions>
+                            <execution>
+                                <id>a-release-depends-on-releases</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireReleaseVersion>
+                                            <message>A release is published at a version that is not a snapshot.</message>
+                                        </requireReleaseVersion>
+                                        <requireReleaseDeps>
+                                            <message>A release is what its tag builds, and a snapshot dependency builds to whatever was published under it last.</message>
+                                        </requireReleaseDeps>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- What is published is what the tag names: HEAD is a commit tagged for this
+                         version, and nothing an earlier build wrote goes into the jars. -->
+                    <plugin>
+                        <groupId>io.github.git-commit-id</groupId>
+                        <artifactId>git-commit-id-maven-plugin</artifactId>
+                        <version>9.0.1</version>
+                        <executions>
+                            <execution>
+                                <id>read-revision</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>revision</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>validate-release-source</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>validateRevision</goal>
+                                </goals>
+                                <configuration>
+                                    <validationProperties>
+                                        <validationProperty>
+                                            <name>the tree is what HEAD records</name>
+                                            <value>${git.dirty}</value>
+                                            <shouldMatchTo>false</shouldMatchTo>
+                                        </validationProperty>
+                                        <validationProperty>
+                                            <name>HEAD is tagged for this version</name>
+                                            <value>${git.tags}</value>
+                                            <shouldMatchTo>(^|,)v${project.version}(,|$)</shouldMatchTo>
+                                        </validationProperty>
+                                    </validationProperties>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-clean-plugin</artifactId>
+                        <version>3.5.0</version>
+                        <executions>
+                            <execution>
+                                <id>clean-before-building</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>clean</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.4.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.12.0</version>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.8</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.11.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

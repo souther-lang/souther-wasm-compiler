@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 
 /**
@@ -30,6 +30,90 @@ class AWalkOverAListRunsItsStepTest {
         assertThat(answerOf(module, "counting.doubled", "[[1,2,3]]"))
                 .isEqualTo("{\"value\":[2,4,6]}");
         assertThat(answerOf(module, "counting.doubled", "[[]]")).isEqualTo("{\"value\":[]}");
+    }
+
+    @Test
+    void walksAListLongerThanTheStackIsDeep() {
+        // List.fold is written as a recursion over the list, which would take a frame per element
+        // if each step were a call. A call that answers for its caller goes back to the top of the
+        // body instead, so the walk runs in one frame however long the list is.
+        Running module = compiled("""
+                module counting
+
+                behavior total : (xs: List<Int>) -> Int
+
+                let total (xs) = List.fold((acc, x) -> acc + x, 0, xs)
+                """);
+        int many = 20_000;
+        String xs = java.util.stream.IntStream.range(0, many)
+                .mapToObj(Integer::toString)
+                .collect(java.util.stream.Collectors.joining(",", "[[", "]]"));
+
+        assertThat(answerOf(module, "counting.total", xs))
+                .isEqualTo("{\"value\":" + ((long) many * (many - 1) / 2) + "}");
+    }
+
+    @Test
+    void goesBackToTheTopOfARecursionAProgramWrote() {
+        Running module = compiled("""
+                module counting
+
+                behavior down : (n: Int, acc: Int) -> Int
+
+                partial let countDown (n: Int, acc: Int): Int =
+                    if n == 0 then acc else countDown(n - 1, acc + n)
+
+                let down (n, acc) = countDown(n, acc)
+                """);
+
+        assertThat(answerOf(module, "counting.down", "[20000,0]"))
+                .isEqualTo("{\"value\":200010000}");
+        // The arguments are all worked out before any is put back: the second reads the first.
+        assertThat(answerOf(module, "counting.down", "[3,0]")).isEqualTo("{\"value\":6}");
+    }
+
+    @Test
+    void goesBackToTheTopFromEveryWayAnAttemptedConstructionTakes() {
+        // Each way an attempt goes on is the answer of the recursion it is in, so a recursion
+        // through any of them goes back to the top like one through a condition does.
+        Running module = compiled("""
+                module counting
+
+                data Positive = { n: Int }
+                    invariant kept = n > 0
+
+                data Small = { n: Int }
+                    invariant small = n < 10
+
+                behavior down : (n: Int, acc: Int) -> Int constructs Positive
+
+                partial let summed (n: Int, acc: Int): Int =
+                    if Positive { n = n } as p then summed(p.n - 1, acc + p.n) else acc
+
+                let down (n, acc) = summed(n, acc)
+
+                behavior named : (n: Int, steps: Int) -> Int constructs Small
+
+                partial let shrunk (n: Int, steps: Int): Int =
+                    if Small { n = n } as s then steps
+                    else | small -> shrunk(n - 1, steps + 1)
+
+                let named (n, steps) = shrunk(n, steps)
+
+                behavior any : (n: Int, steps: Int) -> Int constructs Small
+
+                partial let lowered (n: Int, steps: Int): Int =
+                    if Small { n = n } as s then steps else lowered(n - 1, steps + 1)
+
+                let any (n, steps) = lowered(n, steps)
+                """);
+
+        assertThat(answerOf(module, "counting.down", "[20000,0]"))
+                .isEqualTo("{\"value\":200010000}");
+        assertThat(answerOf(module, "counting.named", "[20009,0]"))
+                .isEqualTo("{\"value\":20000}");
+        assertThat(answerOf(module, "counting.any", "[20009,0]"))
+                .isEqualTo("{\"value\":20000}");
     }
 
     @Test
@@ -150,7 +234,7 @@ class AWalkOverAListRunsItsStepTest {
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export, String arguments) {

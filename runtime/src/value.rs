@@ -6,15 +6,17 @@
 //!
 //! ```text
 //! +0  u32 tag
-//! +4  u32 length for a String, the descriptor for a record or a unit, nothing otherwise
+//! +4  what the tag makes of it: a length, a count, a slot, a descriptor, a scale, a day
 //! +8  payload
 //! ```
 //!
-//! Boxed even where it need not be. An `Int` in a local would be an `i64` and nothing else, but the
+//! Boxed wherever a value is kept. An `Int` in a local would be an `i64` and nothing else, but the
 //! same `Int` inside a list, a map or an option has to be reachable by a pointer like everything
 //! else there, and a representation that changed at the edge of a container would put a conversion
-//! at every one of those edges. So the box comes first and unboxing a local is something to add
-//! against a measurement, not before one.
+//! at every one of those edges. What a body works out on the way to a value is not kept, so the
+//! compiler works arithmetic and conditions out on numbers and makes a cell only for what comes of
+//! them; and a literal is a cell the compiler writes into static memory once. Both write and read
+//! the layout here, which `RuntimeAbi.Cell` names on the other side.
 //!
 //! # Reading and writing
 //!
@@ -28,20 +30,23 @@
 
 use crate::decimal;
 use crate::descriptor::{
-    self, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION, KIND_INSTANT,
-    KIND_INT, KIND_NEWTYPE,
-    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_SET, KIND_STRING, KIND_SUM, KIND_TIME,
-    KIND_TUPLE, KIND_UNIT,
+    self, Carried, KIND_BOOL, KIND_DATE, KIND_DATE_TIME, KIND_DECIMAL, KIND_ENUMERATION,
+    KIND_INSTANT, KIND_INT, KIND_NEWTYPE,
+    KIND_LIST, KIND_MAP, KIND_OPTION, KIND_PRODUCT, KIND_RATIONAL, KIND_SET, KIND_STRING,
+    KIND_TIME,
 };
 use crate::temporal;
 use crate::order;
 use crate::issues::{
-    self, CODE_INVALID_SIZE, CODE_INVARIANT_VIOLATION, CODE_MISSING_FIELD, CODE_NOT_ALLOWED,
-    CODE_OUT_OF_RANGE, CODE_TYPE_MISMATCH,
+    self, CODE_INVALID_FORMAT, CODE_INVALID_SIZE, CODE_NOT_ALLOWED, CODE_REQUIRED,
+    CODE_TYPE_MISMATCH,
 };
 use crate::json;
+use crate::notation;
 use crate::text;
-use crate::{abort, alloc, REASON_DIVISION_BY_ZERO, REASON_INT_OVERFLOW, REASON_NOT_A_VALUE};
+use crate::tree;
+use crate::{abort, alloc, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use heap::vec::Vec;
 
 /// The one value a type with a single value has. `+4` is which type.
 pub const TAG_UNIT: u32 = 0;
@@ -131,6 +136,30 @@ pub unsafe extern "C" fn __souther_string(pointer: u32, length: u32) -> u32 {
     cell
 }
 
+/// A string made of pieces written one after another, each copied once.
+pub unsafe fn __souther_string_of(pieces: &[&str]) -> u32 {
+    let length: usize = pieces.iter().map(|piece| piece.len()).sum();
+    let cell = header(TAG_STRING, length as u32);
+    let mut at = alloc(length as u32) as usize;
+    for piece in pieces {
+        core::ptr::copy_nonoverlapping(piece.as_ptr(), at as *mut u8, piece.len());
+        at += piece.len();
+    }
+    cell
+}
+
+/// A string of `times` copies of `text`, written straight into the cell.
+pub unsafe fn __souther_string_repeated(text: &str, times: u32) -> u32 {
+    let length = text.len() as u32 * times;
+    let cell = header(TAG_STRING, length);
+    let mut at = alloc(length) as usize;
+    for _ in 0..times {
+        core::ptr::copy_nonoverlapping(text.as_ptr(), at as *mut u8, text.len());
+        at += text.len();
+    }
+    cell
+}
+
 /// The one value of a type that has one.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_unit(descriptor: u32) -> u32 {
@@ -161,34 +190,130 @@ pub unsafe extern "C" fn __souther_record_get(cell: u32, index: u32) -> u32 {
     core::ptr::read_unaligned((cell as usize + HEADER + 4 * index as usize) as *const u32)
 }
 
-/// A list of that many elements, with nothing in them yet.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_list(descriptor: u32, length: u32) -> u32 {
-    let cell = header(TAG_LIST, descriptor);
-    let _ = alloc(4 + 4 * length);
-    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, length);
+// A list, and a set, which is a list of its members in order:
+//
+// ```text
+// +0  u32 tag
+// +4  u32 descriptor
+// +8  u32 how many it holds
+// +12 u32 where they are, or nothing for a set held as a tree that no reader has asked for yet
+// +16 u32 the tree a set changed one member at a time is held as, or nothing
+// ```
+//
+// Where they are is an array with two words before it: how many of its places some list holds,
+// and how many places it has. A list is its length's worth of the array, and the array may hold
+// more for another list made from it. So `xs ++ ys` writes `ys` after `xs` in `xs`'s own array
+// where `xs` ends where the array's held places do and there is room, and is a new cell over the
+// same array: `xs` still holds its own length's worth, which nothing writes to again. Where it does
+// not end there, some other list was made from `xs` already, and the two are copied into an array
+// of twice the room — so growing a list one element at a time takes as long as its length and not
+// its square, whatever holds the list on the way. A tree is `tree`'s.
+const LIST_LENGTH: u32 = 8;
+const LIST_ELEMENTS: u32 = 12;
+const LIST_TREE: u32 = 16;
+const LIST_CELL: u32 = 20;
+
+unsafe fn word(at: u32) -> u32 {
+    core::ptr::read_unaligned(at as usize as *const u32)
+}
+
+unsafe fn put_word(at: u32, held: u32) {
+    core::ptr::write_unaligned(at as usize as *mut u32, held);
+}
+
+/// An array of `room` places, of which `held` are some list's, answered as where the first is.
+pub(crate) unsafe fn elements_of_room(room: u32, held: u32) -> u32 {
+    let Some(bytes) = room.checked_mul(4).and_then(|places| places.checked_add(8)) else {
+        abort(crate::REASON_OUT_OF_MEMORY, 0, room as u64, 0)
+    };
+    let at = alloc(bytes) + 8;
+    put_word(at - 8, held);
+    put_word(at - 4, room);
+    at
+}
+
+/// How many of an array's places some list holds.
+pub(crate) unsafe fn elements_held(elements: u32) -> u32 {
+    word(elements - 8)
+}
+
+/// How many places an array has.
+pub(crate) unsafe fn elements_room(elements: u32) -> u32 {
+    word(elements - 4)
+}
+
+/// Says that some list holds that many of an array's places.
+pub(crate) unsafe fn elements_now_hold(elements: u32, held: u32) {
+    put_word(elements - 8, held);
+}
+
+/// A list cell over that many of an array's elements, or over a set's tree.
+pub(crate) unsafe fn list_over(descriptor: u32, length: u32, elements: u32, tree: u32) -> u32 {
+    let cell = alloc(LIST_CELL);
+    put_word(cell, TAG_LIST);
+    put_word(cell + 4, descriptor);
+    put_word(cell + LIST_LENGTH, length);
+    put_word(cell + LIST_ELEMENTS, elements);
+    put_word(cell + LIST_TREE, tree);
     cell
 }
 
-/// Puts a value at a position of a list.
+/// A list of that many elements, with nothing in them yet.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list(descriptor: u32, length: u32) -> u32 {
+    let cell = list_over(descriptor, length, 0, 0);
+    put_word(cell + LIST_ELEMENTS, elements_of_room(length, length));
+    cell
+}
+
+/// Puts a value at a position of a list, which only the one making the list does.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_set(cell: u32, index: u32, value: u32) {
-    core::ptr::write_unaligned(
-        (cell as usize + HEADER + 4 + 4 * index as usize) as *mut u32,
-        value,
-    );
+    put_word(word(cell + LIST_ELEMENTS) + 4 * index, value);
 }
 
 /// How many elements a list holds.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_length(cell: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
+    word(cell + LIST_LENGTH)
 }
 
 /// The value at a position of a list.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_list_get(cell: u32, index: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER + 4 + 4 * index as usize) as *const u32)
+    word(__souther_list_elements(cell) + 4 * index)
+}
+
+/// Where a list's elements are, one word each and in order: a set held as a tree is laid out the
+/// first time anything asks, and kept laid out. A walk asks once and reads the elements itself.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_list_elements(cell: u32) -> u32 {
+    let elements = word(cell + LIST_ELEMENTS);
+    if elements != 0 {
+        return elements;
+    }
+    let length = word(cell + LIST_LENGTH);
+    let laid = elements_of_room(length, length);
+    tree::laid_out(word(cell + LIST_TREE), laid, 4, false);
+    put_word(cell + LIST_ELEMENTS, laid);
+    laid
+}
+
+/// The tree a set's members stand in, made from its array the first time a member is put in or
+/// taken out, and kept: a set changed many times from one is laid out as a tree once.
+pub(crate) unsafe fn set_tree(cell: u32) -> u32 {
+    let tree = word(cell + LIST_TREE);
+    if tree != 0 || word(cell + LIST_LENGTH) == 0 {
+        return tree;
+    }
+    let made = tree::of_ordered(word(cell + LIST_ELEMENTS), 0, word(cell + LIST_LENGTH), 4, false);
+    put_word(cell + LIST_TREE, made);
+    made
+}
+
+/// Whether a set is held as a tree already, so that a member is found by walking it.
+pub(crate) unsafe fn held_as_tree(cell: u32) -> bool {
+    word(cell + LIST_TREE) != 0
 }
 
 /// Whether a value is one of the type a descriptor describes.
@@ -204,6 +329,7 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
         KIND_BOOL => tag == TAG_BOOL,
         KIND_STRING => tag == TAG_STRING,
         KIND_DECIMAL => tag == TAG_DECIMAL,
+        KIND_RATIONAL => tag == TAG_RATIONAL,
         KIND_DATE => tag == TAG_DATE,
         KIND_TIME => tag == TAG_TIME,
         KIND_DATE_TIME => tag == TAG_DATE_TIME,
@@ -211,20 +337,18 @@ pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
         KIND_LIST | KIND_SET => tag == TAG_LIST,
         KIND_MAP => tag == TAG_MAP,
         KIND_OPTION => tag == TAG_SOME || tag == TAG_NONE,
-        _ => core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor,
+        // A declared type, which a value of holds in its cell — and only such a value: what a
+        // primitive's cell has in that word is part of the primitive, which may be any number and
+        // so may be the address of the descriptor asked about.
+        _ => (tag == TAG_UNIT || tag == TAG_RECORD)
+            && core::ptr::read_unaligned((cell as usize + 4) as *const u32) == descriptor,
     })
 }
 
 /// Which of a set's alternatives a value is, as its place in what declared it.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_case_of(cell: u32, descriptor: u32) -> u32 {
-    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        if descriptor::member(descriptor, i) == held {
-            return i;
-        }
-    }
-    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64)
+    case_among(cell, descriptor)
 }
 
 /// Whether an option holds something.
@@ -244,58 +368,60 @@ pub unsafe extern "C" fn __souther_held(cell: u32) -> u32 {
 /// quietly standing where the right one was.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_add(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
+    __souther_int(__souther_int_sum(__souther_int_value(left), __souther_int_value(right)))
+}
+
+/// The `+` operator on two `Int`s a body holds as numbers rather than as cells.
+///
+/// What a body works out in the middle of an expression is not kept anywhere, so it is not made a
+/// cell: `a + b * c` makes one cell for its answer and none for `b * c`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_sum(a: i64, b: i64) -> i64 {
     match a.checked_add(b) {
-        Some(sum) => __souther_int(sum),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
+        Some(sum) => sum,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
     }
 }
 
-/// The unary `-` on `Int`. Only the sign moves, and the one number that has no opposite an `Int`
-/// holds ends the call rather than coming back as itself.
+/// The `-` operator on two `Int`s held as numbers.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_difference(a: i64, b: i64) -> i64 {
+    match a.checked_sub(b) {
+        Some(difference) => difference,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
+    }
+}
+
+/// The `*` operator on two `Int`s held as numbers.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_int_product(a: i64, b: i64) -> i64 {
+    match a.checked_mul(b) {
+        Some(product) => product,
+        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, a as u64, b as u64),
+    }
+}
+
+/// The unary `-` on `Int`. Total, unlike `+`/`-`/`*` (spec: `Core.Neg` is `AbortSet.NONE`, not
+/// `REQUIRED_FORM_HAS_NO_PLACE` — traced against `souther.compiler.abort.AbortSites` and
+/// `souther.compiler.codegen.BodyGen`, which emits this as bytecode's own `lneg`): `MIN_VALUE` is
+/// the one `Int` whose negation is not representable as a positive `Int`, but two's-complement
+/// negation of it wraps back to `MIN_VALUE` rather than raising, on the JVM and here alike, so
+/// `wrapping_neg` and not `checked_neg` is this operator's actual, total arithmetic.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_negate(cell: u32) -> u32 {
-    let held = __souther_int_value(cell);
-    match held.checked_neg() {
-        Some(opposite) => __souther_int(opposite),
-        None => abort(REASON_INT_OVERFLOW, 0, held as u64, 0),
-    }
+    __souther_int(__souther_int_value(cell).wrapping_neg())
 }
 
 /// The `-` operator on `Int`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_subtract(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    match a.checked_sub(b) {
-        Some(difference) => __souther_int(difference),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
-    }
+    __souther_int(__souther_int_difference(__souther_int_value(left), __souther_int_value(right)))
 }
 
 /// The `*` operator on `Int`.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_multiply(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    match a.checked_mul(b) {
-        Some(product) => __souther_int(product),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
-    }
-}
-
-/// The `/` operator on `Int`: truncating, and ending the call on a zero divisor.
-///
-/// A zero divisor is a model bug here rather than a case. Code that means it as a case asks
-/// `Int.divide`, whose type says so.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_divide(left: u32, right: u32) -> u32 {
-    let (a, b) = (__souther_int_value(left), __souther_int_value(right));
-    if b == 0 {
-        abort(REASON_DIVISION_BY_ZERO, 0, a as u64, 0);
-    }
-    match a.checked_div(b) {
-        Some(quotient) => __souther_int(quotient),
-        None => abort(REASON_INT_OVERFLOW, 0, a as u64, b as u64),
-    }
+    __souther_int(__souther_int_product(__souther_int_value(left), __souther_int_value(right)))
 }
 
 /// Where one value stands relative to another of its type, as a whole number.
@@ -308,29 +434,116 @@ pub unsafe extern "C" fn __souther_compare(left: u32, right: u32, descriptor: u3
     order::ranked(left, right, descriptor)
 }
 
-/// The `++` operator on `String`.
-#[no_mangle]
-pub unsafe extern "C" fn __souther_concat(left: u32, right: u32) -> u32 {
-    let (a, a_length) = (__souther_string_bytes(left), __souther_string_length(left));
-    let (b, b_length) = (__souther_string_bytes(right), __souther_string_length(right));
-    let cell = header(TAG_STRING, a_length + b_length);
-    let _ = alloc(a_length + b_length);
-    core::ptr::copy_nonoverlapping(a as *const u8, (cell as usize + HEADER) as *mut u8, a_length as usize);
-    core::ptr::copy_nonoverlapping(
-        b as *const u8,
-        (cell as usize + HEADER + a_length as usize) as *mut u8,
-        b_length as usize,
-    );
+/// Two strings joined, canonicalized. Each side is NFC, but NFC is not closed under joining: a
+/// letter followed by a combining mark composes into one code point at the seam.
+///
+/// Not an entry of its own: `++` on strings is `String.append`, and reaches this through
+/// `__souther_string_append` like any other call of it.
+pub unsafe fn joined(left: u32, right: u32) -> u32 {
+    if __souther_string_length(right) == 0 {
+        return left;
+    }
+    if __souther_string_length(left) == 0 {
+        return right;
+    }
+    notation::joined(&[notation::str_of(left), notation::str_of(right)])
+}
+
+// A map:
+//
+// ```text
+// +0  u32 tag
+// +4  u32 descriptor
+// +8  u32 how many entries it holds
+// +12 u32 where they are, a key and its value per entry in the order of the keys, or nothing for a
+//         map held as a tree that no reader has asked for yet
+// +16 u32 the tree a map changed one entry at a time is held as, or nothing
+// ```
+//
+// As a set is: changed by putting an entry in or taking one out, a map is a tree that shares all
+// but a path with the one it was made from; read entry by entry, it is laid out once.
+const MAP_ENTRIES: u32 = 12;
+const MAP_TREE: u32 = 16;
+
+/// A map cell over that many entries laid out at `entries`, or over a tree.
+pub(crate) unsafe fn map_over(descriptor: u32, length: u32, entries: u32, tree: u32) -> u32 {
+    let cell = alloc(LIST_CELL);
+    put_word(cell, TAG_MAP);
+    put_word(cell + 4, descriptor);
+    put_word(cell + LIST_LENGTH, length);
+    put_word(cell + MAP_ENTRIES, entries);
+    put_word(cell + MAP_TREE, tree);
     cell
 }
 
 /// A map of that many entries, with nothing in them yet.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map(descriptor: u32, entries: u32) -> u32 {
-    let cell = header(TAG_MAP, descriptor);
-    let _ = alloc(4 + 8 * entries);
-    core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
-    cell
+    let Some(bytes) = entries.checked_mul(8) else {
+        abort(crate::REASON_OUT_OF_MEMORY, 0, entries as u64, 0)
+    };
+    map_over(descriptor, entries, alloc(bytes), 0)
+}
+
+/// The element at a place of a list's elements, for a walk over them that asked where they are
+/// once (`__souther_list_elements`) rather than at every one.
+#[inline(always)]
+pub(crate) unsafe fn element_at(elements: u32, index: u32) -> u32 {
+    word(elements + 4 * index)
+}
+
+/// Puts an element at a place of a list's elements, which only the one making the list does.
+#[inline(always)]
+pub(crate) unsafe fn put_element_at(elements: u32, index: u32, held: u32) {
+    put_word(elements + 4 * index, held);
+}
+
+/// The key of an entry of a map's entries, for a walk that asked where they are once.
+#[inline(always)]
+pub(crate) unsafe fn entry_key(entries: u32, index: u32) -> u32 {
+    word(entries + 8 * index)
+}
+
+/// The value of an entry of a map's entries, for a walk that asked where they are once.
+#[inline(always)]
+pub(crate) unsafe fn entry_value(entries: u32, index: u32) -> u32 {
+    word(entries + 8 * index + 4)
+}
+
+/// Puts an entry at a place of a map's entries, which only the one making the map does.
+#[inline(always)]
+pub(crate) unsafe fn put_entry(entries: u32, index: u32, key: u32, held: u32) {
+    put_word(entries + 8 * index, key);
+    put_word(entries + 8 * index + 4, held);
+}
+
+/// Where a map's entries are, laid out from its tree the first time anything asks.
+pub(crate) unsafe fn map_entries(cell: u32) -> u32 {
+    let entries = word(cell + MAP_ENTRIES);
+    if entries != 0 || word(cell + LIST_LENGTH) == 0 {
+        return entries;
+    }
+    let laid = alloc(8 * word(cell + LIST_LENGTH));
+    tree::laid_out(word(cell + MAP_TREE), laid, 8, true);
+    put_word(cell + MAP_ENTRIES, laid);
+    laid
+}
+
+/// The tree a map's entries stand in, made from its entries the first time one is put in or taken
+/// out, and kept.
+pub(crate) unsafe fn map_tree(cell: u32) -> u32 {
+    let tree = word(cell + MAP_TREE);
+    if tree != 0 || word(cell + LIST_LENGTH) == 0 {
+        return tree;
+    }
+    let made = tree::of_ordered(word(cell + MAP_ENTRIES), 0, word(cell + LIST_LENGTH), 8, true);
+    put_word(cell + MAP_TREE, made);
+    made
+}
+
+/// Whether a map is held as a tree already, so that a key is found by walking it.
+pub(crate) unsafe fn map_held_as_tree(cell: u32) -> bool {
+    word(cell + MAP_TREE) != 0
 }
 
 /// What a map's keys are, for a caller that has the map and not the type it was declared as.
@@ -339,32 +552,41 @@ pub(crate) unsafe fn map_keys(cell: u32) -> u32 {
 }
 
 /// How many entries a map holds.
+///
+/// Every reader of a map's entries asks this first, so this is where a cell that is not a map is
+/// stopped: a map a walk is growing is laid out otherwise, and only the readers a walk's step may
+/// call are handed one, each of which asks for it by its own tag first.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_length(cell: u32) -> u32 {
+    let tag = core::ptr::read_unaligned(cell as usize as *const u32);
+    if tag != TAG_MAP {
+        abort(REASON_NOT_A_VALUE, 0, tag as u64, cell as u64);
+    }
     core::ptr::read_unaligned((cell as usize + HEADER) as *const u32)
 }
 
 /// The key of one of a map's entries.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_key(cell: u32, index: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER + 4 + 8 * index as usize) as *const u32)
+    word(map_entries(cell) + 8 * index)
 }
 
 /// The value of one of a map's entries.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_value(cell: u32, index: u32) -> u32 {
-    core::ptr::read_unaligned((cell as usize + HEADER + 8 + 8 * index as usize) as *const u32)
+    word(map_entries(cell) + 8 * index + 4)
 }
 
-/// Puts an entry at a position of a map.
+/// Puts an entry at a position of a map, which only the one making the map does.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_map_set(cell: u32, index: u32, key: u32, value: u32) {
-    core::ptr::write_unaligned((cell as usize + HEADER + 4 + 8 * index as usize) as *mut u32, key);
-    core::ptr::write_unaligned((cell as usize + HEADER + 8 + 8 * index as usize) as *mut u32, value);
+    let entries = word(cell + MAP_ENTRIES);
+    put_word(entries + 8 * index, key);
+    put_word(entries + 8 * index + 4, value);
 }
 
 /// Shortens a map to the entries it kept.
-unsafe fn map_of_length(cell: u32, entries: u32) {
+pub(crate) unsafe fn map_of_length(cell: u32, entries: u32) {
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, entries);
 }
 
@@ -433,6 +655,14 @@ pub const TAG_DATE_TIME: u32 = 16;
 
 /// A moment on the timeline.
 pub const TAG_INSTANT: u32 = 17;
+
+/// A map a walk is growing. Not a map: its entries stand in the order they were put in, found by a
+/// table of their keys' hashes, so a reader taking it for a map would read past what is there. See
+/// `kernel::__souther_map_builder` for its layout.
+pub const TAG_MAP_BUILDER: u32 = 18;
+
+/// An exact quotient. See `rational` for what it holds.
+pub const TAG_RATIONAL: u32 = 19;
 
 /// Values written together, with nothing in them yet.
 #[no_mangle]
@@ -509,6 +739,15 @@ pub unsafe extern "C" fn __souther_grow(builder: u32, added: u32) -> u32 {
     held
 }
 
+/// Adds one value to the end of a builder, answering the builder that holds it.
+///
+/// What a step writing `acc ++ [x]` comes to: the one value, without the list of one it was
+/// written in.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_grow_one(builder: u32, value: u32) -> u32 {
+    grown(builder, value)
+}
+
 /// Adds one value to the end of a builder.
 unsafe fn grown(builder: u32, value: u32) -> u32 {
     let held = core::ptr::read_unaligned((builder as usize + HEADER) as *const u32);
@@ -583,12 +822,15 @@ pub unsafe extern "C" fn __souther_none() -> u32 {
 pub unsafe extern "C" fn __souther_check_arguments(document: u32, expected: u32) {
     let tag = json::__souther_json_tag(document);
     if tag != json::TAG_ARRAY {
-        issues::issue(CODE_TYPE_MISMATCH, 0, 0, kind_of(tag), b"arguments");
+        mismatch(0, 0, tag, b"array");
         return;
     }
     let held = json::__souther_json_length(document);
     if held != expected {
-        issues::issue_of(CODE_INVALID_SIZE, 0, 0, decimal(held), decimal(expected));
+        issues::meta::begin();
+        issues::meta::integer(b"actual", held as i64);
+        issues::meta::integer(b"expected", expected as i64);
+        issues::issue(CODE_INVALID_SIZE, 0, 0, issues::meta::end());
     }
 }
 
@@ -613,36 +855,155 @@ pub unsafe extern "C" fn __souther_read(
     if value == 0 {
         return 0;
     }
-    match descriptor::kind(descriptor) {
-        KIND_INT => integer(value, path, path_length),
-        KIND_BOOL => boolean(value, path, path_length),
-        KIND_STRING => text(value, path, path_length),
-        KIND_DECIMAL => amount(value, path, path_length),
-        KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
-            when(value, descriptor::kind(descriptor), path, path_length)
-        }
-        KIND_UNIT => unit(value, descriptor, path, path_length),
-        KIND_PRODUCT => product(value, descriptor, path, path_length),
-        KIND_NEWTYPE => named_for(value, descriptor, path, path_length),
-        KIND_SUM => sum(value, descriptor, path, path_length),
-        KIND_ENUMERATION => enumeration(value, descriptor, path, path_length),
-        // A tuple is how a body carries two things where one goes. Nothing outside the program is
-        // shown one, so nothing outside writes one either.
-        KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, 0),
-        KIND_LIST => list(value, descriptor, path, path_length, false),
-        KIND_SET => list(value, descriptor, path, path_length, true),
-        KIND_MAP => map(value, descriptor, path, path_length),
-        KIND_OPTION => option(value, descriptor, path, path_length),
-        // Nothing a caller wrote reaches this: a descriptor is placed by the emitter, so a kind
-        // no one knows means this compiler wrote it rather than that a document said something.
-        other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, 0),
+    // Read by the function the descriptor's slot names. A type nothing asked to be read has none:
+    // a tuple, which is how a body carries two things where one goes and which nothing outside the
+    // program is shown, and a kind the compiler wrote that no reader handles.
+    let slot = descriptor::reader(descriptor);
+    if slot == 0 {
+        abort(REASON_NOT_A_VALUE, descriptor, descriptor::kind(descriptor) as u64, 0);
     }
+    let reader: extern "C" fn(u32, u32, u32, u32) -> u32 = core::mem::transmute(slot as usize);
+    reader(value, descriptor, path, path_length)
+}
+
+/// Reads an `Int`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_int(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    integer(value, path, path_length)
+}
+
+/// Reads a `Bool`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_bool(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    boolean(value, path, path_length)
+}
+
+/// Reads a `String`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_string(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    text(value, path, path_length)
+}
+
+/// Reads a `Decimal`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_decimal(value: u32, _: u32, path: u32, path_length: u32) -> u32 {
+    amount(value, path, path_length)
+}
+
+/// Reads a `Date`, a `Time`, a `DateTime` or an `Instant`, as its descriptor says which.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_temporal(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    when(value, descriptor::kind(descriptor), path, path_length)
+}
+
+/// Reads a value of a type with one value.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_unit(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    unit(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a shape.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_product(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    product(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a name for a value of another type.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_newtype(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    named_for(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a set of alternatives that carries something.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_sum(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    sum(value, descriptor, path, path_length)
+}
+
+/// Reads a value of a set of alternatives that carry nothing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_enumeration(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    enumeration(value, descriptor, path, path_length)
+}
+
+/// Reads a list.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_list(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    list(value, descriptor, path, path_length, false)
+}
+
+/// Reads a set.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_set(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    list(value, descriptor, path, path_length, true)
+}
+
+/// Reads a map.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_map(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    map(value, descriptor, path, path_length)
+}
+
+/// Reads an option.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_option(
+    value: u32,
+    descriptor: u32,
+    path: u32,
+    path_length: u32,
+) -> u32 {
+    option(value, descriptor, path, path_length)
 }
 
 unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"Int");
+        mismatch(path, path_length, tag, b"long");
         return 0;
     }
     let bytes = json::__souther_json_bytes(value) as usize;
@@ -654,19 +1015,19 @@ unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
         let digit = core::ptr::read((bytes + at) as *const u8);
         if !digit.is_ascii_digit() {
             // A point or an exponent means the document wrote an amount, not a whole number.
-            issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"number", b"Int");
+            mismatch(path, path_length, tag, b"long");
             return 0;
         }
         magnitude = magnitude * 10 + (digit - b'0') as u128;
         if magnitude > 1u128 << 63 {
-            issues::issue(CODE_OUT_OF_RANGE, path, path_length, b"number", b"Int");
+            wider_than_long(path, path_length);
             return 0;
         }
         at += 1;
     }
     let limit = if negative { 1u128 << 63 } else { i64::MAX as u128 };
     if magnitude > limit {
-        issues::issue(CODE_OUT_OF_RANGE, path, path_length, b"number", b"Int");
+        wider_than_long(path, path_length);
         return 0;
     }
     if negative {
@@ -676,34 +1037,61 @@ unsafe fn integer(value: u32, path: u32, path_length: u32) -> u32 {
     }
 }
 
+/// A whole number written wider than an `Int` holds, which Raoh's reader of one says as a mismatch
+/// of its range.
+unsafe fn wider_than_long(path: u32, path_length: u32) {
+    outside_range(path, path_length, b"long");
+}
+
+/// A number read exactly that the declared type has no room for, said as Raoh says one
+/// (`ObjectDecoders.outsideRange`): a mismatch of type keyed as one of range, naming the type by
+/// Raoh's word for it.
+unsafe fn outside_range(path: u32, path_length: u32, expected: &[u8]) {
+    issues::meta::begin();
+    issues::meta::word(b"expected", expected);
+    issues::keyed(CODE_TYPE_MISMATCH, issues::KEY_NUMERIC_RANGE, path, path_length,
+        issues::meta::end());
+}
+
 unsafe fn boolean(value: u32, path: u32, path_length: u32) -> u32 {
     match json::__souther_json_tag(value) {
         json::TAG_TRUE => __souther_bool(1),
         json::TAG_FALSE => __souther_bool(0),
         other => {
-            issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(other), b"Bool");
+            mismatch(path, path_length, other, b"boolean");
             0
         }
     }
 }
 
+/// A string is let in as the canonical `String` it is. Text that is not one — bytes that are not
+/// UTF-8, or a canonical form longer than a `String` holds — is a string that denotes no `String`,
+/// which is the format being wrong rather than the type.
 unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_STRING {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"String");
+        mismatch(path, path_length, tag, b"string");
         return 0;
     }
-    __souther_string(
-        json::__souther_json_bytes(value),
-        json::__souther_json_length(value),
-    )
+    match notation::admitted(json::__souther_json_bytes(value), json::__souther_json_length(value)) {
+        Some(held) => held,
+        None => {
+            issues::issue(CODE_INVALID_FORMAT, path, path_length, issues::meta::none());
+            0
+        }
+    }
 }
 
 /// A number is read as the amount it names, keeping the digits it was written with.
+///
+/// A number whose scale no `Int` holds is a well-formed number a `Decimal` has no room for: read
+/// exactly, and outside what the type holds. That is a mismatch of range, said as a whole number
+/// wider than an `Int` is said (`wider_than_long`) and as Raoh says one, under Raoh's own word for
+/// the type — not a wrong format, which is text that is no reading of its type at all.
 unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_NUMBER {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"Decimal");
+        mismatch(path, path_length, tag, b"number");
         return 0;
     }
     let held = decimal::parse(
@@ -711,7 +1099,7 @@ unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
         json::__souther_json_length(value),
     );
     if held == 0 {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"number", b"Decimal");
+        outside_range(path, path_length, b"decimal");
         return 0;
     }
     held
@@ -720,14 +1108,10 @@ unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
 /// A day, a time of day, or the two together, read as a calendar and a clock write them.
 unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
-    let wanted: &[u8] = match kind {
-        KIND_DATE => b"Date",
-        KIND_TIME => b"Time",
-        KIND_INSTANT => b"Instant",
-        _ => b"DateTime",
-    };
+    // A temporal is written as text, and text that is no reading of the calendar or the clock is the
+    // format being wrong (spec §decoder-error).
     if tag != json::TAG_STRING {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), wanted);
+        mismatch(path, path_length, tag, b"string");
         return 0;
     }
     let at = json::__souther_json_bytes(value);
@@ -736,7 +1120,7 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
         return match temporal::read_moment(at, length) {
             Some((second, nano)) => temporal::moment_made(second, nano),
             None => {
-                issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"string", wanted);
+                not_written_as(kind, path, path_length);
                 0
             }
         };
@@ -749,10 +1133,26 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
     match held {
         Some((tag, day, second)) => temporal::made(tag, day, second),
         None => {
-            issues::issue(CODE_TYPE_MISMATCH, path, path_length, b"string", wanted);
+            not_written_as(kind, path, path_length);
             0
         }
     }
+}
+
+/// Text that is no reading of the calendar or the clock, said with the form the temporal is written
+/// in — the language's words for it (spec §temporal-text), which the JVM's decoder says too and the
+/// catalog's template for `invalid_format` would say less than.
+unsafe fn not_written_as(kind: u32, path: u32, path_length: u32) {
+    let said: &[u8] = match kind {
+        KIND_DATE => b"is not a Date written as yyyy-MM-dd, its year signed outside 0000 to 9999",
+        KIND_TIME => b"is not a Time written as HH:mm or HH:mm:ss",
+        KIND_INSTANT => b"is not an Instant written as yyyy-MM-ddTHH:mm:ss with an offset, its year \
+            signed outside 0000 to 9999",
+        _ => b"is not a DateTime written as yyyy-MM-ddTHH:mm or yyyy-MM-ddTHH:mm:ss, its year signed \
+            outside 0000 to 9999",
+    };
+    issues::said(CODE_INVALID_FORMAT, CODE_INVALID_FORMAT, path, path_length, issues::meta::none(),
+        said);
 }
 
 /// A type with one value is written as an empty object: there is nothing to say about which one it
@@ -760,7 +1160,7 @@ unsafe fn when(value: u32, kind: u32, path: u32, path_length: u32) -> u32 {
 unsafe fn unit(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
     __souther_unit(descriptor)
@@ -769,7 +1169,7 @@ unsafe fn unit(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 
 unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
     let cell = __souther_record(descriptor);
@@ -786,7 +1186,7 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
                 __souther_record_set(cell, i, __souther_none());
                 continue;
             }
-            issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a field");
+            required(at, at_length);
             whole = false;
             continue;
         }
@@ -804,13 +1204,7 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     // and it is answered as an issue.
     let clause = __souther_check_invariants(cell, descriptor);
     if clause >= 0 {
-        issues::issue_of(
-            CODE_INVARIANT_VIOLATION,
-            path,
-            path_length,
-            decimal(clause as u32),
-            descriptor::own_name(descriptor),
-        );
+        crate::clauses::broken(cell, descriptor, clause as u32, path, path_length);
         return 0;
     }
     cell
@@ -833,13 +1227,7 @@ unsafe fn named_for(value: u32, descriptor: u32, path: u32, path_length: u32) ->
     // written as that value, so the position a caller would look at is this one.
     let clause = __souther_check_invariants(cell, descriptor);
     if clause >= 0 {
-        issues::issue_of(
-            CODE_INVARIANT_VIOLATION,
-            path,
-            path_length,
-            decimal(clause as u32),
-            descriptor::own_name(descriptor),
-        );
+        crate::clauses::broken(cell, descriptor, clause as u32, path, path_length);
         return 0;
     }
     cell
@@ -887,7 +1275,7 @@ pub unsafe extern "C" fn __souther_check_invariants(cell: u32, descriptor: u32) 
 unsafe fn list(value: u32, descriptor: u32, path: u32, path_length: u32, unique: bool) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_ARRAY {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an array");
+        mismatch(path, path_length, tag, b"array");
         return 0;
     }
     let held = json::__souther_json_length(value);
@@ -920,6 +1308,7 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
         return;
     }
     let room = alloc(4 * held);
+    let elements = __souther_list_elements(cell);
     let mut width = 1;
     while width < held {
         let mut at = 0;
@@ -936,8 +1325,8 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
                     true
                 } else {
                     order::compare(
-                        __souther_list_get(cell, left),
-                        __souther_list_get(cell, right),
+                        element_at(elements, left),
+                        element_at(elements, right),
                         element,
                     ) <= 0
                 };
@@ -950,14 +1339,14 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
                 };
                 core::ptr::write_unaligned(
                     (room + into * 4) as *mut u32,
-                    __souther_list_get(cell, taken),
+                    element_at(elements, taken),
                 );
                 into += 1;
             }
             at += 2 * width;
         }
         for i in 0..held {
-            __souther_list_set(cell, i, core::ptr::read_unaligned((room + i * 4) as *const u32));
+            put_element_at(elements, i, core::ptr::read_unaligned((room + i * 4) as *const u32));
         }
         width *= 2;
     }
@@ -966,25 +1355,26 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
 /// Sorted here rather than on the way out because what a set is does not depend on how it was
 /// written: two documents listing the same members are one set, and a set that only settled its
 /// order at the boundary would compare as two.
-unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
+pub(crate) unsafe fn sorted_and_deduplicated(cell: u32, descriptor: u32) -> u32 {
     let element = descriptor::member(descriptor, 0);
     let held = __souther_list_length(cell);
     // Merged in runs that double: a set is written out by hand and is usually small, but usually is
     // not a bound, and a set twice as long would otherwise cost four times as much to settle.
     sorted_in_place(cell, element);
+    let elements = __souther_list_elements(cell);
     let mut kept = 0;
     for i in 0..held {
-        let each = __souther_list_get(cell, i);
+        let each = element_at(elements, i);
         if kept == 0
-            || order::compare(__souther_list_get(cell, kept - 1), each, element) != 0
+            || order::compare(element_at(elements, kept - 1), each, element) != 0
         {
-            __souther_list_set(cell, kept, each);
+            put_element_at(elements, kept, each);
             kept += 1;
         }
     }
     let out = __souther_list(descriptor, kept);
     for i in 0..kept {
-        __souther_list_set(out, i, __souther_list_get(cell, i));
+        __souther_list_set(out, i, element_at(elements, i));
     }
     out
 }
@@ -1006,16 +1396,68 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
         KIND_TIME => temporal::written_time(cell),
         KIND_DATE_TIME => temporal::written_both(cell),
         KIND_INSTANT => temporal::written_moment(cell),
-        KIND_ENUMERATION => {
-            let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-            for i in 0..descriptor::arity(descriptor) {
-                if descriptor::member(descriptor, i) == held {
-                    return descriptor::name(descriptor, i);
-                }
-            }
-            abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64)
-        }
+        // A case's name is its own and is read off it, not found by its place among the keys' set:
+        // a map made where its keys were a union of a few cases holds that union's descriptor, and
+        // a key put in where they are the whole sum is a case the union does not list.
+        KIND_ENUMERATION => descriptor::own_name(order::identity(cell)),
         other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
+    }
+}
+
+/// Where one key of a map stands relative to another, and whether they are one key.
+///
+/// Two keys are one key where `==` says they are one value (ADR-0009). A key a map can cross with
+/// is written as text, and a map is written in the order its keys' texts sort, so such a key stands
+/// in that order here as well — and two of them are one text exactly where they are one value. Any
+/// other key is a key of a map a body holds and no boundary writes, whose order the language does
+/// not state, and stands where `order::compare` puts it: the order a set's members stand in, which
+/// asks which case a value is of the value. Not `order::ranked`, the order a declaration states,
+/// which places a case by where the keys' set lists it — and the keys' set is the map's own, which
+/// may be a union narrower than a key put in later.
+///
+/// A key written as text is compared from what it holds where that is the order of its text, so
+/// that finding an entry does not write a key out per comparison. A time of day is written as two
+/// digits per part, the seconds left off where there are none, so its text and its number stand in
+/// one order. A day is written that way while its year has four digits; a year before the first or
+/// past the ten thousandth is written with a sign and more digits, which is not the order of the
+/// days, so such a key is compared as text.
+pub(crate) unsafe fn key_order(left: u32, right: u32, descriptor: u32) -> i32 {
+    match descriptor::kind(descriptor) {
+        KIND_NEWTYPE => key_order(
+            __souther_record_get(left, 0),
+            __souther_record_get(right, 0),
+            descriptor::member(descriptor, 0),
+        ),
+        KIND_STRING => order::compare_runs(
+            __souther_string_bytes(left),
+            __souther_string_length(left),
+            __souther_string_bytes(right),
+            __souther_string_length(right),
+        ),
+        KIND_TIME => sign_of(temporal::second(left) as i64 - temporal::second(right) as i64),
+        KIND_DATE | KIND_DATE_TIME
+            if temporal::in_four_digit_years(left) && temporal::in_four_digit_years(right) =>
+        {
+            let by_day = sign_of(temporal::day(left) as i64 - temporal::day(right) as i64);
+            if by_day != 0 {
+                return by_day;
+            }
+            sign_of(temporal::second(left) as i64 - temporal::second(right) as i64)
+        }
+        KIND_DATE | KIND_DATE_TIME | KIND_INSTANT | KIND_ENUMERATION => {
+            let (a, a_length) = key_text(left, descriptor);
+            let (b, b_length) = key_text(right, descriptor);
+            order::compare_runs(a, a_length, b, b_length)
+        }
+        _ => order::compare(left, right, descriptor),
+    }
+}
+
+fn sign_of(difference: i64) -> i32 {
+    match difference {
+        d if d < 0 => -1,
+        0 => 0,
+        _ => 1,
     }
 }
 
@@ -1030,7 +1472,7 @@ pub(crate) unsafe fn key_text(cell: u32, descriptor: u32) -> (u32, u32) {
 unsafe fn map(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
     let held = json::__souther_json_length(value);
@@ -1076,11 +1518,8 @@ unsafe fn collapsed(cell: u32, keys: u32) -> u32 {
     let held = __souther_map_length(cell);
     let mut kept = 0;
     for i in 0..held {
-        let (a, a_length) = key_text(__souther_map_key(cell, i), keys);
-        let last = i + 1 == held || {
-            let (b, b_length) = key_text(__souther_map_key(cell, i + 1), keys);
-            order::compare_runs(a, a_length, b, b_length) != 0
-        };
+        let last = i + 1 == held
+            || key_order(__souther_map_key(cell, i), __souther_map_key(cell, i + 1), keys) != 0;
         if last {
             __souther_map_set(cell, kept, __souther_map_key(cell, i), __souther_map_value(cell, i));
             kept += 1;
@@ -1097,12 +1536,13 @@ unsafe fn collapsed(cell: u32, keys: u32) -> u32 {
 /// Merged in runs that double, which keeps two entries of one key in the order they were written —
 /// what the collapse after this leans on — and reads each entry a number of times that grows with
 /// the logarithm of how many there are rather than with how many there are.
-unsafe fn sorted_by_key(cell: u32, keys: u32) {
+pub(crate) unsafe fn sorted_by_key(cell: u32, keys: u32) {
     let held = __souther_map_length(cell);
     if held < 2 {
         return;
     }
     let room = alloc(8 * held);
+    let entries = map_entries(cell);
     let mut width = 1;
     while width < held {
         let mut at = 0;
@@ -1113,9 +1553,7 @@ unsafe fn sorted_by_key(cell: u32, keys: u32) {
             at += 2 * width;
         }
         for i in 0..held {
-            __souther_map_set(
-                cell,
-                i,
+            put_entry(entries, i,
                 core::ptr::read_unaligned((room + i * 8) as *const u32),
                 core::ptr::read_unaligned((room + i * 8 + 4) as *const u32),
             );
@@ -1126,6 +1564,7 @@ unsafe fn sorted_by_key(cell: u32, keys: u32) {
 
 /// Two runs of entries laid into `room` as one, the earlier one first where their keys agree.
 unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u32) {
+    let entries = map_entries(cell);
     let mut left = from;
     let mut right = middle;
     let mut at = from;
@@ -1135,9 +1574,7 @@ unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u
         } else if right == end {
             true
         } else {
-            let (a, a_length) = key_text(__souther_map_key(cell, left), keys);
-            let (b, b_length) = key_text(__souther_map_key(cell, right), keys);
-            order::compare_runs(a, a_length, b, b_length) <= 0
+            key_order(entry_key(entries, left), entry_key(entries, right), keys) <= 0
         };
         let taken = if take_left {
             left += 1;
@@ -1146,10 +1583,10 @@ unsafe fn merged(cell: u32, keys: u32, room: u32, from: u32, middle: u32, end: u
             right += 1;
             right - 1
         };
-        core::ptr::write_unaligned((room + at * 8) as *mut u32, __souther_map_key(cell, taken));
+        core::ptr::write_unaligned((room + at * 8) as *mut u32, entry_key(entries, taken));
         core::ptr::write_unaligned(
             (room + at * 8 + 4) as *mut u32,
-            __souther_map_value(cell, taken),
+            entry_value(entries, taken),
         );
         at += 1;
     }
@@ -1174,7 +1611,7 @@ unsafe fn option(value: u32, descriptor: u32, path: u32, path_length: u32) -> u3
 unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_STRING {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"a case");
+        mismatch(path, path_length, tag, b"string");
         return 0;
     }
     let held = json::__souther_json_bytes(value);
@@ -1185,38 +1622,45 @@ unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) 
             return __souther_unit(descriptor::member(descriptor, i));
         }
     }
-    issues::issue_of(
-        CODE_NOT_ALLOWED,
-        path,
-        path_length,
-        (held, held_length),
-        (b"a case".as_ptr() as u32, 6),
-    );
+    // A name no case goes by is reported as Raoh's `oneOf` over strings reports a value that is
+    // none of the ones allowed, since that constraint states the same rule: the names allowed, and
+    // the one written (spec §sum-discrimination).
+    issues::meta::begin();
+    allowed(descriptor);
+    issues::meta::text(b"actual", held, held_length);
+    issues::issue(CODE_NOT_ALLOWED, path, path_length, issues::meta::end());
     0
+}
+
+/// The names of a set's cases, as the issue saying a value is none of them lists them: in code
+/// point order, which is Raoh's. A name is UTF-8, and its bytes order as its code points do.
+unsafe fn allowed(descriptor: u32) {
+    let mut names: Vec<(u32, u32)> =
+        (0..descriptor::arity(descriptor)).map(|i| descriptor::name(descriptor, i)).collect();
+    let bytes = |(at, length): &(u32, u32)| {
+        core::slice::from_raw_parts(*at as usize as *const u8, *length as usize)
+    };
+    names.sort_unstable_by(|one, other| bytes(one).cmp(bytes(other)));
+    issues::meta::texts(b"allowed", names.into_iter());
 }
 
 /// A value of a sum is written as its case, with the case's name under `type`.
 unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
     if tag != json::TAG_OBJECT {
-        issues::issue(CODE_TYPE_MISMATCH, path, path_length, kind_of(tag), b"an object");
+        mismatch(path, path_length, tag, b"object");
         return 0;
     }
-    let written = entry(value, DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32);
+    let tagged_under = keyed(descriptor::tag_key(descriptor), descriptor);
+    let written = entry(value, tagged_under.0, tagged_under.1);
     if written == 0 {
-        let (at, at_length) = below(path, path_length, discriminator());
-        issues::issue(CODE_MISSING_FIELD, at, at_length, b"nothing", b"a case");
+        let (at, at_length) = below(path, path_length, tagged_under);
+        required(at, at_length);
         return 0;
     }
     if json::__souther_json_tag(written) != json::TAG_STRING {
-        let (at, at_length) = below(path, path_length, discriminator());
-        issues::issue(
-            CODE_TYPE_MISMATCH,
-            at,
-            at_length,
-            kind_of(json::__souther_json_tag(written)),
-            b"a case",
-        );
+        let (at, at_length) = below(path, path_length, tagged_under);
+        mismatch(at, at_length, json::__souther_json_tag(written), b"string");
         return 0;
     }
     let held = json::__souther_json_bytes(written);
@@ -1224,27 +1668,42 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     for i in 0..descriptor::arity(descriptor) {
         let (case, case_length) = descriptor::name(descriptor, i);
         if same(case, case_length, held, held_length) {
-            return __souther_read(value, descriptor::member(descriptor, i), path, path_length);
+            let member = descriptor::member(descriptor, i);
+            return match descriptor::carried(member) {
+                // A unit and a shape are read from the object membership gave them, the tag
+                // beside whatever fields they lay there.
+                Carried::Nothing | Carried::Fields => __souther_read(value, member, path, path_length),
+                // Anything else keeps its own form, under a key of its own beside the tag.
+                Carried::Itself => {
+                    let contents_under = keyed(descriptor::contents_key(descriptor), descriptor);
+                    let (at, at_length) = below(path, path_length, contents_under);
+                    let contents = entry(value, contents_under.0, contents_under.1);
+                    if contents == 0 {
+                        required(at, at_length);
+                        return 0;
+                    }
+                    __souther_read(contents, member, at, at_length)
+                }
+            };
         }
     }
-    let (at, at_length) = below(path, path_length, discriminator());
-    issues::issue_of(
-        CODE_NOT_ALLOWED,
-        at,
-        at_length,
-        (held, held_length),
-        (b"a case".as_ptr() as u32, 6),
-    );
+    // A tag naming no case is not one of those the sum allows, and which those are is said, as
+    // Raoh's `discriminate` says it.
+    let (at, at_length) = below(path, path_length, tagged_under);
+    issues::meta::begin();
+    allowed(descriptor);
+    issues::issue(CODE_NOT_ALLOWED, at, at_length, issues::meta::end());
     0
 }
 
-/// The key a sum's case is named under. ADR-0004's derived discriminator, which is what the JVM
-/// backend's derived codec reads and writes.
-const DISCRIMINATOR: &[u8] = b"type";
-
-/// Where the discriminator's name is, for a path built through it.
-fn discriminator() -> (u32, u32) {
-    (DISCRIMINATOR.as_ptr() as u32, DISCRIMINATOR.len() as u32)
+/// A key of a sum's form, as its descriptor carries it from the checker. A sum with no keys is one
+/// only a body holds, which the checker never let cross, so reading or writing one is this crate
+/// and the compiler disagreeing about what crosses.
+unsafe fn keyed(key: (u32, u32), descriptor: u32) -> (u32, u32) {
+    if key.1 == 0 {
+        abort(crate::REASON_BACKEND_INVARIANT_BROKEN, descriptor, 0, 0);
+    }
+    key
 }
 
 /// What an object wrote at a key, or nothing.
@@ -1293,114 +1752,261 @@ pub unsafe extern "C" fn __souther_write(cell: u32, descriptor: u32) -> u64 {
     json::packed(at, length)
 }
 
-unsafe fn written(cell: u32, descriptor: u32) {
-    match descriptor::kind(descriptor) {
-        KIND_INT => copied(json::__souther_json_write_int(__souther_int_value(cell))),
-        KIND_BOOL => copied(json::__souther_json_write_bool(__souther_bool_value(cell))),
-        KIND_STRING => copied(json::__souther_json_write_string(
-            __souther_string_bytes(cell),
-            __souther_string_length(cell),
-        )),
-        KIND_DECIMAL => {
-            // The one form of the amount, so that two ways of writing it are one document.
-            let (at, length) = decimal::written(decimal::canonical(cell));
-            text::push(at, length);
+/// Writes a value by the function its descriptor's slot names. A type nothing asked to be written
+/// has none: a tuple, which nothing outside the program is shown, and a kind no writer handles.
+pub(crate) unsafe fn written(cell: u32, descriptor: u32) {
+    let slot = descriptor::writer(descriptor);
+    if slot == 0 {
+        abort(REASON_NOT_A_VALUE, descriptor, descriptor::kind(descriptor) as u64, cell as u64);
+    }
+    let writer: extern "C" fn(u32, u32) = core::mem::transmute(slot as usize);
+    writer(cell, descriptor)
+}
+
+/// Writes an `Int`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_int(cell: u32, _: u32) {
+    copied(json::__souther_json_write_int(__souther_int_value(cell)));
+}
+
+/// Writes a `Bool`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_bool(cell: u32, _: u32) {
+    copied(json::__souther_json_write_bool(__souther_bool_value(cell)));
+}
+
+/// Writes a `String`.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_string(cell: u32, _: u32) {
+    copied(json::__souther_json_write_string(
+        __souther_string_bytes(cell),
+        __souther_string_length(cell),
+    ));
+}
+
+/// Writes a `Decimal`, in the one form of the amount, so that two ways of writing it are one
+/// document.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_decimal(cell: u32, _: u32) {
+    let (at, length) = decimal::external(cell);
+    text::push(at, length);
+}
+
+/// Writes a `Date`, a `Time`, a `DateTime` or an `Instant`, as its descriptor says which.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_temporal(cell: u32, descriptor: u32) {
+    let (at, length) = match descriptor::kind(descriptor) {
+        KIND_DATE => temporal::written_day(cell),
+        KIND_TIME => temporal::written_time(cell),
+        KIND_INSTANT => temporal::written_moment(cell),
+        _ => temporal::written_both(cell),
+    };
+    write(b"\"");
+    text::push(at, length);
+    write(b"\"");
+}
+
+/// Writes a value of a type with one value.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_unit(_: u32, _: u32) {
+    write(b"{}");
+}
+
+/// Writes a value of a shape.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_product(cell: u32, descriptor: u32) {
+    fields(cell, descriptor, false);
+}
+
+/// Writes a value of a name for a value of another type, as the type it is a name for is written.
+/// The name is what a model reads it by and what a clause is about; it is not part of the value
+/// that crosses.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_newtype(cell: u32, descriptor: u32) {
+    written(__souther_record_get(cell, 0), descriptor::member(descriptor, 0));
+}
+
+/// Writes a value of a set of alternatives that carries something.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_sum(cell: u32, descriptor: u32) {
+    tagged(cell, descriptor);
+}
+
+/// Writes a value of a set of alternatives that carry nothing.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_enumeration(cell: u32, descriptor: u32) {
+    named(cell, descriptor);
+}
+
+/// Writes a list.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_list(cell: u32, descriptor: u32) {
+    write(b"[");
+    let element = descriptor::member(descriptor, 0);
+    for i in 0..__souther_list_length(cell) {
+        if i > 0 {
+            write(b",");
         }
-        KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
-            let (at, length) = match descriptor::kind(descriptor) {
-                KIND_DATE => temporal::written_day(cell),
-                KIND_TIME => temporal::written_time(cell),
-                KIND_INSTANT => temporal::written_moment(cell),
-                _ => temporal::written_both(cell),
-            };
-            write(b"\"");
-            text::push(at, length);
-            write(b"\"");
+        written(__souther_list_get(cell, i), element);
+    }
+    write(b"]");
+}
+
+/// Writes a set.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_set(cell: u32, descriptor: u32) {
+    write(b"[");
+    members_written(cell, descriptor::member(descriptor, 0));
+    write(b"]");
+}
+
+/// Writes a map.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_map(cell: u32, descriptor: u32) {
+    write(b"{");
+    let keys = descriptor::member(descriptor, 0);
+    let values = descriptor::member(descriptor, 1);
+    for i in 0..__souther_map_length(cell) {
+        if i > 0 {
+            write(b",");
         }
-        KIND_UNIT => write(b"{}"),
-        KIND_PRODUCT => fields(cell, descriptor, false),
-        // Written as the type it is a name for is written. The name is what a model reads it by
-        // and what a clause is about; it is not part of the value that crosses.
-        KIND_NEWTYPE => written(__souther_record_get(cell, 0), descriptor::member(descriptor, 0)),
-        KIND_SUM => tagged(cell, descriptor),
-        KIND_ENUMERATION => named(cell, descriptor),
-        KIND_TUPLE => abort(REASON_NOT_A_VALUE, descriptor, KIND_TUPLE as u64, cell as u64),
-        KIND_LIST | KIND_SET => {
-            write(b"[");
-            let element = descriptor::member(descriptor, 0);
-            for i in 0..__souther_list_length(cell) {
-                if i > 0 {
-                    write(b",");
-                }
-                written(__souther_list_get(cell, i), element);
-            }
-            write(b"]");
-        }
-        KIND_MAP => {
-            write(b"{");
-            let keys = descriptor::member(descriptor, 0);
-            let values = descriptor::member(descriptor, 1);
-            for i in 0..__souther_map_length(cell) {
-                if i > 0 {
-                    write(b",");
-                }
-                let (spelt, spelt_length) = key_text(__souther_map_key(cell, i), keys);
-                copied(json::__souther_json_write_string(spelt, spelt_length));
-                write(b":");
-                written(__souther_map_value(cell, i), values);
-            }
-            write(b"}");
-        }
-        KIND_OPTION => {
-            if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
-                write(b"null");
-            } else {
-                written(
-                    core::ptr::read_unaligned((cell as usize + HEADER) as *const u32),
-                    descriptor::member(descriptor, 0),
-                );
-            }
-        }
-        other => abort(REASON_NOT_A_VALUE, descriptor, other as u64, cell as u64),
+        let (spelt, spelt_length) = key_text(__souther_map_key(cell, i), keys);
+        copied(json::__souther_json_write_string(spelt, spelt_length));
+        write(b":");
+        written(__souther_map_value(cell, i), values);
+    }
+    write(b"}");
+}
+
+/// Writes an option.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_write_option(cell: u32, descriptor: u32) {
+    if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
+        write(b"null");
+    } else {
+        written(
+            core::ptr::read_unaligned((cell as usize + HEADER) as *const u32),
+            descriptor::member(descriptor, 0),
+        );
     }
 }
 
-/// A value of a sum, under the tag of the case it is.
-///
-/// Which case is asked of the value: a cell holds the descriptor of the type it was made as, and
-/// that is one of the cases the place's own type offers.
+/// A value of a sum, under the tag of the case it is, and what that case carries as the checker's
+/// form for the sum lays it: a shape's fields beside the tag, and anything carried as itself under
+/// a key of its own.
 unsafe fn tagged(cell: u32, descriptor: u32) {
-    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        let case = descriptor::member(descriptor, i);
-        if case == held {
-            let (tag, tag_length) = descriptor::name(descriptor, i);
-            write(b"{\"");
-            write(DISCRIMINATOR);
-            write(b"\":");
-            copied(json::__souther_json_write_string(tag, tag_length));
-            if descriptor::kind(case) == KIND_PRODUCT {
-                fields(cell, case, true);
-            } else {
-                write(b"}");
-            }
-            return;
+    let i = case_among(cell, descriptor);
+    let case = descriptor::member(descriptor, i);
+    let (tag, tag_length) = descriptor::name(descriptor, i);
+    let (key, key_length) = keyed(descriptor::tag_key(descriptor), descriptor);
+    write(b"{");
+    copied(json::__souther_json_write_string(key, key_length));
+    write(b":");
+    copied(json::__souther_json_write_string(tag, tag_length));
+    match descriptor::carried(case) {
+        Carried::Nothing => write(b"}"),
+        Carried::Fields => fields(cell, case, true),
+        Carried::Itself => {
+            let (key, key_length) = keyed(descriptor::contents_key(descriptor), descriptor);
+            write(b",");
+            copied(json::__souther_json_write_string(key, key_length));
+            write(b":");
+            written(cell, case);
+            write(b"}");
         }
     }
-    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64);
 }
 
 /// The name of the alternative a value is, which for a set that carries nothing is the whole of it.
 unsafe fn named(cell: u32, descriptor: u32) {
-    let held = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        if descriptor::member(descriptor, i) == held {
-            let (tag, tag_length) = descriptor::name(descriptor, i);
-            copied(json::__souther_json_write_string(tag, tag_length));
-            return;
-        }
+    let (tag, tag_length) = descriptor::name(descriptor, case_among(cell, descriptor));
+    copied(json::__souther_json_write_string(tag, tag_length));
+}
+
+/// Which of a set's alternatives a value is, as its place among them, or nothing where it is none.
+///
+/// Asked as `__souther_is` asks it of each: a value of a declared type by the descriptor it was
+/// made as, and a primitive — which holds none — by its tag. The one account of which member a
+/// value is, for writing it, for the order a declaration states, and for a `match`.
+pub(crate) unsafe fn member_of(cell: u32, descriptor: u32) -> Option<u32> {
+    (0..descriptor::arity(descriptor)).find(|&i| __souther_is(cell, descriptor::member(descriptor, i)) != 0)
+}
+
+/// The same, where the value has to be one: a place whose type the checker settled holds a value
+/// of one of its members.
+unsafe fn case_among(cell: u32, descriptor: u32) -> u32 {
+    match member_of(cell, descriptor) {
+        Some(i) => i,
+        None => abort(REASON_NOT_A_VALUE, descriptor, cell as u64, 0),
     }
-    abort(REASON_NOT_A_VALUE, descriptor, held as u64, cell as u64);
+}
+
+/// A set's members, in ascending order of what each is written as (spec §collections), as
+/// `souther.runtime.Representations` orders them for the JVM backend.
+///
+/// That order is a question about what is written — a shape by its keys in their order, a member
+/// left out where an option holds nothing, a newtype as what it wraps — and not about the values,
+/// which a set holds in an order of its own that asks which case a value is of the value
+/// (`order::compare`). One order cannot answer both: placed by what it is written as, a value
+/// would be placed by the set's own descriptor, which may be a union narrower than the sum it was
+/// made as. So each member is written as it would be anyway, read back, and the written members
+/// are put in order, as the JVM's encoder sorts what it has encoded.
+unsafe fn members_written(cell: u32, element: u32) {
+    let held = __souther_list_length(cell);
+    if held < 2 {
+        if held == 1 {
+            written(__souther_list_get(cell, 0), element);
+        }
+        return;
+    }
+    let first = text::so_far();
+    let ends = alloc(4 * held);
+    for i in 0..held {
+        written(__souther_list_get(cell, i), element);
+        core::ptr::write_unaligned((ends + 4 * i) as usize as *mut u32, text::so_far());
+    }
+    let end = |i: u32| core::ptr::read_unaligned((ends + 4 * i) as usize as *const u32);
+    let start = |i: u32| if i == 0 { first } else { end(i - 1) };
+    // Read back from where the run is now, which its growing may have moved, and kept apart from it,
+    // since the run is written over next.
+    let (run, _) = text::ended();
+    let copied_at = alloc(end(held - 1) - first);
+    core::ptr::copy_nonoverlapping(
+        (run + first) as usize as *const u8,
+        copied_at as usize as *mut u8,
+        (end(held - 1) - first) as usize,
+    );
+    let read = alloc(4 * held);
+    for i in 0..held {
+        let node = json::parse_own(copied_at + start(i) - first, end(i) - start(i));
+        order::keyed(node);
+        core::ptr::write_unaligned((read + 4 * i) as usize as *mut u32, node);
+    }
+    let node = |i: u32| core::ptr::read_unaligned((read + 4 * i) as usize as *const u32);
+    // A set of numbers, of text or of names stands in the order it is written in already, which is
+    // asked of each neighbour once before anything is moved.
+    if (1..held).all(|i| order::as_written(node(i - 1), node(i)) < 0) {
+        text::back_to(first);
+        for i in 0..held {
+            if i > 0 {
+                write(b",");
+            }
+            text::push(copied_at + start(i) - first, end(i) - start(i));
+        }
+        return;
+    }
+    let order = core::slice::from_raw_parts_mut(alloc(4 * held) as usize as *mut u32, held as usize);
+    for (i, each) in order.iter_mut().enumerate() {
+        *each = i as u32;
+    }
+    order::sort_places(order, &|a, b| order::as_written(node(a), node(b)));
+    text::back_to(first);
+    for (k, &i) in order.iter().enumerate() {
+        if k > 0 {
+            write(b",");
+        }
+        text::push(copied_at + start(i) - first, end(i) - start(i));
+    }
 }
 
 /// A record's fields, either as the whole object or as the rest of one already opened by a tag.
@@ -1455,6 +2061,29 @@ unsafe fn copied(answer: u64) {
 }
 
 /// What a JSON value is, in the words an issue reports it with.
+/// Something other than what a place was declared to hold, as Raoh's readers say it: nothing at
+/// all, `null` included, is `required`; anything else is a `type_mismatch` naming the kind found
+/// and the kind the reader takes (spec §decoder-error).
+///
+/// `expected` is the word Raoh's reader of the declared type says it takes — `long` for an `Int`,
+/// `number` for a `Decimal`, `string` for text and for a temporal, `object` for a shape — so a
+/// resolver that writes sentences for one backend's issues writes them for this one's.
+unsafe fn mismatch(path: u32, path_length: u32, tag: u32, expected: &[u8]) {
+    if tag == json::TAG_NULL {
+        required(path, path_length);
+        return;
+    }
+    issues::meta::begin();
+    issues::meta::word(b"actual", kind_of(tag));
+    issues::meta::word(b"expected", expected);
+    issues::issue(CODE_TYPE_MISMATCH, path, path_length, issues::meta::end());
+}
+
+/// Nothing where something is required.
+unsafe fn required(path: u32, path_length: u32) {
+    issues::issue(CODE_REQUIRED, path, path_length, issues::meta::none());
+}
+
 fn kind_of(tag: u32) -> &'static [u8] {
     match tag {
         json::TAG_NULL => b"null",

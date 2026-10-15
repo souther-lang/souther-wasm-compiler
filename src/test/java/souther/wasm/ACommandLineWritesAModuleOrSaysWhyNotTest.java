@@ -1,6 +1,8 @@
 package souther.wasm;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -8,6 +10,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -63,6 +67,49 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void namesALoneSourceWithNoHeaderAfterItsFile(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), """
+                behavior doubled : (n: Int) -> Int
+
+                let doubled (n) = n + n
+                """);
+        Path offers = room.resolve("counting.wit");
+
+        Ran ran = run(source.toString(), "-o", room.resolve("out.wasm").toString(),
+                "--wit", offers.toString());
+
+        // A single file may leave its header out and is the module its file names, as
+        // `souther compile` takes it.
+        assertThat(ran.complained()).isEmpty();
+        assertThat(ran.status()).isZero();
+        assertThat(Files.readString(offers)).contains("interface counting {");
+    }
+
+    @Test
+    void refusesALinkUnderADirectoryRatherThanReadingWhatItPointsAt(@TempDir Path room)
+            throws IOException {
+        Path tree = Files.createDirectories(room.resolve("tree"));
+        Files.writeString(tree.resolve("counting.sou"), COUNTING);
+        Path elsewhere = Files.writeString(room.resolve("elsewhere.txt"), """
+                module linked
+
+                behavior one : (n: Int) -> Int
+
+                let one (n) = 1
+                """);
+        Files.createSymbolicLink(tree.resolve("linked.sou"), elsewhere);
+        Path into = room.resolve("out.wasm");
+
+        Ran ran = run(tree.toString(), "-o", into.toString());
+
+        // What a link points at may never have been meant as a source, and a report quotes the
+        // source it is about.
+        assertThat(ran.status()).isEqualTo(2);
+        assertThat(ran.complained()).contains("linked.sou");
+        assertThat(into).doesNotExist();
+    }
+
+    @Test
     void writesAComponentWhereOneIsAskedFor(@TempDir Path room) throws IOException {
         Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
         Path core = room.resolve("core.wasm");
@@ -98,8 +145,9 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
         assertThat(Files.readString(offers))
                 .contains("package souther:program {")
                 .contains("interface counting {")
-                .contains("doubled: func(arguments: string) -> string;")
-                .contains("with-vat: func(arguments: string) -> string;")
+                .contains("record ended { reason: u32 }")
+                .contains("doubled: func(arguments: string) -> result<string, ended>;")
+                .contains("with-vat: func(arguments: string) -> result<string, ended>;")
                 .contains("export souther:program/counting;");
     }
 
@@ -173,6 +221,140 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     }
 
     @Test
+    void saysWhereARefusedProgramIsWrittenAndQuotesIt(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("bad.sou"), """
+                module bad
+
+                behavior x : (n: Int) -> Int
+
+                let x (n) = n + missing
+                """);
+
+        Ran ran = run(source.toString(), "-o", room.resolve("out.wasm").toString());
+
+        // A line and a column are what a text is laid out as, so what the compile answers with
+        // carries neither and this command works them out from the text it read. Said as the file,
+        // the place in it and the line itself: a reader given the sentence alone has to go looking
+        // for which of the sources it was about.
+        assertThat(ran.complained())
+                .contains("E1023")
+                .contains("bad.sou:5:17")
+                .contains("let x (n) = n + missing");
+    }
+
+    @Test
+    void quotesTheSourceTheReportIsAboutAndNotAnotherOneCompiledBesideIt(@TempDir Path room)
+            throws IOException {
+        Files.writeString(room.resolve("a.sou"), """
+                module a
+
+                behavior fine : (n: Int) -> Int
+
+                let fine (n) = n + 1
+                """);
+        Files.writeString(room.resolve("b.sou"), """
+                module b
+
+                behavior broken : (n: Int) -> Int
+
+                let broken (n) = n + missing
+                """);
+
+        Ran ran = run(room.toString(), "-o", room.resolve("out.wasm").toString());
+
+        // Which source a report is about is the one it names, and this command knows its sources
+        // by the position each was handed over in. Read off anything else — the first file, the
+        // only one that failed to read — and a caret lands in a text the report says nothing
+        // about, at numbers belonging to a line the author never wrote there.
+        assertThat(ran.complained())
+                .contains("b.sou:5:22")
+                .contains("let broken (n) = n + missing")
+                .doesNotContain("a.sou")
+                .doesNotContain("let fine (n) = n + 1");
+    }
+
+    @Test
+    void quotesTwoSourcesOfOneNameEachUnderTheDirectoryThatTellsThemApart(@TempDir Path room)
+            throws IOException {
+        Files.createDirectories(room.resolve("a"));
+        Files.createDirectories(room.resolve("b"));
+        Files.writeString(room.resolve("a/model.sou"), """
+                module first
+
+                behavior x : (n: Int) -> Int
+
+                let x (n) = n + missingInA
+                """);
+        Files.writeString(room.resolve("b/model.sou"), """
+                module second
+
+                behavior y : (n: Int) -> Int
+
+                let y (n) = n + missingInB
+                """);
+
+        Ran ran = run(room.toString(), "-o", room.resolve("out.wasm").toString());
+
+        // Two sources a reader would both call model.sou are told apart by as much of the path as
+        // it takes, and each line is quoted under the name of the source it came from. Names and
+        // texts worked out apart from the ids the compile gave them would put a line under the
+        // other file's name.
+        String a = Path.of("a", "model.sou").toString();
+        String b = Path.of("b", "model.sou").toString();
+        assertThat(ran.status()).isEqualTo(1);
+        assertThat(quotedUnder(ran.complained(), a + ":5:17")).contains("n + missingInA")
+                .doesNotContain("missingInB");
+        assertThat(quotedUnder(ran.complained(), b + ":5:17")).contains("n + missingInB")
+                .doesNotContain("missingInA");
+    }
+
+    /** What a report says from the header naming {@code place} up to the next report's header. */
+    private static String quotedUnder(String said, String place) {
+        int at = said.indexOf(place);
+        assertThat(at).as("a report at " + place + " in\n" + said).isNotNegative();
+        int next = said.indexOf("\n-- ", at);
+        return said.substring(at, next < 0 ? said.length() : next);
+    }
+
+    @Test
+    void refusesADirectoryItCannotReadAllOfRatherThanCompilingWhatItCould(@TempDir Path room)
+            throws IOException {
+        Path tree = Files.createDirectories(room.resolve("project"));
+        Files.createDirectories(tree.resolve("public"));
+        Files.writeString(tree.resolve("public/counting.sou"), COUNTING);
+        Path closed = Files.createDirectories(tree.resolve("private"));
+        Files.writeString(closed.resolve("hidden.sou"), """
+                module hidden
+
+                behavior one : (n: Int) -> Int
+
+                let one (n) = 1
+                """);
+        Path into = room.resolve("out.wasm");
+        Set<PosixFilePermission> had;
+        try {
+            had = Files.getPosixFilePermissions(closed);
+        } catch (UnsupportedOperationException e) {
+            assumeTrue(false, "permissions cannot be taken away here: " + e);
+            return;
+        }
+        Files.setPosixFilePermissions(closed, Set.of());
+        Ran ran;
+        try {
+            assumeFalse(Files.isReadable(closed), "this process reads a directory with no permissions");
+            ran = run(tree.toString(), "-o", into.toString());
+        } finally {
+            Files.setPosixFilePermissions(closed, had);
+        }
+
+        // Nothing need import hidden, so what could be read compiles. A module written from it is a
+        // program nobody named.
+        assertThat(ran.status()).isEqualTo(2);
+        assertThat(ran.complained()).contains("private");
+        assertThat(into).doesNotExist();
+    }
+
+    @Test
     void leavesNothingWhereTheModuleWouldHaveGoneWhenTheLanguageRefuses(@TempDir Path room)
             throws IOException {
         Path source = Files.writeString(room.resolve("bad.sou"), """
@@ -194,22 +376,23 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
     @Test
     void saysWhichKindOfStopItWasWhenThisBackendIsTheOneRefusing(@TempDir Path room)
             throws IOException {
-        Path source = Files.writeString(room.resolve("looking.sou"), """
-                module looking
+        Path source = Files.writeString(room.resolve("quoting.sou"), """
+                module quoting
 
-                behavior priced : (written: String) -> Bool
+                behavior price : (n: Int) -> Int
 
-                let priced (written) = String.matches("^(?=.*x)ab$", written)
+                behavior quote : (n: Int) -> Int
+                    depends on price
                 """);
         Path into = room.resolve("out.wasm");
 
-        // A lookahead is a question about a way already taken, and what a pattern is read into
-        // holds every step the walk could be at rather than trying one way and coming back. The
-        // language takes the program; this is the backend saying it cannot write it.
+        // A behavior with what it depends on and no body is one whose body nobody has written
+        // yet, which the language takes and this backend has nothing to write for.
         Ran ran = run(source.toString(), "-o", into.toString());
 
         assertThat(ran.status()).isEqualTo(1);
-        assertThat(ran.complained()).contains("this backend does not write that yet");
+        assertThat(ran.complained()).contains("this backend does not write that yet")
+                .contains("quote is not written");
         assertThat(into).doesNotExist();
     }
 
@@ -231,6 +414,73 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
             Ran ran = run(arguments);
             assertThat(ran.status()).describedAs(String.join(" ", arguments)).isEqualTo(2);
         }
+    }
+
+    @Test
+    void saysWhichPartOfTheCommandWasLeftOut(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+
+        assertThat(run(source.toString()).complained())
+                .contains("-o is required")
+                .doesNotContain("nothing named to compile");
+        assertThat(run("-o", room.resolve("out.wasm").toString()).complained())
+                .contains("nothing named to compile")
+                .doesNotContain("-o is required");
+        assertThat(run().complained())
+                .contains("nothing named to compile")
+                .contains("-o is required");
+    }
+
+    @Test
+    void saysEveryPartThatIsWrongAndNotOnlyTheFirst(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+
+        Ran ran = run(source.toString(), "--fast", "--wit");
+
+        assertThat(ran.status()).isEqualTo(2);
+        assertThat(ran.complained())
+                .contains("no such option: --fast")
+                .contains("--wit names no file")
+                .contains("-o is required");
+    }
+
+    // An option that names a file, followed by another option, left the file out: what came next
+    // is not taken for the file, nor is the option it is lost.
+    @Test
+    void takesNoOptionForTheFileAnOptionNames(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+
+        for (String[] arguments : new String[][] {
+            {source.toString(), "-o", "--component"},
+            {source.toString(), "-o", room.resolve("out.wasm").toString(), "--wit", "--component"},
+        }) {
+            Ran ran = run(arguments);
+            assertThat(ran.status()).describedAs(String.join(" ", arguments)).isEqualTo(2);
+            assertThat(ran.complained()).describedAs(String.join(" ", arguments))
+                    .containsPattern("(-o|--wit) names no file");
+        }
+        assertThat(Path.of("--component")).doesNotExist();
+        assertThat(room.resolve("out.wasm")).doesNotExist();
+    }
+
+    @Test
+    void refusesAFileNamedTwiceRatherThanWritingOneOfThem(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+        Path first = room.resolve("a.wasm");
+        Path second = room.resolve("b.wasm");
+
+        for (String[] arguments : new String[][] {
+            {source.toString(), "-o", first.toString(), "-o", second.toString()},
+            {source.toString(), "-o", first.toString(), "--wit", room.resolve("a.wit").toString(),
+                "--wit", room.resolve("b.wit").toString()},
+        }) {
+            Ran ran = run(arguments);
+            assertThat(ran.status()).describedAs(String.join(" ", arguments)).isEqualTo(2);
+            assertThat(ran.complained()).describedAs(String.join(" ", arguments))
+                    .contains("is given more than once");
+        }
+        assertThat(first).doesNotExist();
+        assertThat(second).doesNotExist();
     }
 
     @Test

@@ -6,17 +6,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.RuntimeAbi;
-import souther.wasm.lower.WasmCompiler;
 
 /**
  * The core module a component wraps, taken back out and run.
  *
  * <p>Everything a component adds to a program is core wasm — a function per behavior putting the
- * answer where a result is read from, and one giving the arena back — and none of it was ever
- * given to a machine. A component is not something this repository can run, but the module inside
+ * answer or the reason the call ended where a result is read from, and one giving the arena back
+ * — and none of it was ever given to a machine. A component is not something this repository can run, but the module inside
  * one is, and running it is what says those functions are wasm at all: what loads a module checks
  * every body against the types it declares, not only the bodies a call reaches.
  *
@@ -36,19 +35,74 @@ class TheModuleInsideAComponentIsRunTest {
                 let doubled (n) = n + n
                 """));
 
-        // What a lift calls: the arguments in, and an address where the answer's own two words are.
-        String arguments = "[21]";
+        // What a lift calls: the arguments in, and an address where the outcome is.
         int mark = module.call(RuntimeAbi.ALLOC_MARK);
-        int area = module.call(Component.Lifted.wrapping("counting.doubled"),
-                module.staged(arguments), arguments.getBytes(StandardCharsets.UTF_8).length);
-
-        assertThat(area % 4).describedAs("where a result begins").isZero();
-        assertThat(new String(module.read(wordAt(module, area), wordAt(module, area + 4)),
-                StandardCharsets.UTF_8)).isEqualTo("{\"value\":42}");
-
-        module.run(Component.Lifted.POST_RETURN);
+        assertThat(answerOf(module, "counting.doubled", "[21]")).isEqualTo("{\"value\":42}");
         assertThat(module.call(RuntimeAbi.ALLOC_MARK))
                 .describedAs("what the call made, given back").isLessThanOrEqualTo(mark);
+    }
+
+    @Test
+    void answersWhyTheRuntimeEndedACallAndGoesOnAnsweringAfterIt() {
+        Running module = Running.linked(insideComponentFor("""
+                module counting
+
+                behavior squared : (n: Int) -> Int
+
+                let squared (n) = n * n
+
+                behavior sameShare : (n: Int, d: Int) -> Bool
+
+                let sameShare (n, d) = n / d == n / d
+                """));
+
+        // Every way a call comes out, each followed by one that answers, on the one instance: a
+        // component whose call trapped could not be asked anything again, and one that answered
+        // an end would not be worth asking if what the ended call left behind changed the next.
+        int mark = module.call(RuntimeAbi.ALLOC_MARK);
+        assertThat(answerOf(module, "counting.squared", "[\"x\"]")).startsWith("{\"issues\":[");
+        assertThat(answerOf(module, "counting.squared", "nope"))
+                .describedAs("text that is not JSON").isEqualTo("ended 3");
+        assertThat(answerOf(module, "counting.squared", "[3]")).isEqualTo("{\"value\":9}");
+        assertThat(answerOf(module, "counting.squared", "[9999999999]"))
+                .describedAs("a product no Int holds").isEqualTo("ended 5");
+        assertThat(answerOf(module, "counting.squared", "[4]")).isEqualTo("{\"value\":16}");
+        assertThat(answerOf(module, "counting.sameShare", "[1, 0]"))
+                .describedAs("a division by zero").isEqualTo("ended 6");
+        assertThat(answerOf(module, "counting.sameShare", "[1, 2]"))
+                .isEqualTo("{\"value\":true}");
+        assertThat(module.call(RuntimeAbi.ALLOC_MARK))
+                .describedAs("what every call made, given back").isLessThanOrEqualTo(mark);
+    }
+
+    @Test
+    void answersACallThatRanOutOfRoomAsEndedAndGoesOnAnswering() {
+        Running module = Running.linkedWithin(insideComponentFor("""
+                module counting
+
+                behavior padded : (n: Int) -> Int
+
+                let padded (n) = String.length(String.repeat(n, "x"))
+                """), 2);
+
+        // What answers why a call ended is reached when nothing more could be handed out, so it
+        // must hand nothing out itself.
+        assertThat(answerOf(module, "counting.padded", "[1000000]"))
+                .describedAs("more than memory may grow to").isEqualTo("ended 1");
+        assertThat(answerOf(module, "counting.padded", "[3]")).isEqualTo("{\"value\":3}");
+    }
+
+    @Test
+    void readsAValueOfATypeAsEndedWhereItIsNotJson() {
+        Running module = Running.linked(insideComponentFor("""
+                module shapes
+
+                data Square = { side: Int }
+                """));
+
+        assertThat(readingOf(module, "shapes.Square", "{\"side\":")).isEqualTo("ended 3");
+        assertThat(readingOf(module, "shapes.Square", "{\"side\":3}"))
+                .isEqualTo("{\"value\":{\"side\":3}}");
     }
 
     @Test
@@ -99,11 +153,62 @@ class TheModuleInsideAComponentIsRunTest {
         }
     }
 
+    @Test
+    void readsAValueOfEachTypeThroughItsOwnLiftedFunction() {
+        Running module = Running.linked(insideComponentFor("""
+                module forms
+
+                data Point = { x: Int, label: String }
+
+                data Day = Date
+
+                behavior labelOf : (p: Point) -> String
+
+                let labelOf (p) = p.label
+                """, """
+                module shapes
+
+                data Square = { side: Int }
+                """));
+
+        // Every type a caller may read, each through its own function, because the function puts
+        // the type's number in front of what it reads, and a wrong number reads the value as some
+        // other type and answers perfectly well.
+        assertThat(readingOf(module, "forms.Point", "{\"x\":1,\"label\":\"a\"}"))
+                .isEqualTo("{\"value\":{\"x\":1,\"label\":\"a\"}}");
+        assertThat(readingOf(module, "forms.Day", "\"2026-01-02\""))
+                .isEqualTo("{\"value\":\"2026-01-02\"}");
+        assertThat(readingOf(module, "shapes.Square", "{\"side\":3}"))
+                .isEqualTo("{\"value\":{\"side\":3}}");
+        assertThat(readingOf(module, "forms.Day", "{\"side\":3}"))
+                .startsWith("{\"issues\":[{\"path\":\"\",\"code\":\"type_mismatch\"");
+        assertThat(readingOf(module, "shapes.Square", "{}"))
+                .startsWith("{\"issues\":[{\"path\":\"/side\",\"code\":\"required\"");
+    }
+
+    private static String readingOf(Running module, String type, String value) {
+        return answerThrough(module, Component.Lifted.reading(type), value);
+    }
+
     private static String answerOf(Running module, String behavior, String arguments) {
-        int area = module.call(Component.Lifted.wrapping(behavior), module.staged(arguments),
+        return answerThrough(module, Component.Lifted.wrapping(behavior), arguments);
+    }
+
+    /**
+     * What a lifted function answered, read as a component's host reads a {@code result<string,
+     * ended>}: the string where the case byte says {@code ok}, and {@code ended} with the reason
+     * where it says {@code err}.
+     */
+    private static String answerThrough(Running module, String lifted, String arguments) {
+        int area = module.call(lifted, module.staged(arguments),
                 arguments.getBytes(StandardCharsets.UTF_8).length);
-        String held = new String(module.read(wordAt(module, area), wordAt(module, area + 4)),
-                StandardCharsets.UTF_8);
+        assertThat(area % 4).describedAs("where a result begins").isZero();
+        String held = switch (module.read(area, 1)[0]) {
+            case 0 -> new String(module.read(wordAt(module, area + 4), wordAt(module, area + 8)),
+                    StandardCharsets.UTF_8);
+            case 1 -> "ended " + wordAt(module, area + 4);
+            default -> throw new AssertionError("a result of neither case");
+        };
         module.run(Component.Lifted.POST_RETURN);
         return held;
     }
@@ -116,7 +221,7 @@ class TheModuleInsideAComponentIsRunTest {
 
     /** The program's own module, taken back out of the component that carries it. */
     private static byte[] insideComponentFor(String... sources) {
-        byte[] component = WasmCompiler.compileAsComponent(CheckedProgram.of(List.of(sources)));
+        byte[] component = Compiled.component(Compiled.program(List.of(sources)));
         List<byte[]> modules = new ArrayList<>();
         int at = 8;
         while (at < component.length) {

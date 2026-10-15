@@ -49,9 +49,21 @@ const HEADER: usize = 8;
 /// would answer about bytes nobody wrote.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_parse(pointer: u32, length: u32) -> u32 {
-    let mut reader =
-        Reader { at: pointer as usize, end: (pointer + length) as usize, deep: 0 };
-    let value = reader.value();
+    read(pointer, length, AS_DEEP_AS)
+}
+
+/// Reads back a document this runtime wrote itself, to ask something of what it wrote.
+///
+/// Not a document from outside, so not held to what one from outside is held to: whatever the
+/// writer writes is read here, however deep, since a value written that deep was walked that deep
+/// to write it. What the boundary refuses of a stranger it does not refuse of its own writer.
+pub unsafe fn parse_own(pointer: u32, length: u32) -> u32 {
+    read(pointer, length, u32::MAX)
+}
+
+unsafe fn read(pointer: u32, length: u32, deepest: u32) -> u32 {
+    let mut reader = Reader { at: pointer as usize, end: (pointer + length) as usize, deepest };
+    let value = reader.value(0);
     reader.spaces();
     if reader.at != reader.end {
         abort(REASON_MALFORMED_JSON, 0, reader.at as u64, reader.end as u64);
@@ -93,6 +105,16 @@ pub unsafe extern "C" fn __souther_json_key(cell: u32, index: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_value(cell: u32, index: u32) -> u32 {
     read_u32(cell as usize + HEADER + 8 * index as usize + 4)
+}
+
+/// Puts an object's entries back, `held` key and value pairs from `entries`, in the order given:
+/// for a reader that orders them itself, the document having said nothing by its order.
+pub unsafe fn put_entries(cell: u32, entries: *const u32, held: u32) {
+    core::ptr::copy_nonoverlapping(
+        entries as *const u8,
+        (cell as usize + HEADER) as *mut u8,
+        8 * held as usize,
+    );
 }
 
 /// A whole number, written as JSON writes one.
@@ -242,8 +264,9 @@ unsafe fn write_u32(at: usize, value: u32) {
 struct Reader {
     at: usize,
     end: usize,
-    /// How far in the walk has descended, against how far it may.
-    deep: u32,
+    /// How deep a container it reads, which is the boundary's `AS_DEEP_AS` for a document from
+    /// outside and no bound for one this runtime wrote itself.
+    deepest: u32,
 }
 
 /// How far one document may be nested.
@@ -252,24 +275,25 @@ struct Reader {
 /// may write down how much of. Past this the document is refused the way anything that is not one
 /// document is refused — with what a caller can read — rather than by the stack running out, which
 /// is a fault of this module and reads as one.
+///
+/// How deep a value stands is handed to the walk that reads it, one more than its container's,
+/// rather than counted up and down beside the walk: it is then the depth of the call that reads
+/// it, and leaving a container cannot fail to give back what entering it took. Counted beside the
+/// walk, it was never given back, and a document holding two hundred containers side by side was
+/// refused as though they were nested.
 const AS_DEEP_AS: u32 = 200;
 
 impl Reader {
-    /// Goes one deeper, or says the document is nested past what one may be.
-    fn descended(&mut self) -> bool {
-        self.deep += 1;
-        self.deep <= AS_DEEP_AS
-    }
-
-    unsafe fn value(&mut self) -> u32 {
+    /// A value standing `depth` containers in.
+    unsafe fn value(&mut self, depth: u32) -> u32 {
         self.spaces();
         match self.peek() {
             b'n' => self.keyword(b"null", TAG_NULL),
             b't' => self.keyword(b"true", TAG_TRUE),
             b'f' => self.keyword(b"false", TAG_FALSE),
             b'"' => self.string(),
-            b'[' => self.array(),
-            b'{' => self.object(),
+            b'[' => self.array(depth + 1),
+            b'{' => self.object(depth + 1),
             b'-' | b'0'..=b'9' => self.number(),
             _ => self.malformed(),
         }
@@ -330,8 +354,10 @@ impl Reader {
 
     unsafe fn string(&mut self) -> u32 {
         self.expect(b'"');
-        // Unescaping only shortens, so the escaped span bounds what the unescaped bytes need.
-        let room = self.end - self.at;
+        // Unescaping only shortens, so the escaped span bounds what the unescaped bytes need. The
+        // span is this string's and not the rest of the document's: a document of many strings
+        // would otherwise take room for the rest of itself once per string.
+        let room = self.escaped_span();
         let out = cell(TAG_STRING, 0);
         let _ = alloc(room as u32);
         let mut written = 0usize;
@@ -353,6 +379,21 @@ impl Reader {
         }
         write_u32(out as usize + 4, written as u32);
         out
+    }
+
+    /// How many bytes from here to the quote that closes the string, which a backslash in front of
+    /// does not. A string that never closes is not read, so a document without the quote is
+    /// malformed here.
+    unsafe fn escaped_span(&self) -> usize {
+        let mut at = self.at;
+        while at < self.end {
+            match read_u8(at) {
+                b'"' => return at - self.at,
+                b'\\' => at += 2,
+                _ => at += 1,
+            }
+        }
+        self.malformed()
     }
 
     /// Writes what one backslash escape stands for, and answers how many bytes that took.
@@ -432,8 +473,9 @@ impl Reader {
         value
     }
 
-    unsafe fn array(&mut self) -> u32 {
-        if !self.descended() {
+    /// An array that is the `depth`th container in.
+    unsafe fn array(&mut self, depth: u32) -> u32 {
+        if depth > self.deepest {
             self.malformed();
         }
         self.expect(b'[');
@@ -443,7 +485,7 @@ impl Reader {
         let mut count = 0u32;
         if self.peek() != b']' {
             loop {
-                let value = self.value();
+                let value = self.value(depth);
                 push(&mut first, &mut last, value);
                 count += 1;
                 self.spaces();
@@ -465,8 +507,9 @@ impl Reader {
         out
     }
 
-    unsafe fn object(&mut self) -> u32 {
-        if !self.descended() {
+    /// An object that is the `depth`th container in.
+    unsafe fn object(&mut self, depth: u32) -> u32 {
+        if depth > self.deepest {
             self.malformed();
         }
         self.expect(b'{');
@@ -483,7 +526,7 @@ impl Reader {
                 let key = self.string();
                 self.spaces();
                 self.expect(b':');
-                let value = self.value();
+                let value = self.value(depth);
                 push(&mut first, &mut last, key);
                 push(&mut first, &mut last, value);
                 count += 1;

@@ -13,7 +13,7 @@ import java.util.Optional;
  * which outlive the memory the call ran in.
  *
  * @param generation how many aborts this instance has written, this one included
- * @param reason the code the runtime wrote, which {@link AbortReason} names where it can
+ * @param reason the code the runtime wrote, which {@link FailureCause#of} names where it can
  * @param descriptor the generated descriptor the reason is about, or zero for none
  * @param aux0 the first bounded word the reason carries
  * @param aux1 the second
@@ -45,8 +45,9 @@ public record FailureRecord(int generation, int reason, int descriptor, long aux
         return generation != snapshot;
     }
 
-    /** The reason by name, where this reader knows the code. */
-    public Optional<AbortReason> namedReason() {
-        return AbortReason.of(reason);
+    /** What this reason names — a Souther program's own abort or a wasm fault — where this reader
+     *  knows the code. */
+    public Optional<FailureCause> cause() {
+        return FailureCause.of(reason);
     }
 }

@@ -8,9 +8,11 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.Compiled;
 import souther.wasm.Running;
-import souther.wasm.abi.AbortReason;
+import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.WasmFault;
 
 /**
  * A Souther source compiled to wasm and called.
@@ -151,10 +153,11 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
 
         assertThat(answerOf(module, "strict.echo", "[\"7\"]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\","
-                        + "\"meta\":{\"actual\":\"string\",\"expected\":\"Int\"}}]}");
+                        + "\"messageKey\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"string\",\"expected\":\"long\"}}]}");
         assertThat(answerOf(module, "strict.echo", "[1.5]")).contains("\"code\":\"type_mismatch\"");
         assertThat(answerOf(module, "strict.echo", "[99999999999999999999]"))
-                .contains("\"code\":\"out_of_range\"");
+                .contains("\"messageKey\":\"type_mismatch.numeric_range\"");
     }
 
     @Test
@@ -169,10 +172,12 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
 
         assertThat(answerOf(module, "strict.echo", "[1, 2]")).isEqualTo(
                 "{\"issues\":[{\"path\":\"\",\"code\":\"invalid_size\","
-                        + "\"meta\":{\"actual\":\"2\",\"expected\":\"1\"}}]}");
+                        + "\"messageKey\":\"invalid_size\","
+                        + "\"meta\":{\"actual\":2,\"expected\":1}}]}");
         assertThat(answerOf(module, "strict.echo", "7")).isEqualTo(
                 "{\"issues\":[{\"path\":\"\",\"code\":\"type_mismatch\","
-                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"arguments\"}}]}");
+                        + "\"messageKey\":\"type_mismatch\","
+                        + "\"meta\":{\"actual\":\"number\",\"expected\":\"array\"}}]}");
     }
 
     @Test
@@ -188,8 +193,35 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
         String answer = answerOf(module, "several.all", "[\"x\", 1, false]");
 
         assertThat(answer).contains("\"path\":\"/0\"", "\"path\":\"/1\"", "\"path\":\"/2\"");
-        assertThat(answer).contains("\"expected\":\"Int\"", "\"expected\":\"Bool\"",
-                "\"expected\":\"String\"");
+        assertThat(answer).contains("\"expected\":\"long\"", "\"expected\":\"boolean\"",
+                "\"expected\":\"string\"");
+    }
+
+    /**
+     * A number the boundary is asked to read as a {@code Decimal} but whose exponent has no place
+     * in one is a decode failure like any other — reported as an issue, never ending the call —
+     * for the same reason {@code String.toDecimal} never ends it either: both read the same shared
+     * {@code decimal::parse}, and only that function's own caller may decide what "could not be
+     * read" means (regression for the fix that let this one call site decide it by aborting).
+     *
+     * <p>Which issue: a well-formed number a {@code Decimal} has no room for, which is a mismatch of
+     * range as a whole number wider than an {@code Int} is, under Raoh's word for the type. It was
+     * said as a mismatch of a number against a number, which named no range at all.
+     */
+    @Test
+    void saysSoWhereANumbersExponentHasNoPlaceInADecimalRatherThanEndingTheCall() {
+        Running module = compiled("""
+                module strict
+
+                behavior echo : (d: Decimal) -> Decimal
+
+                let echo (d) = d
+                """);
+
+        assertThat(answerOf(module, "strict.echo", "[1e99999999999]")).isEqualTo(
+                "{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\","
+                        + "\"messageKey\":\"type_mismatch.numeric_range\","
+                        + "\"meta\":{\"expected\":\"decimal\"}}]}");
     }
 
     @Test
@@ -202,10 +234,11 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
                 let echo (n) = n
                 """);
 
-        assertThat(refusalFor(module, "strict.echo", "[1")).contains(AbortReason.MALFORMED_JSON);
+        assertThat(refusalFor(module, "strict.echo", "[1"))
+                .contains(new FailureCause.Wasm(WasmFault.MALFORMED_JSON));
     }
 
-    private static Optional<AbortReason> refusalFor(Running module, String export, String arguments) {
+    private static Optional<FailureCause> refusalFor(Running module, String export, String arguments) {
         int snapshot = module.call(RuntimeAbi.FAILURE_GENERATION);
         int mark = module.call(RuntimeAbi.ALLOC_MARK);
         try {
@@ -214,12 +247,12 @@ class ABehaviorBecomesAnExportThatAnswersJsonTest {
         } catch (ChicoryException trapped) {
             var record = module.failureRecord();
             module.call(RuntimeAbi.ALLOC_RESET, mark);
-            return record.describesTrapAfter(snapshot) ? record.namedReason() : Optional.empty();
+            return record.describesTrapAfter(snapshot) ? record.cause() : Optional.empty();
         }
     }
 
     private static Running compiled(String... sources) {
-        return Running.linked(WasmCompiler.compile(CheckedProgram.of(List.of(sources))));
+        return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
 
     private static String answerOf(Running module, String export) {

@@ -37,8 +37,147 @@ public final class RuntimeAbi {
     private RuntimeAbi() {
     }
 
-    /** The version {@link #ABI_VERSION} answers for a runtime this compiler emits against. */
-    public static final int VERSION = 1;
+    /**
+     * The version {@link #ABI_VERSION} answers for a runtime this compiler emits against.
+     *
+     * <p>Raised to 4 when the reason vocabulary stopped naming Souther's own abort semantics a
+     * second time and started only representing {@code souther.compiler.abort.AbortKind} (issue
+     * #23): see {@code runtime/src/lib.rs}'s own note on its {@code ABI_VERSION} for what changed.
+     * Raised to 5 when what {@link Kernels#STRING_MATCHES} is told became the image of the
+     * pattern's machine that notation-199x writes, in place of this compiler's own list of steps.
+     * Raised to 6 when the layout of a cell became something a generated body relies on
+     * ({@link Cell}), and a walk began to grow a map in place. Raised to 7 when a call could end
+     * for a reason it could not before, {@code NO_SUCH_TYPE}: a host naming reasons by the numbers
+     * of 6 would not know it. Raised to 8 when an issue became Raoh's, with a message key and the
+     * metadata its constraint carries, and a descriptor of a type with rules came to point at what
+     * each rule is reported as: a host reading the issues of 7 would find neither. Raised to 9 when
+     * {@code ++} stopped having entries of its own (issue #26): on strings it is
+     * {@link Kernels#STRING_APPEND} and on lists {@link #LIST_APPEND}. Raised to 10 when a list
+     * came to point at its elements rather than hold them, read through {@link #LIST_ELEMENTS},
+     * and a set and a map changed one member at a time came to be held as a tree. Raised to 11
+     * when a {@code Rational} came to be a value, read through {@link Kernels#RATIONAL_ADD} and the
+     * rest of its functions, and {@code /} came to answer one: the {@code /} of a truncated
+     * {@code Int} and of a rounded {@code Decimal} are gone. Raised to 12 when a call the runtime
+     * ends came to be left through {@link #END_CALL}, which a component's link makes a throw, and
+     * a component's lifted result came to be a {@code result<string, ended>}: {@link #LIFT_AREA}
+     * writes the case before the string, and {@link #LIFT_ENDED} writes the other case. Raised to
+     * 13 when what reads, writes and orders a value of a type came to be named by the type's
+     * descriptor ({@link Operations}) rather than chosen by the runtime from its kind (issue #44),
+     * a constraint came to name what evaluates it ({@link Constraints}), and
+     * {@link #RUNTIME_INIT} came to be handed the program's descriptors of the primitives.
+     */
+    public static final int VERSION = 13;
+
+    /**
+     * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
+     * each in the sixteen bytes before it: its reader at {@code -16}, its writer at {@code -12}
+     * and its order at {@code -8}.
+     *
+     * <p>Named by the descriptor and not chosen by the runtime from the descriptor's kind, so that
+     * a module carries what reads, writes and orders the kinds its program asks that of, and no
+     * others: chosen by the kind, all of them are reached from any one, and a module reading an
+     * {@code Int} carries what normalizes text and what does exact arithmetic.
+     *
+     * <p>A reader is {@code (i32 document, i32 descriptor, i32 path, i32 length) -> i32}, as
+     * {@link #READ}; a writer is {@code (i32 cell, i32 descriptor)}, writing into the run
+     * {@link #WRITE} is writing; an order is {@code (i32 left, i32 right, i32 descriptor) -> i32},
+     * where the two stand among a set's members.
+     */
+    public static final class Operations {
+
+        private Operations() {
+        }
+
+        public static final String READ_INT = "__souther_read_int";
+        public static final String READ_BOOL = "__souther_read_bool";
+        public static final String READ_STRING = "__souther_read_string";
+        public static final String READ_DECIMAL = "__souther_read_decimal";
+        /** A {@code Date}, a {@code Time}, a {@code DateTime} or an {@code Instant}. */
+        public static final String READ_TEMPORAL = "__souther_read_temporal";
+        public static final String READ_UNIT = "__souther_read_unit";
+        public static final String READ_PRODUCT = "__souther_read_product";
+        public static final String READ_NEWTYPE = "__souther_read_newtype";
+        public static final String READ_SUM = "__souther_read_sum";
+        public static final String READ_ENUMERATION = "__souther_read_enumeration";
+        public static final String READ_LIST = "__souther_read_list";
+        public static final String READ_SET = "__souther_read_set";
+        public static final String READ_MAP = "__souther_read_map";
+        public static final String READ_OPTION = "__souther_read_option";
+
+        public static final String WRITE_INT = "__souther_write_int";
+        public static final String WRITE_BOOL = "__souther_write_bool";
+        public static final String WRITE_STRING = "__souther_write_string";
+        public static final String WRITE_DECIMAL = "__souther_write_decimal";
+        /** A {@code Date}, a {@code Time}, a {@code DateTime} or an {@code Instant}. */
+        public static final String WRITE_TEMPORAL = "__souther_write_temporal";
+        public static final String WRITE_UNIT = "__souther_write_unit";
+        public static final String WRITE_PRODUCT = "__souther_write_product";
+        public static final String WRITE_NEWTYPE = "__souther_write_newtype";
+        public static final String WRITE_SUM = "__souther_write_sum";
+        public static final String WRITE_ENUMERATION = "__souther_write_enumeration";
+        public static final String WRITE_LIST = "__souther_write_list";
+        public static final String WRITE_SET = "__souther_write_set";
+        public static final String WRITE_MAP = "__souther_write_map";
+        public static final String WRITE_OPTION = "__souther_write_option";
+
+        public static final String ORDER_INT = "__souther_order_int";
+        public static final String ORDER_BOOL = "__souther_order_bool";
+        public static final String ORDER_STRING = "__souther_order_string";
+        public static final String ORDER_DECIMAL = "__souther_order_decimal";
+        public static final String ORDER_RATIONAL = "__souther_order_rational";
+        /** A {@code Date}, a {@code Time} or a {@code DateTime}. */
+        public static final String ORDER_TEMPORAL = "__souther_order_temporal";
+        public static final String ORDER_INSTANT = "__souther_order_instant";
+        /** A unit, a shape, or a set of alternatives of them, each read as what it was made as. */
+        public static final String ORDER_DECLARED = "__souther_order_declared";
+        public static final String ORDER_NEWTYPE = "__souther_order_newtype";
+        public static final String ORDER_TUPLE = "__souther_order_tuple";
+        /** A list or a set. */
+        public static final String ORDER_LIST = "__souther_order_list";
+        public static final String ORDER_MAP = "__souther_order_map";
+        public static final String ORDER_OPTION = "__souther_order_option";
+    }
+
+    /**
+     * What evaluates a constraint, one for each family of rules, which a constraint names by the
+     * slot of it in its first word.
+     *
+     * <p>{@code (i32 value, i32 descriptor, i32 constraint, i32 path, i32 length) -> i32}: whether
+     * the value breaks the constraint, having reported it where it does.
+     */
+    public static final class Constraints {
+
+        private Constraints() {
+        }
+
+        /** A {@code String}'s length. */
+        public static final String LENGTH = "__souther_constraint_length";
+        /** A {@code String} matching a pattern. */
+        public static final String PATTERN = "__souther_constraint_pattern";
+        /** An {@code Int}'s bounds. */
+        public static final String BOUND = "__souther_constraint_bound";
+        /** A {@code Decimal}'s bounds. */
+        public static final String AMOUNT = "__souther_constraint_amount";
+        /** A list's length. */
+        public static final String SIZE = "__souther_constraint_size";
+        /** A list holding no value twice. */
+        public static final String UNIQUE = "__souther_constraint_unique";
+        /** A map's size. */
+        public static final String ENTRIES = "__souther_constraint_entries";
+    }
+
+    /**
+     * What of the runtime a linked module still shows its host: the memory, and what the steps
+     * above and the canonical ABI call.
+     *
+     * <p>Everything else the runtime exports is there for the link to call, and a linked module
+     * keeps only what its own bodies reach of it. A runtime export left showing would be a root the
+     * link could not leave out, and every kernel would be carried by every program.
+     */
+    public static final java.util.List<String> HOST_EXPORTS = java.util.List.of(
+            RuntimeAbi.MEMORY, RuntimeAbi.ALLOC, RuntimeAbi.ALLOC_MARK, RuntimeAbi.ALLOC_RESET,
+            RuntimeAbi.FAILURE_ADDR, RuntimeAbi.FAILURE_GENERATION, RuntimeAbi.ABI_VERSION,
+            RuntimeAbi.CANONICAL_REALLOC);
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";
@@ -55,8 +194,24 @@ public final class RuntimeAbi {
     /** Pops the arena back to where it began, which is what a post-return gives back. */
     public static final String ARENA_REWIND = "__souther_arena_rewind";
 
-    /** Puts a string a call answered with where a component reads a result from. */
+    /**
+     * {@code (i32 at, i32 length) -> i32}: puts a string a call answered with where a component
+     * reads a result from, as its {@code ok}. Writes a static area and hands nothing out.
+     */
     public static final String LIFT_AREA = "__souther_lift_area";
+
+    /**
+     * {@code () -> i32}: puts the reason the failure record holds where a component reads a result
+     * from, as its {@code err}. Writes the same static area, so it cannot itself run out of memory.
+     */
+    public static final String LIFT_ENDED = "__souther_lift_ended";
+
+    /**
+     * {@code () -> !}: leaves a call whose reason the failure record holds, carrying nothing. A
+     * core module traps here; a component's link replaces the body with a throw its lifted
+     * functions catch.
+     */
+    public static final String END_CALL = "__souther_end_call";
 
     /** {@code (i32 size) -> i32}: zeroed bytes from the arena. */
     public static final String ALLOC = "__ronto_alloc";
@@ -67,7 +222,11 @@ public final class RuntimeAbi {
     /** {@code (i32 mark) -> ()}: pops the arena back to a mark it issued. */
     public static final String ALLOC_RESET = "__ronto_alloc_reset";
 
-    /** {@code (i32 static_end) -> ()}: places the arena. Called by the generated start thunk. */
+    /**
+     * {@code (i32 static_end, i32 primitives) -> ()}: places the arena, and takes where the
+     * program's descriptors of the primitives are, nothing where it holds none. Called by the
+     * generated start thunk.
+     */
     public static final String RUNTIME_INIT = "__souther_runtime_init";
 
     /** {@code () -> i32}: the failure record's address. */
@@ -81,7 +240,8 @@ public final class RuntimeAbi {
 
     /**
      * {@code (i32 reason, i32 descriptor, i64 aux0, i64 aux1) -> !}: writes the failure record and
-     * traps. Every abort a generated body raises goes through this one.
+     * leaves the call through {@link #END_CALL}. Every abort a generated body raises goes through
+     * this one.
      */
     public static final String ABORT = "__souther_abort";
 
@@ -201,11 +361,35 @@ public final class RuntimeAbi {
     /** {@code (i32 cell) -> i32}: what a closure was written among. */
     public static final String CLOSURE_CAPTURED = "__souther_closure_captured";
 
+    /** {@code (i32 count) -> i32}: room for that many cells a closure reads from around it. */
+    public static final String CAPTURES = "__souther_captures";
+
+    /** {@code (i32 captures, i32 index, i32 value) -> ()}: puts a cell at a position. */
+    public static final String CAPTURE_SET = "__souther_capture_set";
+
+    /** {@code (i32 captures, i32 index) -> i32}: the cell at a position. */
+    public static final String CAPTURE_GET = "__souther_capture_get";
+
     /** {@code (i32 descriptor) -> i32}: a list that grows. */
     public static final String BUILDER = "__souther_builder";
 
     /** {@code (i32 builder, i32 value) -> i32}: the builder holding one more. */
     public static final String GROW = "__souther_grow";
+
+    /** {@code (i32 builder, i32 value) -> i32}: the builder holding one more value. */
+    public static final String GROW_ONE = "__souther_grow_one";
+
+    /** {@code (i32 descriptor) -> i32}: a map for a walk to grow, holding nothing yet. */
+    public static final String MAP_BUILDER = "__souther_map_builder";
+
+    /**
+     * {@code (i32 key, i32 value, i32 builder) -> i32}: the map a walk is growing, holding one more
+     * entry, put in the map rather than in a copy of it.
+     */
+    public static final String MAP_PUT = "__souther_map_put";
+
+    /** {@code (i32 builder) -> i32}: the map a walk grew, its entries in the order of their keys. */
+    public static final String MAP_SEALED = "__souther_map_sealed";
 
     /** {@code (i32 builder) -> i32}: the list a builder has grown. */
     public static final String SEALED = "__souther_sealed";
@@ -237,11 +421,23 @@ public final class RuntimeAbi {
     /** {@code (i32 left, i32 right) -> i32}: the {@code -} operator on {@code Int}. */
     public static final String SUBTRACT = "__souther_subtract";
 
+    /** {@code (i64 a, i64 b) -> i64}: the {@code +} operator on two whole numbers held as such. */
+    public static final String INT_SUM = "__souther_int_sum";
+
+    /** {@code (i64 a, i64 b) -> i64}: the {@code -} operator on two whole numbers held as such. */
+    public static final String INT_DIFFERENCE = "__souther_int_difference";
+
+    /** {@code (i64 a, i64 b) -> i64}: the {@code *} operator on two whole numbers held as such. */
+    public static final String INT_PRODUCT = "__souther_int_product";
+
     /** {@code (i32 cell) -> i64}: the whole number a cell holds. */
     public static final String INT_VALUE = "__souther_int_value";
 
     /** {@code (i32 cell) -> i32}: how many elements a list holds, as a plain number. */
     public static final String LIST_LENGTH_OF = "__souther_list_length";
+
+    /** {@code (i32 list) -> i32}: where a list's elements are, a word each and in order. */
+    public static final String LIST_ELEMENTS = "__souther_list_elements";
 
     /** {@code (i32 cell) -> i32}: the unary {@code -} on {@code Int}. */
     public static final String NEGATE = "__souther_negate";
@@ -249,14 +445,27 @@ public final class RuntimeAbi {
     /** {@code (i32 left, i32 right) -> i32}: the {@code *} operator on {@code Int}. */
     public static final String MULTIPLY = "__souther_multiply";
 
-    /** {@code (i32 left, i32 right) -> i32}: the {@code /} operator on {@code Int}. */
-    public static final String DIVIDE = "__souther_divide";
-
     /**
      * {@code (i32 left, i32 right, i32 descriptor) -> i32}: where one value is written relative to
      * another of its type, which is what every comparison is answered by.
      */
     public static final String COMPARE = "__souther_compare";
+
+    /**
+     * {@code (i32 left, i32 right) -> i32}: where two exact quotients stand. Called by nothing a
+     * body writes: a descriptor of a {@code Rational} holds the slot of it, which is how
+     * {@link #COMPARE} reaches it without carrying exact arithmetic into a module that has none.
+     */
+    public static final String RATIONAL_ORDER = "__souther_rational_order";
+
+    /**
+     * {@code (i32 list) -> i32}: {@code List.sum} over exact quotients. An entry of its own, so
+     * that {@link Kernels#LIST_SUM}, which every total reaches, carries no exact arithmetic.
+     */
+    public static final String RATIONAL_SUM = "__souther_rational_sum";
+
+    /** {@code (i32 list) -> i32}: {@code List.product} over exact quotients, as {@link #RATIONAL_SUM}. */
+    public static final String RATIONAL_PRODUCT = "__souther_rational_product";
 
     /** {@code (i32 cell) -> i32}: the {@code Bool} a cell holds, as one or zero. */
     public static final String BOOL_VALUE = "__souther_bool_value";
@@ -305,7 +514,8 @@ public final class RuntimeAbi {
         /** {@code (i32 sub, i32 s) -> i32}. */
         public static final String STRING_CONTAINS = "__souther_string_contains";
 
-        /** {@code String.matches(pattern, s)}, told the machine the pattern was read into. */
+        /** {@code String.matches(pattern, s)}, told where the image of the pattern's machine is: a
+         *  {@code u32} length and the image's ASCII bytes after it. */
         public static final String STRING_MATCHES = "__souther_string_matches";
 
         /** {@code String.fromDecimal(d)}. */
@@ -374,8 +584,6 @@ public final class RuntimeAbi {
         public static final String DECIMAL_SUBTRACT = "__souther_decimal_subtract";
         /** {@code (i32 a, i32 b) -> i32}. */
         public static final String DECIMAL_MULTIPLY = "__souther_decimal_multiply";
-        /** {@code (i32 a, i32 b) -> i32}: the {@code /} operator. */
-        public static final String DECIMAL_DIVIDE_BY = "__souther_decimal_divide_by";
         /** {@code (i32 a, i32 b, i32 scale, i32 mode, i32 absent) -> i32}. */
         public static final String DECIMAL_DIVIDE = "__souther_decimal_divide";
         /** {@code (i32 scale, i32 mode, i32 d) -> i32}. */
@@ -388,6 +596,37 @@ public final class RuntimeAbi {
         public static final String DECIMAL_COMPARE = "__souther_decimal_compare";
         /** {@code (i32 cell) -> i32}: the unary {@code -} on an amount. */
         public static final String DECIMAL_NEGATE = "__souther_decimal_negate";
+        /**
+         * {@code (i32 n) -> i32}: {@code Rational.fromInt}, and an {@code Int} read at its exact
+         * value by an operator with a {@code Rational} on the other side.
+         */
+        public static final String RATIONAL_FROM_INT = "__souther_rational_from_int";
+        /**
+         * {@code (i32 d) -> i32}: {@code Rational.fromDecimal}, and a {@code Decimal} read at its
+         * exact value by an operator.
+         */
+        public static final String RATIONAL_FROM_DECIMAL = "__souther_rational_from_decimal";
+        /** {@code (i32 r, i32 absent) -> i32}. */
+        public static final String RATIONAL_TO_WHOLE_NUMBER = "__souther_rational_to_whole_number";
+        /** {@code (i32 r, i32 absent) -> i32}. */
+        public static final String RATIONAL_TO_FINITE_DECIMAL =
+                "__souther_rational_to_finite_decimal";
+        /** {@code (i32 mode, i32 r) -> i32}. */
+        public static final String RATIONAL_TO_INT = "__souther_rational_to_int";
+        /** {@code (i32 scale, i32 mode, i32 r) -> i32}. */
+        public static final String RATIONAL_TO_DECIMAL = "__souther_rational_to_decimal";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.add} and the {@code +} operator. */
+        public static final String RATIONAL_ADD = "__souther_rational_add";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.subtract} and the {@code -} operator. */
+        public static final String RATIONAL_SUBTRACT = "__souther_rational_subtract";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.multiply} and the {@code *} operator. */
+        public static final String RATIONAL_MULTIPLY = "__souther_rational_multiply";
+        /** {@code (i32 a, i32 b) -> i32}: {@code Rational.divide} and the {@code /} operator. */
+        public static final String RATIONAL_DIVIDE = "__souther_rational_divide";
+        /** {@code (i32 a, i32 b) -> i32}. */
+        public static final String RATIONAL_COMPARE = "__souther_rational_compare";
+        /** {@code (i32 cell) -> i32}: the unary {@code -} on an exact quotient. */
+        public static final String RATIONAL_NEGATE = "__souther_rational_negate";
         /** {@code (i32 days, i32 d) -> i32}. */
         public static final String DATE_ADD_DAYS = "__souther_date_add_days";
         /** {@code (i32 months, i32 d) -> i32}. */
@@ -396,16 +635,26 @@ public final class RuntimeAbi {
         public static final String DATE_ADD_YEARS = "__souther_date_add_years";
         /** {@code (i32 from, i32 to) -> i32}. */
         public static final String DATE_DAYS_BETWEEN = "__souther_date_days_between";
-        /** {@code (i32 d, i32 which) -> i32}: the year, the month or the day. */
-        public static final String DATE_PART = "__souther_date_part";
+        /** {@code (i32 d) -> i32}. */
+        public static final String DATE_YEAR = "__souther_date_year";
+        /** {@code (i32 d) -> i32}. */
+        public static final String DATE_MONTH = "__souther_date_month";
+        /** {@code (i32 d) -> i32}. */
+        public static final String DATE_DAY = "__souther_date_day";
         /** {@code (i32 year, i32 month, i32 day, i32 absent) -> i32}. */
         public static final String DATE_FROM_PARTS = "__souther_date_from_parts";
         /** {@code (i32 hour, i32 minute, i32 second, i32 absent) -> i32}. */
         public static final String TIME_FROM_PARTS = "__souther_time_from_parts";
-        /** {@code (i32 t, i32 which) -> i32}: the hour, the minute or the second. */
-        public static final String TIME_PART = "__souther_time_part";
-        /** {@code (i32 by, i32 dt, i32 seconds) -> i32}. */
-        public static final String DATETIME_ADD = "__souther_datetime_add";
+        /** {@code (i32 t) -> i32}. */
+        public static final String TIME_HOUR = "__souther_time_hour";
+        /** {@code (i32 t) -> i32}. */
+        public static final String TIME_MINUTE = "__souther_time_minute";
+        /** {@code (i32 t) -> i32}. */
+        public static final String TIME_SECOND = "__souther_time_second";
+        /** {@code (i32 by, i32 dt) -> i32}. */
+        public static final String DATETIME_ADD_MINUTES = "__souther_datetime_add_minutes";
+        /** {@code (i32 by, i32 dt) -> i32}. */
+        public static final String DATETIME_ADD_HOURS = "__souther_datetime_add_hours";
         /** {@code (i32 from, i32 to) -> i32}. */
         public static final String DATETIME_MINUTES_BETWEEN = "__souther_datetime_minutes_between";
         /** {@code (i32 dt) -> i32}. */
@@ -418,8 +667,10 @@ public final class RuntimeAbi {
         public static final String LIST_SORT = "__souther_list_sort";
         /** {@code (i32 key, i32 xs, i32 descriptor, i32 keys) -> i32}. */
         public static final String LIST_SORT_BY = "__souther_list_sort_by";
-        /** {@code (i32 xs, i32 latest) -> i32}: the furthest either way. */
-        public static final String LIST_FURTHEST = "__souther_list_furthest";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String LIST_MAX = "__souther_list_max";
+        /** {@code (i32 xs) -> i32}. */
+        public static final String LIST_MIN = "__souther_list_min";
         /** {@code (i32 xs) -> i32}. */
         public static final String LIST_LENGTH = "__souther_list_size";
         /** {@code (i32 xs, i32 descriptor) -> i32}. */
@@ -476,8 +727,10 @@ public final class RuntimeAbi {
         public static final String MAP_FROM_LIST = "__souther_map_from_list";
     }
 
-    /** {@code (i32 left, i32 right) -> i32}: the {@code ++} operator on {@code String}. */
-    public static final String CONCAT = "__souther_concat";
+    /** {@code (i32 left, i32 right, i32 descriptor) -> i32}: {@code List.append}, which is the
+     *  {@code ++} operator on lists, answering a list of the type the descriptor names. On strings
+     *  the operator is {@link Kernels#STRING_APPEND}. */
+    public static final String LIST_APPEND = "__souther_list_append";
 
     /** {@code () -> ()}: forgets what an earlier call's decode found. */
     public static final String ISSUES_BEGIN = "__souther_issues_begin";
@@ -524,6 +777,50 @@ public final class RuntimeAbi {
      * whether the place it fills was declared as the sum or as the case.
      */
     public static final String WRITE = "__souther_write";
+
+    /**
+     * How a cell is laid out, for a value this compiler writes into static memory or reads without
+     * a call.
+     *
+     * <p>A literal is the same value every time it is reached, so it is written once, as the cell
+     * the runtime would have made, rather than made in the arena each time. And reading the number
+     * an {@code Int} cell holds is one load, which a call does not need to be made for. Both rest on
+     * the layout {@code runtime/src/value.rs} writes, which a test holds these to by asking the
+     * runtime to make each cell and reading what it made.
+     */
+    public static final class Cell {
+
+        private Cell() {
+        }
+
+        /** Where a cell's payload starts: after its tag and the word the tag makes something of. */
+        public static final int PAYLOAD = 8;
+
+        /** Where the word after the tag is: a length, a descriptor, a slot. */
+        public static final int SECOND = 4;
+
+        /** The value of a type with one value. The second word is which type. */
+        public static final int TAG_UNIT = 0;
+
+        /** An {@code Int}: sixty-four bits of payload. */
+        public static final int TAG_INT = 1;
+
+        /** A {@code Bool}: thirty-two bits of payload, one or zero. */
+        public static final int TAG_BOOL = 2;
+
+        /** A {@code String}: the second word is how many bytes, and the payload is the bytes. */
+        public static final int TAG_STRING = 3;
+
+        /** A list: the payload is how many elements, and then where they are, which is read through
+         *  {@link RuntimeAbi#LIST_ELEMENTS} and not off the cell. */
+        public static final int TAG_LIST = 5;
+
+        /** An option holding nothing. */
+        public static final int TAG_NONE = 7;
+
+        /** A block as a value: the second word is its slot, and the payload what it captured. */
+        public static final int TAG_CLOSURE = 9;
+    }
 
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */
     public static final String START_THUNK = "__souther_start";
