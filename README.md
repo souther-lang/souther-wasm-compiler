@@ -12,7 +12,7 @@ Compatibility is kept at the boundaries this compiler offers the ones who use wh
 
 - the command line: its arguments, its exit status, and the files it writes (below, under
   "Running it");
-- the JavaScript package `@souther/wasm` (`packages/wasm`);
+- the JavaScript package `@souther-lang/wasm` (`packages/wasm`);
 - what a module it writes holds a host to: the host contract and its ABI version, the
   `souther:surface` section and its version, and the interfaces a component exports and imports
   (`souther:program/*`, `souther:decode/*`, `souther:reached/*`).
@@ -347,7 +347,7 @@ it resolves anything else and there is nothing to install first.
 The backend is released at its own version, which the jar's manifest records as
 `Implementation-Version`; which Souther it works with is the descriptor's to say, so a fix here
 releases no Souther. A release is built against a released Souther and nothing else: `souther.version`
-in `pom.xml` names one on Maven Central, and `@souther/wasm` asks for a released `@raoh/core`.
+in `pom.xml` names one on Maven Central, and `@souther-lang/wasm` asks for a released `@raoh/core`.
 
 The `souther` CLI fetches the backend from Maven Central where none is installed, and trusts it
 because a released file there cannot change. It reads `souther.version` out of each release's pom

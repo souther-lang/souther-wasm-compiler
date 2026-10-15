@@ -1,4 +1,4 @@
-# @souther/wasm
+# @souther-lang/wasm
 
 Loads a Souther program compiled to WebAssembly by `souther compile --target wasm`, calls it, and
 writes the TypeScript binding of what it offers.
@@ -123,7 +123,7 @@ That takes the page and this package to use one `@raoh/core`: a `Path` the page'
 the model's decoder, and the `Issues` it hands back, are values of one copy of it. So this package
 asks for `@raoh/core` as a peer dependency, which the project depends on itself:
 
-    npm install @souther/wasm @raoh/core@^0.9.0
+    npm install @souther-lang/wasm @raoh/core@^0.9.0
 
 Where a program comes to hold two copies anyway, a value of one met by the other is refused with an
 error saying so, rather than read as something else.
