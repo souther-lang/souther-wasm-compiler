@@ -279,9 +279,9 @@ unsafe fn arena_popped() {
 /// failed as it would be of a trap. The component model lets a realloc answer a place or fail the
 /// call, nothing else.
 ///
-/// What it hands out begins where `align` says, which is a power of two. The arena hands out runs
-/// exactly as long as they were asked for, so it may be standing anywhere, and a host reading the
-/// two words a lowered call answers in from an address that is not a multiple of four traps.
+/// What it hands out begins where `align` says, nothing included: the canonical ABI checks the
+/// alignment of what a realloc answers whatever its size, and a host reading the two words a
+/// lowered call answers in from an address that is not a multiple of four traps.
 #[no_mangle]
 pub unsafe extern "C" fn cabi_realloc(
     original: u32,
@@ -289,14 +289,7 @@ pub unsafe extern "C" fn cabi_realloc(
     align: u32,
     wanted: u32,
 ) -> u32 {
-    let past = ARENA_TOP as u32 & align.wrapping_sub(1);
-    if past != 0 {
-        let _ = __ronto_alloc(align - past);
-    }
-    if wanted == 0 {
-        return ARENA_TOP as u32;
-    }
-    let held = __ronto_alloc(wanted);
+    let held = alloc_aligned(wanted, align);
     if original != 0 && original_size != 0 {
         let taken = if original_size < wanted { original_size } else { wanted };
         core::ptr::copy_nonoverlapping(original as *const u8, held as *mut u8, taken as usize);
@@ -487,17 +480,13 @@ pub const REASON_NO_SUCH_TYPE: u32 = 12;
 /// call that asked for it, and nothing here keeps any of it past that call.
 ///
 /// The arena hands out exactly what it is asked for, so that a run written piece by piece stays
-/// one run, and an alignment is taken here by padding first. A caller writing a run therefore asks
-/// the library for nothing between its first piece and its last.
+/// one run, and an alignment is taken through [`alloc_aligned`], which pads first. A caller writing
+/// a run therefore asks the library for nothing between its first piece and its last.
 struct Arena;
 
 unsafe impl core::alloc::GlobalAlloc for Arena {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        let over = ARENA_TOP % layout.align();
-        if over != 0 {
-            let _ = __ronto_alloc((layout.align() - over) as u32);
-        }
-        __ronto_alloc(layout.size() as u32) as *mut u8
+        alloc_aligned(layout.size() as u32, layout.align() as u32) as *mut u8
     }
 
     unsafe fn dealloc(&self, _at: *mut u8, _layout: core::alloc::Layout) {}
@@ -522,8 +511,33 @@ static ARENA: Arena = Arena;
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says
 /// stay one thing rather than two spellings of it.
+///
+/// What it hands out begins wherever the arena stands, since it hands out exactly what it is asked
+/// for: a run written piece by piece stays one run, and a header has its payload right after it. So
+/// what it answers is read a word at a time only through `read_unaligned` and `write_unaligned`.
+/// What has to begin at a multiple of something — a slice, a place the component model reads —
+/// comes from [`alloc_aligned`] or [`alloc_words`].
 pub(crate) unsafe fn alloc(size: u32) -> u32 {
     __ronto_alloc(size)
+}
+
+/// A run of `size` bytes beginning at a multiple of `align`, which is a power of two.
+///
+/// The one place an alignment is taken, by padding the arena up to it first. Every caller that
+/// needs one comes here: the allocator the library allocates through, the component model's
+/// realloc, and a slice of words.
+pub(crate) unsafe fn alloc_aligned(size: u32, align: u32) -> u32 {
+    let past = ARENA_TOP as u32 & (align - 1);
+    if past != 0 {
+        let _ = __ronto_alloc(align - past);
+    }
+    __ronto_alloc(size)
+}
+
+/// `count` words from the arena, as a slice: a slice of `u32` has to begin at a multiple of four,
+/// which [`alloc`] does not.
+pub(crate) unsafe fn alloc_words(count: usize) -> &'static mut [u32] {
+    core::slice::from_raw_parts_mut(alloc_aligned(4 * count as u32, 4) as usize as *mut u32, count)
 }
 
 /// Ending the call, for this crate's own modules.

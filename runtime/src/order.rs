@@ -504,10 +504,7 @@ pub unsafe fn keyed(node: u32) {
         }
         json::TAG_OBJECT => {
             let held = json::__souther_json_length(node);
-            let order = core::slice::from_raw_parts_mut(
-                crate::alloc(4 * held.max(1)) as usize as *mut u32,
-                held as usize,
-            );
+            let order = crate::alloc_words(held as usize);
             for (i, each) in order.iter_mut().enumerate() {
                 *each = i as u32;
             }
@@ -671,7 +668,7 @@ pub unsafe fn sort_places(places: &mut [u32], against: &dyn Fn(u32, u32) -> i32)
     if held < 2 {
         return;
     }
-    let other = core::slice::from_raw_parts_mut(crate::alloc(4 * held as u32) as usize as *mut u32, held);
+    let other = crate::alloc_words(held);
     let mut width = 1;
     let (mut from, mut into) = (places.as_mut_ptr(), other.as_mut_ptr());
     while width < held {

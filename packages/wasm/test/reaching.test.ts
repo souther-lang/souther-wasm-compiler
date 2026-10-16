@@ -110,4 +110,26 @@ describe("reaching out", () => {
     assert.throws(() => program.call("example.probe.storeRow", ["milk"]), /the store is down/);
     assert.equal(calls, 1);
   });
+
+  // The call that ended still hands its arena back, so the next one starts where it started.
+  it("answers the next call after one a supplied function threw out of", async () => {
+    const { bytes } = await compiled(PROBE);
+    const { rows, supplied } = store();
+    let failing = true;
+    const program = await load(bytes, {
+      ...supplied,
+      "example.probe.storeRow": (title: string) => {
+        if (failing) {
+          failing = false;
+          throw new Error("the store is down");
+        }
+        return supplied["example.probe.storeRow"](title);
+      },
+    });
+    const top = program.arenaTop();
+    assert.throws(() => program.call("example.probe.storeRow", ["x".repeat(1000)]), /the store is down/);
+    assert.equal(program.arenaTop(), top);
+    assert.deepEqual(program.call("example.probe.storeRow", ["milk"]).value, { id: 1n, title: "milk" });
+    assert.equal(rows.length, 1);
+  });
 });
