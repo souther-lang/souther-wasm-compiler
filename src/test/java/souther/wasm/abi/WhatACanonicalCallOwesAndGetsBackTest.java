@@ -84,9 +84,12 @@ class WhatACanonicalCallOwesAndGetsBackTest {
         for (int taken = 0; taken < 8; taken++) {
             module.call(RuntimeAbi.ALLOC, 1);
             for (int align : new int[] {1, 2, 4, 8}) {
-                int held = module.call(RuntimeAbi.CANONICAL_REALLOC, 0, 0, align, 8);
-                assertThat(held % align).describedAs("at " + align + " after " + taken + " odd bytes")
-                        .isZero();
+                // Nothing at all too: an empty list is still read from where its elements would be.
+                for (int wanted : new int[] {0, 8}) {
+                    int held = module.call(RuntimeAbi.CANONICAL_REALLOC, 0, 0, align, wanted);
+                    assertThat(held % align).describedAs("%d bytes at %d after %d odd bytes",
+                            wanted, align, taken).isZero();
+                }
             }
         }
     }

@@ -289,12 +289,12 @@ pub unsafe extern "C" fn cabi_realloc(
     align: u32,
     wanted: u32,
 ) -> u32 {
-    if wanted == 0 {
-        return ARENA_TOP as u32;
-    }
     let past = ARENA_TOP as u32 & align.wrapping_sub(1);
     if past != 0 {
         let _ = __ronto_alloc(align - past);
+    }
+    if wanted == 0 {
+        return ARENA_TOP as u32;
     }
     let held = __ronto_alloc(wanted);
     if original != 0 && original_size != 0 {
