@@ -236,8 +236,9 @@ out, with `wasm-tools`.
 Validating says each index names something of the right type, and not that a function lifts the
 right one: every function takes a string and answers the same result, so a lift naming another
 behavior's core function, or another type's reading, is still valid. So CI also calls each
-function of one component with `wasmtime` and compares what it answers. The JVM tests run no
-component.
+function of one component with `wasmtime` and compares what it answers, and calls one that
+reaches out, composed with a component written in the text format that answers it. The JVM tests
+run no component.
 The runtime functions a component's canonical calls go through are asked directly instead,
 which is where the one question the writing cannot answer — where a result may begin — can be put.
 The two modules a program reaches out through are run the same way, against lowerings that write

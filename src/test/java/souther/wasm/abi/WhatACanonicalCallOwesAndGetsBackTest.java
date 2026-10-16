@@ -76,6 +76,22 @@ class WhatACanonicalCallOwesAndGetsBackTest {
     }
 
     @Test
+    void beginsWhatItHandsOutWhereTheAlignmentItIsToldSays() {
+        Running module = Running.bareRuntime();
+
+        // The two words a lowered call answers in are asked for at four, and are read from an
+        // address that is a multiple of it or not at all.
+        for (int taken = 0; taken < 8; taken++) {
+            module.call(RuntimeAbi.ALLOC, 1);
+            for (int align : new int[] {1, 2, 4, 8}) {
+                int held = module.call(RuntimeAbi.CANONICAL_REALLOC, 0, 0, align, 8);
+                assertThat(held % align).describedAs("at " + align + " after " + taken + " odd bytes")
+                        .isZero();
+            }
+        }
+    }
+
+    @Test
     void keepsWhatWasThereWhenTheHostAsksForMoreRoom() {
         Running module = Running.bareRuntime();
 

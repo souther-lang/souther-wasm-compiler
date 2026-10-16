@@ -278,15 +278,23 @@ unsafe fn arena_popped() {
 /// before any lifted function does, so nothing catches what ends it, and the host is told the call
 /// failed as it would be of a trap. The component model lets a realloc answer a place or fail the
 /// call, nothing else.
+///
+/// What it hands out begins where `align` says, which is a power of two. The arena hands out runs
+/// exactly as long as they were asked for, so it may be standing anywhere, and a host reading the
+/// two words a lowered call answers in from an address that is not a multiple of four traps.
 #[no_mangle]
 pub unsafe extern "C" fn cabi_realloc(
     original: u32,
     original_size: u32,
-    _align: u32,
+    align: u32,
     wanted: u32,
 ) -> u32 {
     if wanted == 0 {
         return ARENA_TOP as u32;
+    }
+    let past = ARENA_TOP as u32 & align.wrapping_sub(1);
+    if past != 0 {
+        let _ = __ronto_alloc(align - past);
     }
     let held = __ronto_alloc(wanted);
     if original != 0 && original_size != 0 {
