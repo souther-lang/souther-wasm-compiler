@@ -96,6 +96,11 @@ surface below, as the behavior's `reachOut`, beside its `implementation`, which 
 reasons it is. In the module rather than beside it, so a caller holding one cannot be handed the
 wrong other.
 
+The call out is `souther.host_call(number, at, length) -> i64`, the arguments being one JSON array.
+A host runs what it supplied for that number once, takes room for the encoded answer from
+`__ronto_alloc`, writes it there, and answers where it is in the low half and its length in the
+high half. The room is in the arena of the call that reached out, so it goes with that call's reset.
+
 What a caller writes code against is in the module too. `souther:surface` is one JSON object: each
 module's behaviors, with the export each is called through, who answers it (`here`, `injected`,
 `unwritten` or `elsewhere`), the number a call out carries for one the program reaches out for, the
@@ -212,9 +217,9 @@ own:
 
 One interface says what the program answers and the other what it has to be given, so a name says
 which of the two it is. What stands between them is two small core modules. A program reaches out
-through a call in its own memory — a behavior's number, where the arguments are, and a buffer of
-its own — and a component's call carries a string and answers one, so something has to change one
-into the other, and what it needs is the program's memory. That memory does not exist until the
+through a call in its own memory — a behavior's number and where the arguments are, answered with
+where the answer is — and a component's call carries a string and answers one, so something has to
+change one into the other, and what it needs is the program's memory. That memory does not exist until the
 program has been instantiated, which cannot happen until something answers what it reaches out for.
 So the first module is instantiated before the program and answers by calling through a table it
 exports, which is empty; the program is instantiated against it; the component's own calls are
@@ -237,7 +242,8 @@ The runtime functions a component's canonical calls go through are asked directl
 which is where the one question the writing cannot answer — where a result may begin — can be put.
 The two modules a program reaches out through are run the same way, against lowerings that write
 what a lowering writes, because what could be got wrong about them is which behavior a numbered
-call reaches and what it does with a buffer too short to hold the answer.
+call reaches, what it answers of where the lowering put the answer, and that it calls the lowering
+once.
 
 ## What is not written yet
 

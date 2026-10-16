@@ -95,7 +95,11 @@ const PAGE: usize = 65536;
 /// for it; a constraint names the slot of what evaluates it where it named its rule; and
 /// `__souther_runtime_init` is handed the descriptors the program holds for the primitives, which
 /// this runtime no longer holds itself.
-const ABI_VERSION: u32 = 13;
+///
+/// Raised to 14 when `host_call` stopped being handed a buffer and came to answer where the answer
+/// is and how long, packed as `__souther_host_call` answers them (issue #62). A buffer the answer
+/// did not fit meant a second call, which ran what was supplied a second time.
+const ABI_VERSION: u32 = 14;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -349,30 +353,23 @@ pub extern "C" fn __souther_end_call() -> ! {
 extern "C" {
     /// The one crossing out of the module.
     ///
-    /// A host owns no part of this memory's allocation, so the buffer a behavior's answer is
-    /// written into is the caller's: `out_ptr` and `out_cap` come from the arena. The result is
-    /// the length the answer wants, which a caller compares with the capacity it offered — a
-    /// larger number means nothing was written and the call is made again against a buffer that
-    /// fits.
-    fn host_call(behavior_id: u32, in_ptr: u32, in_len: u32, out_ptr: u32, out_cap: u32) -> u32;
+    /// Answers where the encoded answer is and its length, packed as the low and high halves of an
+    /// `i64`. The host puts the answer in the arena through `__ronto_alloc`, once it knows how long
+    /// it is, so one call reaches the behavior once: a buffer offered ahead of the answer has to be
+    /// offered again when it is too short, and the call made again runs the behavior again.
+    ///
+    /// The host moves the bump pointer only through the allocator, and only while this call is
+    /// being made, which is where this module would have allocated the answer itself.
+    fn host_call(behavior_id: u32, in_ptr: u32, in_len: u32) -> u64;
 }
 
-/// Reaches an injected behavior, allocating the answer's buffer here rather than letting the host
-/// move this module's bump pointer.
+/// Reaches an injected behavior.
 ///
 /// Answers the arena pointer the encoded answer sits at, and its length, packed as the low and
 /// high halves of an `i64` — one result rather than a pair, so a call site keeps no scratch.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_host_call(behavior_id: u32, in_ptr: u32, in_len: u32) -> u64 {
-    let mut capacity = 256u32;
-    loop {
-        let out = __ronto_alloc(capacity);
-        let wanted = host_call(behavior_id, in_ptr, in_len, out, capacity);
-        if wanted <= capacity {
-            return (out as u64) | ((wanted as u64) << 32);
-        }
-        capacity = wanted;
-    }
+    host_call(behavior_id, in_ptr, in_len)
 }
 
 /// Applies a block to one value, from inside this crate.
