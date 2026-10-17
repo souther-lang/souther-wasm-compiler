@@ -189,6 +189,8 @@ behavior stamp : () -> Int
 `;
 
   it("offers what a module publishes and the host answers, and asks the host only for what passes", async () => {
+    // What the module keeps is not offered, whoever answers it: the page compiles only where
+    // calling it is refused, which is asked of the same tsc as the rest of the page.
     const { at, bytes } = await generated(STORING, `import { load, type Row } from "./binding.ts";
 
 export async function stored(bytes: Uint8Array): Promise<[Row | string[], Row | string[], number]> {
@@ -202,21 +204,16 @@ export async function stored(bytes: Uint8Array): Promise<[Row | string[], Row | 
     answer.issues === undefined ? answer.value : answer.issues.list.map((issue) => issue.code);
   return [read(kept), read(refused), asked];
 }
+
+export async function stamped(bytes: Uint8Array): Promise<unknown> {
+  const store = await load(bytes, { "store.storeRow": (title: string) => ({ id: 1n, title }), "store.stamp": () => 0n });
+  // @ts-expect-error stamp is kept by its module
+  return store.modules.store.stamp();
+}
 `);
     assert.equal(await checked(at), "");
     const page = await import(join(at, "page.ts"));
     assert.deepEqual(await page.stored(bytes), [{ id: 1n, title: "milk" }, ["too_short"], 1]);
-  });
-
-  it("stops a page compiling where it calls what a module keeps and the host answers", async () => {
-    const { at } = await generated(STORING, `import { load } from "./binding.ts";
-
-export async function stamped(bytes: Uint8Array): Promise<unknown> {
-  const store = await load(bytes, { "store.storeRow": (title: string) => ({ id: 1n, title }), "store.stamp": () => 0n });
-  return store.modules.store.stamp();
-}
-`);
-    assert.match(await checked(at), /stamp/);
   });
 
   // An Int crosses as a bigint and a Decimal as Raoh's Decimal, both ways: what the model answers

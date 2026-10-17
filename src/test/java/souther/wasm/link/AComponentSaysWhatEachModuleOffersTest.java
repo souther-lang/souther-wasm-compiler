@@ -310,6 +310,46 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     @Test
+    void refusesAnOfferedNameWhoeverAnswersTheBehaviorAndOnlyWhereItIsOffered() {
+        // What the host answers and the module publishes is a function of the interface as much as
+        // what the program answers, so its name is held to what any other function's is.
+        CheckedProgram ended = Compiled.program(List.of("""
+                module demo
+
+                behavior ended : (n: Int) -> Int
+                """));
+        CheckedProgram twice = Compiled.program(List.of("""
+                module demo
+
+                behavior withVat : (n: Int) -> Int
+
+                behavior with_vat : (n: Int) -> Int
+
+                let with_vat (n) = n
+                """));
+        // Kept, it is only asked for, where the interface declares no records and nothing else.
+        CheckedProgram kept = Compiled.program(List.of("""
+                module demo exposing ( doubled )
+
+                behavior ended : (n: Int) -> Int
+
+                behavior doubled : (n: Int) -> Int
+                    depends on ended
+
+                let doubled (n, ended) = ended(n) * 2
+                """));
+
+        assertThatThrownBy(() -> Compiled.component(ended))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("declares ended");
+        assertThatThrownBy(() -> Compiled.component(twice))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("with-vat");
+        assertThat(offered(Compiled.component(kept)).get("souther:program/demo"))
+                .containsExactly("doubled");
+    }
+
+    @Test
     void refusesTwoBehaviorsOneInterfaceWouldCallByOneName() {
         byte[] core = Compiled.module(oneBehavior());
 
