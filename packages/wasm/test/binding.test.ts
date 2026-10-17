@@ -174,6 +174,48 @@ export async function lowered(bytes: Uint8Array): Promise<unknown> {
     assert.match(await checked(at), /lowered/);
   });
 
+  // What the host answers and the module publishes is both: the host's to supply and the caller's
+  // to call, through the module, which refuses what is not the model's before the host is asked.
+  const STORING = `module store exposing ( Title, Row, storeRow )
+
+data Title = String
+    invariant String.length(value) >= 1
+
+data Row = { id: Int, title: Title }
+
+behavior storeRow : (title: Title) -> Row
+
+behavior stamp : () -> Int
+`;
+
+  it("offers what a module publishes and the host answers, and asks the host only for what passes", async () => {
+    // What the module keeps is not offered, whoever answers it: the page compiles only where
+    // calling it is refused, which is asked of the same tsc as the rest of the page.
+    const { at, bytes } = await generated(STORING, `import { load, type Row } from "./binding.ts";
+
+export async function stored(bytes: Uint8Array): Promise<[Row | string[], Row | string[], number]> {
+  let asked = 0;
+  const store = await load(bytes, {
+    "store.storeRow": (title: string) => { asked += 1; return { id: 1n, title }; },
+    "store.stamp": () => 0n,
+  });
+  const [kept, refused] = [store.modules.store.storeRow("milk"), store.modules.store.storeRow("")];
+  const read = (answer: typeof kept) =>
+    answer.issues === undefined ? answer.value : answer.issues.list.map((issue) => issue.code);
+  return [read(kept), read(refused), asked];
+}
+
+export async function stamped(bytes: Uint8Array): Promise<unknown> {
+  const store = await load(bytes, { "store.storeRow": (title: string) => ({ id: 1n, title }), "store.stamp": () => 0n });
+  // @ts-expect-error stamp is kept by its module
+  return store.modules.store.stamp();
+}
+`);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.deepEqual(await page.stored(bytes), [{ id: 1n, title: "milk" }, ["too_short"], 1]);
+  });
+
   // An Int crosses as a bigint and a Decimal as Raoh's Decimal, both ways: what the model answers
   // is handed over again as the number it is, however wide.
   it("hands a Decimal it was handed back over again as the number it is", async () => {

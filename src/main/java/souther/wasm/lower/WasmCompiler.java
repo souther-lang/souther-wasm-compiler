@@ -214,10 +214,11 @@ public final class WasmCompiler {
     /**
      * The behaviors a program offers, as its {@link #offering} holds them.
      *
-     * <p>A behavior the program does not implement is not among them. Nothing in the module
-     * answers it, so what it crosses as is asked for rather than offered, and that is
-     * {@link #reachedOutFor} rather than this. Nor is one its module keeps, which is no module's
-     * to call from outside ({@link #publishes}).
+     * <p>Every one its module publishes, whoever answers it. One the program does not implement is
+     * asked for as well ({@link #reachedOutFor}), and offered all the same: a caller calls it
+     * through the module, which reads what it is handed as the behavior's types before it reaches
+     * out, as the core export of it does. One its module keeps is not among them, being no
+     * module's to call from outside ({@link #publishes}).
      *
      * @param program what a Souther compile checked
      * @return every behavior's core export name, by the module that declares it
@@ -227,7 +228,7 @@ public final class WasmCompiler {
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
             for (CheckedBehavior behavior : module.behaviors()) {
-                if (publishes(module, behavior) && !isReachedOutFor(behavior)) {
+                if (publishes(module, behavior)) {
                     named.put(behavior.name().name(), exportName(behavior.name()));
                 }
             }

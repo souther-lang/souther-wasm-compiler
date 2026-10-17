@@ -64,7 +64,7 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     @Test
-    void asksForABehaviorSuppliedFromOutsideRatherThanOfferingIt() {
+    void asksForABehaviorSuppliedFromOutsideAndOffersItWhereItsModulePublishesIt() {
         byte[] component = Compiled.component(Compiled.program(List.of("""
                 module rates
 
@@ -75,11 +75,13 @@ class AComponentSaysWhatEachModuleOffersTest {
                 let priced (n, today) = n * today("JPY")
                 """)));
 
-        // Nothing in the module answers `today`, so a component that offered it would be offering
-        // the caller's own answer back. It is asked for, under a name of its own: one interface
-        // says what a program answers and the other what it has to be given.
+        // Nothing in the module answers `today`, so it is asked for, under a name of its own: one
+        // interface says what a program answers and the other what it has to be given. Its module
+        // publishes it, so it is offered too, and a call through the offer is read as `today`'s
+        // types before anything is asked of what answers it.
         assertThat(offered(component)).containsOnlyKeys("souther:program/rates");
-        assertThat(offered(component).get("souther:program/rates")).containsExactly("priced");
+        assertThat(offered(component).get("souther:program/rates"))
+                .containsExactly("today", "priced");
         assertThat(askedFor(component)).containsExactly("souther:reached/rates");
     }
 
@@ -305,6 +307,46 @@ class AComponentSaysWhatEachModuleOffersTest {
             assertThat(name).describedAs("an export name")
                     .matches("[a-z][a-z0-9-]*:[a-z][a-z0-9-]*/[a-z][a-z0-9-]*");
         }
+    }
+
+    @Test
+    void refusesAnOfferedNameWhoeverAnswersTheBehaviorAndOnlyWhereItIsOffered() {
+        // What the host answers and the module publishes is a function of the interface as much as
+        // what the program answers, so its name is held to what any other function's is.
+        CheckedProgram ended = Compiled.program(List.of("""
+                module demo
+
+                behavior ended : (n: Int) -> Int
+                """));
+        CheckedProgram twice = Compiled.program(List.of("""
+                module demo
+
+                behavior withVat : (n: Int) -> Int
+
+                behavior with_vat : (n: Int) -> Int
+
+                let with_vat (n) = n
+                """));
+        // Kept, it is only asked for, where the interface declares no records and nothing else.
+        CheckedProgram kept = Compiled.program(List.of("""
+                module demo exposing ( doubled )
+
+                behavior ended : (n: Int) -> Int
+
+                behavior doubled : (n: Int) -> Int
+                    depends on ended
+
+                let doubled (n, ended) = ended(n) * 2
+                """));
+
+        assertThatThrownBy(() -> Compiled.component(ended))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("declares ended");
+        assertThatThrownBy(() -> Compiled.component(twice))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("with-vat");
+        assertThat(offered(Compiled.component(kept)).get("souther:program/demo"))
+                .containsExactly("doubled");
     }
 
     @Test
