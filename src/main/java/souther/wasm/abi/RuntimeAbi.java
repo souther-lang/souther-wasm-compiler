@@ -64,9 +64,12 @@ public final class RuntimeAbi {
      * 13 when what reads, writes and orders a value of a type came to be named by the type's
      * descriptor ({@link Operations}) rather than chosen by the runtime from its kind (issue #44),
      * a constraint came to name what evaluates it ({@link Constraints}), and
-     * {@link #RUNTIME_INIT} came to be handed the program's descriptors of the primitives.
+     * {@link #RUNTIME_INIT} came to be handed the program's descriptors of the primitives. Raised
+     * to 14 when {@link #IMPORT_HOST_CALL} stopped being handed a buffer and came to answer where
+     * the answer is and how long (issue #62): a buffer too short for the answer meant a second
+     * call, which ran what the host supplied a second time.
      */
-    public static final int VERSION = 13;
+    public static final int VERSION = 14;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
@@ -249,10 +252,11 @@ public final class RuntimeAbi {
      * {@code (i32 behavior_id, i32 in_ptr, i32 in_len) -> i64}: reaches an injected behavior and
      * answers the arena pointer and length of what came back, packed low and high.
      *
-     * <p>Wraps {@link #IMPORT_HOST_CALL} so that the buffer the host writes into is allocated
-     * here. A host is handed a pointer and a capacity and answers the length the value wants; a
-     * length past the capacity means it wrote nothing, and the call is made again against a
-     * buffer that fits. Nothing outside this module moves the bump pointer.
+     * <p>{@link #IMPORT_HOST_CALL} has the same shape. A host runs the behavior once, puts the
+     * encoded answer in the arena through {@link #ALLOC} and answers where it is: the length is
+     * known before anything is allocated, so there is no buffer that can turn out too short and no
+     * second call. The answer lives in the arena of the call that reached out, and goes when that
+     * call's caller resets to its mark.
      */
     public static final String HOST_CALL = "__souther_host_call";
 

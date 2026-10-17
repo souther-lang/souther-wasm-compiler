@@ -22,9 +22,9 @@ import souther.wasm.abi.RuntimeAbi;
  * value, both written as the documents a caller writes. So a host implements one the way it calls
  * one, and knows nothing of how this module holds a value.
  *
- * <p>The host is handed a number for which behavior it is and a buffer to write the answer into.
- * The buffer is this module's, because the bump pointer is this module's — a host that allocated
- * would be moving it.
+ * <p>The host is handed a number for which behavior it is, runs it once, and puts the answer in this
+ * module's arena through the module's own allocator, answering where it is and how long. The
+ * length is known before anything is allocated, so no answer is too long for where it goes.
  */
 class AnInjectedBehaviorIsTheHostsToImplementTest {
 
@@ -81,22 +81,40 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
     }
 
     @Test
-    void asksAgainWithMoreRoomWhereTheAnswerDidNotFit() {
-        String wide = "x".repeat(4000);
-        Host host = Host.answering("""
-                module wording
+    void reachesOutOnceWhateverTheLengthOfTheAnswer() {
+        Host host = Host.answering(WORDING, arguments -> "\"" + "x".repeat(
+                Integer.parseInt(arguments.substring(1, arguments.length() - 1))) + "\"");
 
-                behavior nameOf : (n: Int) -> String
+        // Past the 256 bytes a buffer offered ahead of the answer once held, and past the 64 KiB
+        // the memory starts with, which the answer has to grow it for.
+        for (int length : new int[] {200, 255, 1000, 70_000}) {
+            int before = host.tries();
 
-                behavior echoed : (n: Int) -> String depends on nameOf
+            assertThat(host.answerOf("wording.echoed", "[" + length + "]"))
+                    .isEqualTo("{\"value\":\"" + "x".repeat(length) + "\"}");
+            assertThat(host.tries() - before).describedAs("tries for %d", length).isEqualTo(1);
+        }
+    }
 
-                let echoed (n, nameOf) = nameOf(n)
-                """, arguments -> "\"" + wide + "\"");
+    @Test
+    void takesTheLengthOfAnAnswerInBytesAndNotInCharacters() {
+        String wide = "日本語🍣".repeat(100);
+        Host host = Host.answering(WORDING, arguments -> "\"" + wide + "\"");
 
         assertThat(host.answerOf("wording.echoed", "[1]"))
                 .isEqualTo("{\"value\":\"" + wide + "\"}");
-        assertThat(host.tries()).isGreaterThan(1);
+        assertThat(host.tries()).isEqualTo(1);
     }
+
+    private static final String WORDING = """
+            module wording
+
+            behavior nameOf : (n: Int) -> String
+
+            behavior echoed : (n: Int) -> String depends on nameOf
+
+            let echoed (n, nameOf) = nameOf(n)
+            """;
 
     /** A module with something outside standing behind the behaviors the model did not write. */
     private static final class Host {
@@ -114,8 +132,8 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
             HostFunction crossing = new HostFunction(
                     RuntimeAbi.IMPORT_MODULE,
                     RuntimeAbi.IMPORT_HOST_CALL,
-                    List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32, ValType.I32),
-                    List.of(ValType.I32),
+                    List.of(ValType.I32, ValType.I32, ValType.I32),
+                    List.of(ValType.I64),
                     (instance, arguments) -> {
                         holder[0].tries++;
                         String written = new String(
@@ -123,10 +141,9 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
                                 StandardCharsets.UTF_8);
                         byte[] answer = implementation.apply(written)
                                 .getBytes(StandardCharsets.UTF_8);
-                        if (answer.length <= arguments[4]) {
-                            instance.memory().write((int) arguments[3], answer);
-                        }
-                        return new long[] {answer.length};
+                        long into = instance.export(RuntimeAbi.ALLOC).apply(answer.length)[0];
+                        instance.memory().write((int) into, answer);
+                        return new long[] {(into & 0xffff_ffffL) | ((long) answer.length << 32)};
                     });
             holder[0] = new Host(Instance.builder(Parser.parse(module))
                     .withImportValues(ImportValues.builder().addFunction(crossing).build())

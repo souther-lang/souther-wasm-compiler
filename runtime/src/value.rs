@@ -1995,7 +1995,7 @@ unsafe fn members_written(cell: u32, element: u32) {
         }
         return;
     }
-    let order = core::slice::from_raw_parts_mut(alloc(4 * held) as usize as *mut u32, held as usize);
+    let order = crate::alloc_words(held as usize);
     for (i, each) in order.iter_mut().enumerate() {
         *each = i as u32;
     }

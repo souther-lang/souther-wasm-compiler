@@ -280,8 +280,8 @@ public final class Running {
         HostFunction hostCall = new HostFunction(
                 RuntimeAbi.IMPORT_MODULE,
                 RuntimeAbi.IMPORT_HOST_CALL,
-                List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32, ValType.I32),
-                List.of(ValType.I32),
+                List.of(ValType.I32, ValType.I32, ValType.I32),
+                List.of(ValType.I64),
                 (instance, arguments) -> new long[] {0});
         return Instance.builder(parsed(module))
                 .withImportValues(ImportValues.builder().addFunction(hostCall).build());

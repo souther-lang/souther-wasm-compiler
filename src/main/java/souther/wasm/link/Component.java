@@ -302,9 +302,9 @@ public final class Component {
             section(w, 1, ComponentWriter.enc(t -> t.writeUnsignedLeb128(1)
                     .write(0x60)
                     .writeUnsignedLeb128(ACROSS)
-                    .write(new byte[] {0x7f, 0x7f, 0x7f, 0x7f, 0x7f})
+                    .write(new byte[] {0x7f, 0x7f, 0x7f})
                     .writeUnsignedLeb128(1)
-                    .write(0x7f)));
+                    .write(0x7e)));
             section(w, 3, ComponentWriter.enc(f -> f.writeUnsignedLeb128(1).writeUnsignedLeb128(0)));
             section(w, 7, ComponentWriter.enc(e -> {
                 e.writeUnsignedLeb128(1);
@@ -320,7 +320,7 @@ public final class Component {
     }
 
     /** How many values the crossing out of the program takes. */
-    private static final int ACROSS = 5;
+    private static final int ACROSS = 3;
 
     /** Which core instance the program is: the one after what stands in for the crossing. */
     private static final int PROGRAM = 1;

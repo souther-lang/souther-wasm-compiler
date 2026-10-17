@@ -29,7 +29,7 @@ const decoder = new TextDecoder();
  * misread without a word. Held to what the compiler writes by
  * `TheGlueReadsWhatThisBuildWritesTest`.
  */
-export const READS = { surface: 4, abi: 13 } as const;
+export const READS = { surface: 4, abi: 14 } as const;
 
 /** Where the module says what it offers a caller, and what it reaches out for under which numbers. */
 const SURFACE = "souther:surface";
@@ -109,14 +109,14 @@ export async function load(
   const values = new Values(surface);
   // The module is handed what it reaches out through before there is a memory to read what it asks
   // from: one reaching out while it is instantiated is told so, and not answered from nothing.
-  let reach: ((ordinal: number, at: number, length: number, into: number, room: number) => number) | undefined;
+  let reach: ((ordinal: number, at: number, length: number) => bigint) | undefined;
   const instance = await WebAssembly.instantiate(module, {
     [HOST_CALL.module]: {
-      [HOST_CALL.name]: (ordinal: number, at: number, length: number, into: number, room: number) => {
+      [HOST_CALL.name]: (ordinal: number, at: number, length: number) => {
         if (reach === undefined) {
           throw new Error("this program reached out while it was being instantiated, before anything could answer");
         }
-        return reach(ordinal, at, length, into, room);
+        return reach(ordinal, at, length);
       },
     },
   });
@@ -125,7 +125,7 @@ export async function load(
     throw new Error(`this module's runtime is ABI ${abi}, and this glue calls ABI ${READS.abi}`);
   }
   const exports = exported(instance, surface);
-  reach = (ordinal, at, length, into, room) => reachOut(crossings, values, exports.memory, ordinal, at, length, into, room);
+  reach = (ordinal, at, length) => reachOut(crossings, values, exports, ordinal, at, length);
   return new Program(exports, surface, values);
 }
 
@@ -457,25 +457,28 @@ export type { Program };
  * Answering is a call and not a promise. There is no stopping wasm in the middle and picking it up
  * again, so what a model reaches out for has to be something the page already has. What answers is
  * called as a function and not as anything's method, so `this` in it is `undefined`.
+ *
+ * What answers is called once, and its answer put in the module's arena, where the call that reached
+ * out reads it: answered with where it is in the low half and how long in the high half.
  */
-function reachOut(crossings: ReadonlyMap<number, Crossing>, values: Values, memory: WebAssembly.Memory,
-  ordinal: number, at: number, length: number, into: number, room: number): number {
+function reachOut(crossings: ReadonlyMap<number, Crossing>, values: Values, exports: Runtime,
+  ordinal: number, at: number, length: number): bigint {
   const crossing = crossings.get(ordinal);
   if (crossing === undefined) {
     throw new Error(`this program reached out under a number it does not name: ${ordinal}`);
   }
   // What is asked is read as the behavior's parameters are, as a value the module answers is.
-  const written = parse(decoder.decode(new Uint8Array(memory.buffer).subarray(at, at + length)));
+  const written = parse(decoder.decode(new Uint8Array(exports.memory.buffer).subarray(at, at + length)));
   const parameters = crossing.behavior.parameters;
   if (!Array.isArray(written) || written.length !== parameters.length) {
     throw new Error(`${crossing.named} was asked something other than its ${parameters.length} arguments`);
   }
   const asked = written.map((each, place) => values.read(parameters[place]!.type, each)) as never[];
   const answer = encoder.encode(stringify(Reflect.apply(crossing.answer, undefined, asked)));
-  if (answer.length <= room) {
-    new Uint8Array(memory.buffer).set(answer, into);
-  }
-  return answer.length;
+  const into = exports.__ronto_alloc(answer.length) >>> 0;
+  // Read after allocating: growing the memory leaves the buffer read before it detached.
+  new Uint8Array(exports.memory.buffer).set(answer, into);
+  return (BigInt(answer.length) << 32n) | BigInt(into);
 }
 
 /** A type a module publishes, read by the module: the issues it gives below where it is read. */
