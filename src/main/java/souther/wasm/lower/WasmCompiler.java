@@ -870,37 +870,16 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.HOST_CALL))
                     .localSet(written);
 
-            // Read on a list of its own. A body runs only where its call's arguments were read
-            // whole, so there is nothing of the call's to forget; what may be there is what a call
-            // the host made back into this module while it answered left behind.
-            int answer = out.narrow();
-            int descriptor = shapes.toRead(shapes.of(crossing.behavior().signature().answers()));
-            out.call(calls.of(RuntimeAbi.ISSUES_BEGIN))
-                    .localGet(written).wrap()
-                    .localGet(written).shiftRight(32).wrap()
-                    .call(calls.of(RuntimeAbi.JSON_PARSE))
-                    .constant(descriptor)
-                    .constant(0)
-                    .constant(0)
-                    .call(calls.of(RuntimeAbi.READ))
-                    .localSet(answer);
-
-            // An answer that is not a value of the type declared leaves nothing to run on, and is
-            // the host's to answer for rather than the caller's: the call ends. Which behavior it
-            // was and what the reading found are written here, where writing may still run out of
-            // room and end the call as that instead, so that what reads the record afterwards —
-            // a component's lifted function among them — hands nothing out to say why.
+            // Read as the declaration's answer, or the call ends as the host's answer refused,
+            // naming the behavior by its export: the runtime holds a host to what it owes in one
+            // place, which this hands what it needs to say whose answer it was.
             byte[] behavior = exportName(crossing.behavior().name()).getBytes(StandardCharsets.UTF_8);
-            out.call(calls.of(RuntimeAbi.ISSUES_COUNT))
-                    .ifNotZero()
-                    .constant(WasmFault.INVALID_HOST_ANSWER.code())
-                    .constant(descriptor)
+            return out.localGet(written).wrap()
+                    .localGet(written).shiftRight(32).wrap()
+                    .constant(shapes.toRead(shapes.of(crossing.behavior().signature().answers())))
                     .constant((fragment.intern(behavior) & 0xffff_ffffL) | (long) behavior.length << 32)
-                    .call(calls.of(RuntimeAbi.ISSUES_WRITTEN))
-                    .call(calls.of(RuntimeAbi.ABORT))
-                    .unreachable()
-                    .end();
-            return out.localGet(answer).body();
+                    .call(calls.of(RuntimeAbi.READ_ANSWER))
+                    .body();
         }
 
         /**

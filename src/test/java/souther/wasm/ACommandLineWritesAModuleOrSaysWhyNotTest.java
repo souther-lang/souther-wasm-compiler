@@ -82,7 +82,7 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
         // `souther compile` takes it.
         assertThat(ran.complained()).isEmpty();
         assertThat(ran.status()).isZero();
-        assertThat(Files.readString(offers)).contains("interface counting {");
+        assertThat(Files.readString(offers)).contains("interface %counting {");
     }
 
     @Test
@@ -144,11 +144,11 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
         assertThat(ran.status()).isZero();
         assertThat(Files.readString(offers))
                 .contains("package souther:program {")
-                .contains("interface counting {")
+                .contains("interface %counting {")
                 .contains("record ended { reason: u32, invalid-answer: option<invalid-answer> }")
-                .contains("doubled: func(arguments: string) -> result<string, ended>;")
-                .contains("with-vat: func(arguments: string) -> result<string, ended>;")
-                .contains("export souther:program/counting;");
+                .contains("%doubled: func(arguments: string) -> result<string, ended>;")
+                .contains("%with-vat: func(arguments: string) -> result<string, ended>;")
+                .contains("export souther:program/%counting;");
     }
 
     @Test
@@ -172,8 +172,8 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
         assertThat(ran.status()).isZero();
         assertThat(Files.readString(offers))
                 .contains("package souther:reached {")
-                .contains("import souther:reached/rates;")
-                .contains("export souther:program/rates;");
+                .contains("import souther:reached/%rates;")
+                .contains("export souther:program/%rates;");
     }
 
     @Test

@@ -155,6 +155,22 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
     }
 
     @Test
+    void endsTheCallWhereAnAnswerIsNotJsonAsTheHostsAndNotTheCallers() {
+        // Text that is not one document is the host's contract broken as much as a field missing
+        // is, and not the caller's arguments being malformed, which a reason of its own says.
+        for (String answer : List.of("nope", "{\"id\":1", "{\"id\":1,\"title\":\"a\"} trailing")) {
+            Ending ended = Host.answering(PROBE, arguments -> answer)
+                    .endingOf("example.probe.storeRow", "[\"milk\"]");
+
+            assertThat(ended.record().cause()).describedAs(answer)
+                    .contains(new FailureCause.Wasm(WasmFault.INVALID_HOST_ANSWER));
+            assertThat(ended.behavior()).isEqualTo("example.probe.storeRow");
+            assertThat(ended.issues()).describedAs(answer).isEqualTo("{\"issues\":[{\"path\":\"\","
+                    + "\"code\":\"invalid_format\",\"messageKey\":\"invalid_format.json\",\"meta\":{}}]}");
+        }
+    }
+
+    @Test
     void namesTheBehaviorWhoseAnswerWasWrong() {
         Host host = Host.answering(PROBE, arguments -> "{}");
 

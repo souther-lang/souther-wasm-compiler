@@ -49,7 +49,17 @@ const HEADER: usize = 8;
 /// would answer about bytes nobody wrote.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_parse(pointer: u32, length: u32) -> u32 {
-    read(pointer, length, AS_DEEP_AS)
+    read(pointer, length, AS_DEEP_AS, Refusal::Document)
+}
+
+/// Parses what a host answered for a behavior it supplies, which the behavior's type is read from.
+///
+/// Held to what a document from outside is held to, and refused otherwise as the host's answer:
+/// text that is not one JSON document is the host breaking its contract and not the caller writing
+/// a bad document, so the call ends as an answer outside the behavior's type (see
+/// [`crate::value::refuse_answer`]) rather than as `MALFORMED_JSON`.
+pub unsafe fn parse_answer(pointer: u32, length: u32, descriptor: u32, behavior: u64) -> u32 {
+    read(pointer, length, AS_DEEP_AS, Refusal::Answer { descriptor, behavior })
 }
 
 /// Reads back a document this runtime wrote itself, to ask something of what it wrote.
@@ -58,15 +68,26 @@ pub unsafe extern "C" fn __souther_json_parse(pointer: u32, length: u32) -> u32 
 /// writer writes is read here, however deep, since a value written that deep was walked that deep
 /// to write it. What the boundary refuses of a stranger it does not refuse of its own writer.
 pub unsafe fn parse_own(pointer: u32, length: u32) -> u32 {
-    read(pointer, length, u32::MAX)
+    read(pointer, length, u32::MAX, Refusal::Document)
 }
 
-unsafe fn read(pointer: u32, length: u32, deepest: u32) -> u32 {
-    let mut reader = Reader { at: pointer as usize, end: (pointer + length) as usize, deepest };
+/// What text that is not one document ends the call as, which is a question of who wrote it.
+#[derive(Clone, Copy)]
+enum Refusal {
+    /// What a caller handed in, or this runtime wrote: `MALFORMED_JSON`, where the reading stopped.
+    Document,
+    /// What a host answered for the behavior whose name is packed in `behavior`, read as the type
+    /// `descriptor` names.
+    Answer { descriptor: u32, behavior: u64 },
+}
+
+unsafe fn read(pointer: u32, length: u32, deepest: u32, refusal: Refusal) -> u32 {
+    let mut reader =
+        Reader { at: pointer as usize, end: (pointer + length) as usize, deepest, refusal };
     let value = reader.value(0);
     reader.spaces();
     if reader.at != reader.end {
-        abort(REASON_MALFORMED_JSON, 0, reader.at as u64, reader.end as u64);
+        reader.malformed();
     }
     value
 }
@@ -267,6 +288,8 @@ struct Reader {
     /// How deep a container it reads, which is the boundary's `AS_DEEP_AS` for a document from
     /// outside and no bound for one this runtime wrote itself.
     deepest: u32,
+    /// What the document not being one ends the call as.
+    refusal: Refusal,
 }
 
 /// How far one document may be nested.
@@ -573,7 +596,12 @@ impl Reader {
     }
 
     unsafe fn malformed(&self) -> ! {
-        abort(REASON_MALFORMED_JSON, 0, self.at as u64, self.end as u64)
+        match self.refusal {
+            Refusal::Document => abort(REASON_MALFORMED_JSON, 0, self.at as u64, self.end as u64),
+            Refusal::Answer { descriptor, behavior } => {
+                crate::value::refuse_unparsed_answer(descriptor, behavior)
+            }
+        }
     }
 }
 

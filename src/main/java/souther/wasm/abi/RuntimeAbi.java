@@ -79,7 +79,8 @@ public final class RuntimeAbi {
      * the answer is and how long (issue #62): a buffer too short for the answer meant a second
      * call, which ran what the host supplied a second time. Raised to 15 when a call could end for a
      * reason it could not before, {@link WasmFault#INVALID_HOST_ANSWER} (issue #63), whose record
-     * points at the behavior's name and at the issues, and {@link #LIFT_ENDED} came to write the
+     * points at the behavior's name and at the issues, raised by {@link #READ_ANSWER}, which an
+     * injected behavior's answer came to be read through, and {@link #LIFT_ENDED} came to write the
      * two as the {@code invalid-answer} of a component's {@code ended}, beside the reason.
      */
     public static final int VERSION = 15;
@@ -334,6 +335,14 @@ public final class RuntimeAbi {
      * value of the type a descriptor describes, or nothing where it could not be.
      */
     public static final String READ = "__souther_read";
+
+    /**
+     * {@code (i32 at, i32 length, i32 descriptor, i64 behavior) -> i32}: what a host answered for
+     * an injected behavior, read as the value of the type the descriptor describes, or the call
+     * ended as {@link WasmFault#INVALID_HOST_ANSWER}. {@code behavior} is where the behavior's name
+     * is in static memory and how long, packed, which the record's {@code aux0} then holds.
+     */
+    public static final String READ_ANSWER = "__souther_read_answer";
 
     /** {@code (i32 descriptor) -> i32}: a cell of a declared shape, its fields not yet filled. */
     public static final String RECORD = "__souther_record";

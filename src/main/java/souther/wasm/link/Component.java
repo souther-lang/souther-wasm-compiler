@@ -84,6 +84,44 @@ public final class Component {
      */
     public static final String ISSUES = "issues";
 
+    /**
+     * The records an interface whose functions can end declares, each after the ones it names.
+     *
+     * <p>The one place they are written. The component's types are declared from this, the WIT a
+     * reader of interfaces is handed is written from it, and a behavior or a type whose interface
+     * name is one of these is refused, since an interface cannot name a function and a type alike.
+     */
+    public static final List<Declared> RECORDS = List.of(
+            new Declared(INVALID_ANSWER, List.of(
+                    new Field(BEHAVIOR, new Held.Text()), new Field(ISSUES, new Held.Text()))),
+            new Declared(ENDED, List.of(
+                    new Field(REASON, new Held.Number()),
+                    new Field(INVALID_ANSWER, new Held.Optional(INVALID_ANSWER)))));
+
+    /** A record an interface declares: its name, and its fields in order. */
+    public record Declared(String name, List<Field> fields) {
+    }
+
+    /** A field of a {@link Declared} record. */
+    public record Field(String name, Held held) {
+    }
+
+    /** What a field of a {@link Declared} record holds. */
+    public sealed interface Held {
+
+        /** A {@code string}. */
+        record Text() implements Held {
+        }
+
+        /** A {@code u32}. */
+        record Number() implements Held {
+        }
+
+        /** An {@code option} of a record declared before the one holding it. */
+        record Optional(String record) implements Held {
+        }
+    }
+
     private Component() {
     }
 
@@ -195,35 +233,46 @@ public final class Component {
      * under a second name, which a reader of interfaces cannot write down as the record each of
      * them declares.
      *
-     * @param invalid where {@link #INVALID_ANSWER}'s record is in the component's type section
-     * @param ended where the record is
+     * @param records where each of {@link #RECORDS} is in the component's type section, in order
      * @param function where the function type is
      */
-    private record Ending(int invalid, int ended, int function) {
+    private record Ending(Map<String, Integer> records, int function) {
 
-        /** Declares the five, for functions taking one string under {@code takes}. */
+        /** Declares them, for functions taking one string under {@code takes}. */
         static Ending declared(List<byte[]> types, String takes) {
             byte[] string = ComponentWriter.valTypePrim(ComponentWriter.VT_STRING);
-            int invalid = types.size();
-            types.add(ComponentWriter.definedRecordOf(List.of(BEHAVIOR, ISSUES),
-                    List.of(string, string)));
-            types.add(ComponentWriter.definedOptionOf(ComponentWriter.valTypeIndex(invalid)));
-            types.add(ComponentWriter.definedRecordOf(List.of(REASON, INVALID_ANSWER),
-                    List.of(ComponentWriter.valTypePrim(ComponentWriter.VT_U32),
-                            ComponentWriter.valTypeIndex(invalid + 1))));
-            int ended = invalid + 2;
-            types.add(ComponentWriter.definedResultOf(string, ComponentWriter.valTypeIndex(ended)));
+            Map<String, Integer> records = new LinkedHashMap<>();
+            for (Declared record : RECORDS) {
+                List<String> names = new ArrayList<>();
+                List<byte[]> held = new ArrayList<>();
+                for (Field field : record.fields()) {
+                    names.add(field.name());
+                    held.add(switch (field.held()) {
+                        case Held.Text text -> string;
+                        case Held.Number number -> ComponentWriter.valTypePrim(ComponentWriter.VT_U32);
+                        case Held.Optional optional -> {
+                            types.add(ComponentWriter.definedOptionOf(
+                                    ComponentWriter.valTypeIndex(records.get(optional.record()))));
+                            yield ComponentWriter.valTypeIndex(types.size() - 1);
+                        }
+                    });
+                }
+                records.put(record.name(), types.size());
+                types.add(ComponentWriter.definedRecordOf(names, held));
+            }
+            types.add(ComponentWriter.definedResultOf(
+                    string, ComponentWriter.valTypeIndex(records.get(ENDED))));
             types.add(ComponentWriter.funcTypeOf(List.of(takes), List.of(string),
-                    ComponentWriter.valTypeIndex(ended + 1)));
-            return new Ending(invalid, ended, ended + 2);
+                    ComponentWriter.valTypeIndex(types.size() - 1)));
+            return new Ending(records, types.size() - 1);
         }
 
         /**
          * What the interface exports beside its functions, for them to be exportable at all: each
-         * record a function's type names, the one {@link #ENDED} names before it.
+         * record, after the ones it names.
          */
         List<Map.Entry<String, Integer>> named() {
-            return List.of(Map.entry(INVALID_ANSWER, invalid), Map.entry(ENDED, ended));
+            return List.copyOf(records.entrySet());
         }
     }
 
@@ -436,10 +485,10 @@ public final class Component {
                 throw new IllegalArgumentException(behavior + " comes to " + crossing
                         + ", which is not a name an interface writes");
             }
-            if (ends && crossing.equals(ENDED)) {
+            if (ends && RECORDS.stream().anyMatch(record -> record.name().equals(crossing))) {
                 throw new IllegalArgumentException(module + " declares " + behavior
                         + ", which an interface would name " + crossing + ", the name it gives"
-                        + " what a call that ended answers");
+                        + " a record of what a call that ended answers");
             }
             String taken = already.put(crossing, behavior);
             if (taken != null) {

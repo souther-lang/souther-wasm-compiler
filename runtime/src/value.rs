@@ -39,13 +39,15 @@ use crate::temporal;
 use crate::order;
 use crate::issues::{
     self, CODE_INVALID_FORMAT, CODE_INVALID_SIZE, CODE_NOT_ALLOWED, CODE_REQUIRED,
-    CODE_TYPE_MISMATCH,
+    CODE_TYPE_MISMATCH, KEY_INVALID_FORMAT_JSON,
 };
 use crate::json;
 use crate::notation;
 use crate::text;
 use crate::tree;
-use crate::{abort, alloc, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use crate::{
+    abort, alloc, REASON_INVALID_HOST_ANSWER, REASON_NOT_A_VALUE, REASON_REQUIRED_FORM_HAS_NO_PLACE,
+};
 use heap::vec::Vec;
 
 /// The one value a type with a single value has. `+4` is which type.
@@ -838,6 +840,47 @@ pub unsafe extern "C" fn __souther_check_arguments(document: u32, expected: u32)
 #[no_mangle]
 pub unsafe extern "C" fn __souther_argument(document: u32, index: u32) -> u32 {
     json::__souther_json_element(document, index)
+}
+
+/// Reads what a host answered for a behavior it supplies as a value of the type the behavior
+/// declares, or ends the call.
+///
+/// The one place what a host owes is held to. An answer that is not one JSON document, or not a
+/// value of the type, the type's rules included, is the host's contract broken rather than the
+/// caller's arguments, and nothing of the body may run on it: the call ends as
+/// `INVALID_HOST_ANSWER`, with `aux0` the behavior's name as `behavior` packs it (in static memory)
+/// and `aux1` the issues, written as a refused call's are (in the arena, until the reset). Both
+/// are written here, so what reads the record afterwards hands nothing out to say why.
+///
+/// Read on a list of issues of its own. A body runs only where its call's arguments were read
+/// whole, so there is nothing of the call's to forget; what may be there is what a call the host
+/// made back into this module while it answered left behind.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_read_answer(
+    at: u32,
+    length: u32,
+    descriptor: u32,
+    behavior: u64,
+) -> u32 {
+    issues::forget();
+    let document = json::parse_answer(at, length, descriptor, behavior);
+    let value = __souther_read(document, descriptor, 0, 0);
+    if issues::__souther_issues_count() != 0 {
+        refuse_answer(descriptor, behavior);
+    }
+    value
+}
+
+/// Ends the call on an answer whose issues have been recorded.
+unsafe fn refuse_answer(descriptor: u32, behavior: u64) -> ! {
+    abort(REASON_INVALID_HOST_ANSWER, descriptor, behavior, issues::__souther_issues_written())
+}
+
+/// Ends the call on an answer that is not one JSON document, which is said as Raoh says it of text
+/// that is not JSON: `invalid_format` under `invalid_format.json`, at the root.
+pub(crate) unsafe fn refuse_unparsed_answer(descriptor: u32, behavior: u64) -> ! {
+    issues::keyed(CODE_INVALID_FORMAT, KEY_INVALID_FORMAT_JSON, 0, 0, issues::meta::none());
+    refuse_answer(descriptor, behavior)
 }
 
 /// Reads a JSON value as a value of a declared type.

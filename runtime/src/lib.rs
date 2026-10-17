@@ -17,10 +17,14 @@
 //!
 //! # Failure
 //!
-//! An abort writes a fixed-width record outside the arena and traps. The record holds no pointer:
-//! a host that resets the arena before it builds a diagnostic would otherwise read freed bytes
-//! for a reason. The generation tells a Souther abort from an ordinary wasm fault — a caller
-//! snapshots it before the call and reads the record only when it differs afterwards.
+//! An abort writes a fixed-width record outside the arena and traps. The record is outside the
+//! arena so that a host still has the reason after it resets; where a reason's word points at more
+//! than it holds, it says whether that is in static memory, which outlives the reset, or in the
+//! arena, which a host reads before it resets (see `__souther_abort`). The generation tells a
+//! Souther abort from an ordinary wasm fault — a caller snapshots it before the call and reads the
+//! record only when it differs afterwards, and a host whose supplied functions call back in keeps
+//! the last generation it has told a caller of instead, since the innermost call that ended reads
+//! the record first.
 
 #![no_std]
 
@@ -101,8 +105,9 @@ const PAGE: usize = 65536;
 /// did not fit meant a second call, which ran what was supplied a second time.
 ///
 /// Raised to 15 when a call could end for a reason it could not before, `INVALID_HOST_ANSWER`
-/// (issue #63), whose record points at the behavior's name and at the issues, and a component's
-/// `ended` came to carry the two as its `invalid-answer` beside the reason.
+/// (issue #63), whose record points at the behavior's name and at the issues, raised by
+/// `__souther_read_answer`, which an injected behavior's answer came to be read through, and a
+/// component's `ended` came to carry the two as its `invalid-answer` beside the reason.
 const ABI_VERSION: u32 = 15;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
@@ -335,12 +340,16 @@ pub extern "C" fn __souther_abi_version() -> u32 {
     ABI_VERSION
 }
 
-/// Ends the call with a reason the host can name, without handing it a pointer to read it from.
+/// Ends the call with a reason the host can name.
 ///
 /// The record is written before the trap and holds only fixed-width values, so a host that resets
 /// the arena on its way to building a diagnostic still has the reason. `descriptor` names the type
 /// the reason is about, in the generated descriptor table; the two `aux` words carry whatever the
-/// reason itself needs, bounded.
+/// reason itself needs, bounded. A word may point at text, packed as where it is and how long:
+/// `UNREACHABLE_REACHED`'s reason and `INVALID_HOST_ANSWER`'s behavior are in static memory and
+/// are there after the reset, and `INVALID_HOST_ANSWER`'s issues are in the arena and are not, so
+/// a host reads them before it resets — which a host reading the record at all does, since the
+/// call that ended is its own until it resets.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_abort(reason: u32, descriptor: u32, aux0: u64, aux1: u64) -> ! {
     let generation = core::ptr::read((FAILURE + OFF_GENERATION) as *const u32);

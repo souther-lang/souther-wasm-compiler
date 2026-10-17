@@ -149,7 +149,9 @@ issue a value comes to is the language's and not a backend's, so it is written d
 [`conformance/issues`](conformance/issues), and this backend and the JVM's are each held to it.
 
 What Souther adds is a way to say why a call ended without a value. An abort writes a fixed-width
-record outside the arena and traps; the record carries a generation, so a caller that snapshots it
+record outside the arena and traps. The reason and the words beside it are there after the reset;
+text a word points at is too where it is in static memory, and is not where it is in the arena, as
+13's issues are, so a host reads that before it resets. The record carries a generation, so a caller that snapshots it
 before the call can tell a Souther abort from an ordinary wasm fault. A host whose supplied
 functions call the module again keeps the last generation it has told a caller of instead, since
 a call that ended inside the host's answer has moved the generation on before the waiting call
@@ -218,8 +220,9 @@ come to one name there (`LineItem` and `line_item`).
 
 A behavior's name is not the same string on both sides — Souther writes one convention and an
 interface another — so where two behaviors of a module would come to one interface name, this
-refuses rather than exporting one of them twice. It refuses one that comes to `ended` too, which
-the interface already gives the record.
+refuses rather than exporting one of them twice. It refuses one that comes to `ended` or
+`invalid-answer` too, which the interface already gives its records, and two modules whose
+interfaces in one package would have one name (`shared.money` and `shared_money`).
 
 A behavior the program does not implement is asked for rather than offered, under a package of its
 own:
@@ -296,7 +299,9 @@ repository. Nothing then checks which Souther it was built against.
 
 `--wit` writes what the program offers and what it has to be given, as a reader of interfaces reads
 them. The same either way: a component carries it and a core module does not, but what a program
-offers is the program's.
+offers is the program's. Every name a module or a behavior gave is written escaped, `%doubled`,
+since a model may call one what WIT has a word for (`record`, `func`) and which words WIT has is
+WIT's to add to; a reader of interfaces reads an escaped name as the name.
 
 A directory is read for the `.sou` files under it, in the order their paths sort, so one command
 line is one program every time. Sources are read as `souther compile` reads them: a link under a
