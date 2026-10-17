@@ -308,10 +308,21 @@ class Program {
   readonly #answers: ReadonlyMap<string, Shape>;
   /** What each behavior the program reaches out for is supplied under, by the number it goes by. */
   readonly #crossings: ReadonlyMap<number, Crossing>;
+  /**
+   * The generation of the last failure record a call was told it ended with.
+   *
+   * A record is one per instance and not one per call, and a supplied function may call this
+   * program again while the call that reached out waits on it. The call that ends always reads the
+   * record first, since its frames are the innermost, so a generation once told is not any other
+   * call's ending: not that of a call whose supplied function caught it and threw something of its
+   * own, nor that of one that went on and trapped in wasm. Each is told once, here.
+   */
+  #told: number;
 
   constructor(exports: Exports, surface: Surface, values: Values, crossings: ReadonlyMap<number, Crossing>) {
     this.#exports = exports;
     this.#crossings = crossings;
+    this.#told = exports.__souther_failure_generation();
     this.#answers = new Map(surface.modules
       .flatMap((module) => module.behaviors)
       .filter((behavior) => behavior.export !== undefined)
@@ -441,7 +452,6 @@ class Program {
   #crossed(document: unknown, reach: (at: number, length: number) => [number, number], answers: Shape):
     Result<unknown> {
     const exports = this.#exports;
-    const generation = exports.__souther_failure_generation();
     const mark = exports.__ronto_alloc_mark();
     try {
       const written = encoder.encode(stringify(document));
@@ -456,7 +466,7 @@ class Program {
       }
       return answer.has("issues") ? failed(issuesIn(answer)) : { value: this.#values.read(answers, answer.get("value")) };
     } catch (trapped) {
-      throw this.#whyItEnded(generation, trapped);
+      throw this.#whyItEnded(trapped);
     } finally {
       exports.__ronto_alloc_reset(mark);
     }
@@ -468,21 +478,19 @@ class Program {
 
   /**
    * Why a call ended without a value. A Souther abort writes a record outside the arena and traps,
-   * and the record carries a generation, so a trap with an unchanged one came from wasm itself.
+   * and the record carries a generation, so a trap with one already told (see {@link #told}) is not
+   * a Souther abort of this call's: wasm's own, or what a supplied function threw, which goes on as
+   * it was thrown.
    */
-  #whyItEnded(generation: number, trapped: unknown): unknown {
-    // A call a supplied function made back into this program ended, and said why as it did. The
-    // record is that call's and the arena it wrote the issues in has been reset, so this call has
-    // nothing to add, and reading the record again would name the inner ending as its own.
-    if (trapped instanceof Ended) {
-      return trapped;
-    }
+  #whyItEnded(trapped: unknown): unknown {
     const exports = this.#exports;
     const at = exports.__souther_failure_addr();
     const words = new DataView(exports.memory.buffer);
-    if (words.getUint32(at + FAILURE.generation, true) === generation) {
+    const generation = words.getUint32(at + FAILURE.generation, true);
+    if (generation === this.#told) {
       return trapped;
     }
+    this.#told = generation;
     const reason = words.getUint32(at + FAILURE.reason, true);
     if (reason !== INVALID_HOST_ANSWER) {
       return new Ended(reason, trapped);

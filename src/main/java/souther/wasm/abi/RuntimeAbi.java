@@ -23,7 +23,10 @@ package souther.wasm.abi;
  *
  * <p>The answer is a live pointer into the arena, so the reset has to come after the read. An
  * instance serves one call at a time: the arena is one bump region with one top, so a second call
- * entered before the first has reset would allocate over what the first is about to return.
+ * entered before the first has reset would allocate over what the first is about to return. A call
+ * made from inside {@link #IMPORT_HOST_CALL}, by what the host supplies, is not that second call:
+ * it takes its mark above everything the waiting call has allocated and resets to it before the
+ * host answers, so the two nest.
  *
  * <h2>When a call traps</h2>
  *
@@ -31,6 +34,13 @@ package souther.wasm.abi;
  * trap it was is read from the failure record: call {@link #FAILURE_GENERATION} again, and only
  * when it differs from the snapshot does the record describe the trap. An unchanged generation
  * means the wasm faulted on its own account, and the record still holds an older failure.
+ *
+ * <p>Where calls nest, the snapshot is not enough: a call the host made from inside
+ * {@link #IMPORT_HOST_CALL} that ended moved the generation on, and the waiting call, trapping
+ * afterwards for another reason or because the host threw, would read that record as its own. The
+ * innermost call that ended is always the first to read the record, so a host keeps the last
+ * generation it has told a caller of and reads the record only where the generation differs from
+ * that one. Without nesting, that is the snapshot.
  */
 public final class RuntimeAbi {
 

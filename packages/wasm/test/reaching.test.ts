@@ -212,6 +212,48 @@ describe("reaching out", () => {
       assert.equal(program.arenaTop(), top);
     });
 
+    // A supplied function that catches what a call back in ended with and goes on: what it then
+    // throws, or answers, is the waiting call's, and the record the inner call wrote is not.
+    it("tells a waiting call what its own supplied function threw, after a call back in ended", async () => {
+      const { bytes } = await compiled(PROBE);
+      const inner: unknown[] = [];
+      const program = await load(bytes, {
+        "example.probe.storeRow": () => {
+          try {
+            program.call("example.probe.readRows", []);
+          } catch (ended) {
+            inner.push(ended);
+          }
+          throw new Error("storage failed");
+        },
+        "example.probe.readRows": () => [{ id: 0n, title: "a" }],
+      });
+      const top = program.arenaTop();
+      assert.throws(() => program.call("example.probe.storeRow", ["milk"]),
+        (thrown) => thrown instanceof Error && !(thrown instanceof Ended) && thrown.message === "storage failed");
+      assert.deepEqual(said(inner[0]), ["/0/id out_of_range"]);
+      assert.equal(program.arenaTop(), top);
+    });
+
+    it("tells a waiting call of its own wrong answer, after a call back in ended", async () => {
+      const { bytes } = await compiled(PROBE);
+      const program = await load(bytes, {
+        "example.probe.storeRow": () => {
+          assert.throws(() => program.call("example.probe.readRows", []), InvalidSuppliedAnswer);
+          return { id: 1n, title: "" };
+        },
+        "example.probe.readRows": () => [{ id: 0n, title: "a" }],
+      });
+      let ended: unknown;
+      try {
+        program.call("example.probe.storeRow", ["milk"]);
+      } catch (thrown) {
+        ended = thrown;
+      }
+      assert.equal((ended as InvalidSuppliedAnswer).behavior, "example.probe.storeRow");
+      assert.deepEqual(said(ended), ["/title too_short"]);
+    });
+
     it("answers the next call from where the one that ended started", async () => {
       const { bytes } = await compiled(PROBE);
       let answer: unknown = { id: 0n, title: "" };

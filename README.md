@@ -149,7 +149,10 @@ issue a value comes to is the language's and not a backend's, so it is written d
 
 What Souther adds is a way to say why a call ended without a value. An abort writes a fixed-width
 record outside the arena and traps; the record carries a generation, so a caller that snapshots it
-before the call can tell a Souther abort from an ordinary wasm fault.
+before the call can tell a Souther abort from an ordinary wasm fault. A host whose supplied
+functions call the module again keeps the last generation it has told a caller of instead, since
+a call that ended inside the host's answer has moved the generation on before the waiting call
+traps; the innermost call that ended always reads the record first.
 
 `souther.wasm.abi.RuntimeAbi` writes all of this down, and the tests beside it run the module
 rather than trusting the writing.
