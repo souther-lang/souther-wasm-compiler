@@ -517,21 +517,17 @@ pub unsafe fn keyed(node: u32) {
                     json::__souther_json_length(y),
                 )
             });
-            let entries = alloc_pairs(held);
+            let entries = crate::alloc_words(2 * held as usize);
             for (to, &from) in order.iter().enumerate() {
                 let value = json::__souther_json_value(node, from);
                 keyed(value);
-                *entries.add(2 * to) = json::__souther_json_key(node, from);
-                *entries.add(2 * to + 1) = value;
+                entries[2 * to] = json::__souther_json_key(node, from);
+                entries[2 * to + 1] = value;
             }
-            json::put_entries(node, entries, held);
+            json::put_entries(node, entries.as_ptr(), held);
         }
         _ => {}
     }
-}
-
-unsafe fn alloc_pairs(held: u32) -> *mut u32 {
-    crate::alloc(8 * held.max(1)) as usize as *mut u32
 }
 
 /// Two numbers as written, by the amount each writes.
