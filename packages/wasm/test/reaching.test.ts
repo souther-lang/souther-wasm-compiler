@@ -190,6 +190,28 @@ describe("reaching out", () => {
       assert.deepEqual(said(ended), ["/title too_short"]);
     });
 
+    // The inner call resets its arena, issues and all, before what it threw reaches the outer one.
+    it("keeps what a call a supplied function made back into the program ended with", async () => {
+      const { bytes } = await compiled(PROBE);
+      const program = await load(bytes, {
+        "example.probe.storeRow": () => {
+          program.call("example.probe.readRows", []);
+          return { id: 1n, title: "milk" };
+        },
+        "example.probe.readRows": () => [{ id: 0n, title: "a" }],
+      });
+      const top = program.arenaTop();
+      let ended: unknown;
+      try {
+        program.call("example.probe.storeRow", ["milk"]);
+      } catch (thrown) {
+        ended = thrown;
+      }
+      assert.equal((ended as InvalidSuppliedAnswer).behavior, "example.probe.readRows");
+      assert.deepEqual(said(ended), ["/0/id out_of_range"]);
+      assert.equal(program.arenaTop(), top);
+    });
+
     it("answers the next call from where the one that ended started", async () => {
       const { bytes } = await compiled(PROBE);
       let answer: unknown = { id: 0n, title: "" };

@@ -471,6 +471,12 @@ class Program {
    * and the record carries a generation, so a trap with an unchanged one came from wasm itself.
    */
   #whyItEnded(generation: number, trapped: unknown): unknown {
+    // A call a supplied function made back into this program ended, and said why as it did. The
+    // record is that call's and the arena it wrote the issues in has been reset, so this call has
+    // nothing to add, and reading the record again would name the inner ending as its own.
+    if (trapped instanceof Ended) {
+      return trapped;
+    }
     const exports = this.#exports;
     const at = exports.__souther_failure_addr();
     const words = new DataView(exports.memory.buffer);
