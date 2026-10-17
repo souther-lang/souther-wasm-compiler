@@ -34,13 +34,13 @@ public final class WitText {
 
         StringBuilder out = new StringBuilder("package root:component;\n\nworld program {\n");
         for (String module : asked.keySet()) {
-            out.append("  import ").append(Component.askedUnder(module)).append(";\n");
+            out.append("  import ").append(path(Component.askedUnder(module))).append(";\n");
         }
         for (String module : offering.behaviors().keySet()) {
-            out.append("  export ").append(Component.offeredAs(module)).append(";\n");
+            out.append("  export ").append(path(Component.offeredAs(module))).append(";\n");
         }
         for (String module : offering.readable().keySet()) {
-            out.append("  export ").append(Component.readAs(module)).append(";\n");
+            out.append("  export ").append(path(Component.readAs(module))).append(";\n");
         }
         out.append("}\n");
         packageOf(out, ASKED, asked, Component::askedUnder, TAKES, false);
@@ -65,20 +65,50 @@ public final class WitText {
         out.append("\npackage ").append(held).append(" {\n");
         for (Map.Entry<String, Map<String, String>> module : modules.entrySet()) {
             String exported = exportedAs.apply(module.getKey());
-            out.append("  interface ").append(exported.substring(exported.indexOf('/') + 1))
+            out.append("  interface ").append(named(exported.substring(exported.indexOf('/') + 1)))
                     .append(" {\n");
             if (ends) {
-                out.append("    record ").append(Component.ENDED).append(" { ")
-                        .append(Component.REASON).append(": u32 }\n");
+                for (Component.Declared record : Component.RECORDS) {
+                    out.append("    record ").append(record.name()).append(" { ")
+                            .append(record.fields().stream()
+                                    .map(field -> field.name() + ": " + written(field.held()))
+                                    .collect(java.util.stream.Collectors.joining(", ")))
+                            .append(" }\n");
+                }
             }
             for (String crossing : Component.namesIn(
                     module.getKey(), module.getValue(), ends).values()) {
-                out.append("    ").append(crossing).append(": func(").append(takes)
+                out.append("    ").append(named(crossing)).append(": func(").append(takes)
                         .append(": string) -> ").append(answers).append(";\n");
             }
             out.append("  }\n");
         }
         out.append("}\n");
+    }
+
+    /**
+     * A name Souther wrote, as WIT writes one: escaped, so that it names what it was written for
+     * whatever it is. A module or a behavior may be called what WIT has a word for — {@code record},
+     * {@code func} — and WIT reads an escaped name as a name, a word of its own included. Every one
+     * is escaped and not only those that are words today, since which are is WIT's to add to.
+     */
+    private static String named(String name) {
+        return "%" + name;
+    }
+
+    /** An interface's path, its name escaped as {@link #named} escapes one. */
+    private static String path(String interfaceName) {
+        int at = interfaceName.indexOf('/') + 1;
+        return interfaceName.substring(0, at) + named(interfaceName.substring(at));
+    }
+
+    /** What a field of one of {@link Component#RECORDS} holds, as WIT writes it. */
+    private static String written(Component.Held held) {
+        return switch (held) {
+            case Component.Held.Text text -> "string";
+            case Component.Held.Number number -> "u32";
+            case Component.Held.Optional optional -> "option<" + optional.record() + ">";
+        };
     }
 
     /** The package a module's own behaviors are offered in. */
@@ -107,9 +137,12 @@ public final class WitText {
             //
             // Either answer is the ok of a result. Its err is a call the runtime ended, with the
             // reason a core module's abort record holds: 3 for arguments that are not JSON, 6 for
-            // a division by zero, and the rest as the runtime's ABI lists them. The instance can
-            // be called again after one. A trap is a failure the runtime gave no reason for, or
-            // arguments too large for the instance's memory, which fail before the call begins.
+            // a division by zero, and the rest as the runtime's ABI lists them. 13 is a function
+            // this component imports answering something other than its behavior's type; then
+            // invalid-answer names the behavior and says what is wrong with the answer, as issues
+            // naming where in it each is. The instance can be called again after one. A trap is a
+            // failure the runtime gave no reason for, or arguments too large for the instance's
+            // memory, which fail before the call begins.
             """;
 
     /**

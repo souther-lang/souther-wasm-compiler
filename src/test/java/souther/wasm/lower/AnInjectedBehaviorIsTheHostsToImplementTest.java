@@ -5,15 +5,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.dylibso.chicory.runtime.HostFunction;
 import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
+import com.dylibso.chicory.wasm.ChicoryException;
 import com.dylibso.chicory.wasm.Parser;
 import com.dylibso.chicory.wasm.types.ValType;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import souther.wasm.Compiled;
+import souther.wasm.abi.FailureCause;
+import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.WasmFault;
 
 /**
  * A behavior the model declares and something outside implements.
@@ -106,6 +112,108 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
         assertThat(host.tries()).isEqualTo(1);
     }
 
+    private static final String PROBE = """
+            module example.probe
+
+            data Id = Int
+                invariant value >= 1
+
+            data Title = String
+                invariant String.length(value) >= 1
+
+            data Row = { id: Id, title: Title }
+
+            behavior storeRow : (title: Title) -> Row
+
+            behavior readRows : () -> List<Row>
+            """;
+
+    @Test
+    void endsTheCallWhereAnAnswerBreaksARuleOfItsType() {
+        Host host = Host.answering(PROBE, arguments -> "{\"id\":0,\"title\":\"milk\"}");
+
+        Ending ended = host.endingOf("example.probe.storeRow", "[\"milk\"]");
+
+        assertThat(ended.record().cause())
+                .contains(new FailureCause.Wasm(WasmFault.INVALID_HOST_ANSWER));
+        assertThat(ended.issues()).contains("\"path\":\"/id\",\"code\":\"out_of_range\"")
+                .doesNotContain("/title");
+    }
+
+    @Test
+    void saysWhereEachPartOfAWrongAnswerIsWrong() {
+        assertThat(Host.answering(PROBE, arguments -> "{\"id\":2}")
+                .endingOf("example.probe.storeRow", "[\"milk\"]").issues())
+                .contains("\"path\":\"/title\",\"code\":\"required\"");
+        assertThat(Host.answering(PROBE, arguments -> "\"not a row\"")
+                .endingOf("example.probe.storeRow", "[\"milk\"]").issues())
+                .contains("\"path\":\"\",\"code\":\"type_mismatch\"");
+        assertThat(Host.answering(PROBE, arguments -> "[{\"id\":1,\"title\":\"a\"},{\"id\":0,\"title\":\"\"}]")
+                .endingOf("example.probe.readRows", "[]").issues())
+                .contains("\"path\":\"/1/id\"", "\"path\":\"/1/title\"")
+                .doesNotContain("\"path\":\"/0");
+    }
+
+    @Test
+    void endsTheCallWhereAnAnswerIsNotJsonAsTheHostsAndNotTheCallers() {
+        // Text that is not one document is the host's contract broken as much as a field missing
+        // is, and not the caller's arguments being malformed, which a reason of its own says.
+        for (String answer : List.of("nope", "{\"id\":1", "{\"id\":1,\"title\":\"a\"} trailing")) {
+            Ending ended = Host.answering(PROBE, arguments -> answer)
+                    .endingOf("example.probe.storeRow", "[\"milk\"]");
+
+            assertThat(ended.record().cause()).describedAs(answer)
+                    .contains(new FailureCause.Wasm(WasmFault.INVALID_HOST_ANSWER));
+            assertThat(ended.behavior()).isEqualTo("example.probe.storeRow");
+            assertThat(ended.issues()).describedAs(answer).isEqualTo("{\"issues\":[{\"path\":\"\","
+                    + "\"code\":\"invalid_format\",\"messageKey\":\"invalid_format.json\",\"meta\":{}}]}");
+        }
+    }
+
+    @Test
+    void namesTheBehaviorWhoseAnswerWasWrong() {
+        Host host = Host.answering(PROBE, arguments -> "{}");
+
+        for (String behavior : List.of("storeRow", "readRows")) {
+            String arguments = behavior.equals("storeRow") ? "[\"milk\"]" : "[]";
+            Ending ended = host.endingOf("example.probe." + behavior, arguments);
+
+            assertThat(ended.record().descriptor()).isNotZero();
+            assertThat(ended.behavior()).isEqualTo("example.probe." + behavior);
+        }
+    }
+
+    @Test
+    void runsNothingOfTheBodyOnAWrongAnswer() {
+        Host host = Host.answering(SOURCE, arguments -> "{\"per\":\"seven\"}");
+
+        Ending ended = host.endingOf("pricing.twice", "[\"ordinary\"]");
+
+        assertThat(ended.record().cause())
+                .contains(new FailureCause.Wasm(WasmFault.INVALID_HOST_ANSWER));
+        assertThat(ended.issues()).contains("\"path\":\"/per\"");
+        assertThat(host.tries()).describedAs("the second reaching out").isEqualTo(1);
+    }
+
+    @Test
+    void answersTheNextCallAfterAWrongAnswer() {
+        String[] answer = {"{\"id\":0,\"title\":\"\"}"};
+        Host host = Host.answering(PROBE, arguments -> answer[0]);
+
+        host.endingOf("example.probe.storeRow", "[\"milk\"]");
+        answer[0] = "{\"id\":1,\"title\":\"milk\"}";
+
+        assertThat(host.answerOf("example.probe.storeRow", "[\"milk\"]"))
+                .isEqualTo("{\"value\":{\"id\":1,\"title\":\"milk\"}}");
+    }
+
+    /**
+     * Why a call ended, and for an invalid answer which behavior's it was and what the issues
+     * said, read where the record points before the arena was reset.
+     */
+    private record Ending(FailureRecord record, String behavior, String issues) {
+    }
+
     private static final String WORDING = """
             module wording
 
@@ -153,6 +261,32 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
 
         int tries() {
             return tries;
+        }
+
+        /** The text a record's word points at: where it is in the low half, how long in the high. */
+        private String textAt(long packed) {
+            return new String(instance.memory().readBytes((int) packed, (int) (packed >>> 32)),
+                    StandardCharsets.UTF_8);
+        }
+
+        /** A call that ended rather than answer, and the arena it took handed back. */
+        Ending endingOf(String export, String arguments) {
+            int snapshot = (int) instance.export(RuntimeAbi.FAILURE_GENERATION).apply()[0];
+            int mark = (int) instance.export(RuntimeAbi.ALLOC_MARK).apply()[0];
+            try {
+                String answered = answerOf(export, arguments);
+                throw new AssertionError(export + " answered " + answered + " rather than ending");
+            } catch (ChicoryException trapped) {
+                int at = (int) instance.export(RuntimeAbi.FAILURE_ADDR).apply()[0];
+                FailureRecord record = FailureRecord.read(ByteBuffer
+                        .wrap(instance.memory().readBytes(at, RuntimeAbi.FAILURE_BYTES))
+                        .order(ByteOrder.LITTLE_ENDIAN), 0);
+                assertThat(record.describesTrapAfter(snapshot)).isTrue();
+                String behavior = textAt(record.aux0());
+                String issues = textAt(record.aux1());
+                instance.export(RuntimeAbi.ALLOC_RESET).apply(mark);
+                return new Ending(record, behavior, issues);
+            }
         }
 
         String answerOf(String export, String arguments) {

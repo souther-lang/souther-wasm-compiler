@@ -28,6 +28,9 @@ pub const CODE_TYPE_MISMATCH: &[u8] = b"type_mismatch";
 pub const KEY_NUMERIC_RANGE: &[u8] = b"type_mismatch.numeric_range";
 /// A string that denotes no value of the declared type: text that is no `String`, or no temporal.
 pub const CODE_INVALID_FORMAT: &[u8] = b"invalid_format";
+/// Text that is not JSON at all, which Raoh leaves outside its input model and reports as
+/// `invalid_format` under this key, at the root.
+pub const KEY_INVALID_FORMAT_JSON: &[u8] = b"invalid_format.json";
 /// A collection had the wrong number of elements.
 pub const CODE_INVALID_SIZE: &[u8] = b"invalid_size";
 /// A name that is none of the ones allowed where it is read: an enumeration's name, as Raoh's

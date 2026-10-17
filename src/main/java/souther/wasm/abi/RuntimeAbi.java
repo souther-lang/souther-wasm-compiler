@@ -23,7 +23,10 @@ package souther.wasm.abi;
  *
  * <p>The answer is a live pointer into the arena, so the reset has to come after the read. An
  * instance serves one call at a time: the arena is one bump region with one top, so a second call
- * entered before the first has reset would allocate over what the first is about to return.
+ * entered before the first has reset would allocate over what the first is about to return. A call
+ * made from inside {@link #IMPORT_HOST_CALL}, by what the host supplies, is not that second call:
+ * it takes its mark above everything the waiting call has allocated and resets to it before the
+ * host answers, so the two nest.
  *
  * <h2>When a call traps</h2>
  *
@@ -31,6 +34,13 @@ package souther.wasm.abi;
  * trap it was is read from the failure record: call {@link #FAILURE_GENERATION} again, and only
  * when it differs from the snapshot does the record describe the trap. An unchanged generation
  * means the wasm faulted on its own account, and the record still holds an older failure.
+ *
+ * <p>Where calls nest, the snapshot is not enough: a call the host made from inside
+ * {@link #IMPORT_HOST_CALL} that ended moved the generation on, and the waiting call, trapping
+ * afterwards for another reason or because the host threw, would read that record as its own. The
+ * innermost call that ended is always the first to read the record, so a host keeps the last
+ * generation it has told a caller of and reads the record only where the generation differs from
+ * that one. Without nesting, that is the snapshot.
  */
 public final class RuntimeAbi {
 
@@ -67,9 +77,13 @@ public final class RuntimeAbi {
      * {@link #RUNTIME_INIT} came to be handed the program's descriptors of the primitives. Raised
      * to 14 when {@link #IMPORT_HOST_CALL} stopped being handed a buffer and came to answer where
      * the answer is and how long (issue #62): a buffer too short for the answer meant a second
-     * call, which ran what the host supplied a second time.
+     * call, which ran what the host supplied a second time. Raised to 15 when a call could end for a
+     * reason it could not before, {@link WasmFault#INVALID_HOST_ANSWER} (issue #63), whose record
+     * points at the behavior's name and at the issues, raised by {@link #READ_ANSWER}, which an
+     * injected behavior's answer came to be read through, and {@link #LIFT_ENDED} came to write the
+     * two as the {@code invalid-answer} of a component's {@code ended}, beside the reason.
      */
-    public static final int VERSION = 14;
+    public static final int VERSION = 15;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
@@ -204,8 +218,10 @@ public final class RuntimeAbi {
     public static final String LIFT_AREA = "__souther_lift_area";
 
     /**
-     * {@code () -> i32}: puts the reason the failure record holds where a component reads a result
-     * from, as its {@code err}. Writes the same static area, so it cannot itself run out of memory.
+     * {@code () -> i32}: puts why the failure record says the call ended where a component reads a
+     * result from, as its {@code err}: the reason, and for
+     * {@link WasmFault#INVALID_HOST_ANSWER} the behavior's name and the issues the record points
+     * at. Writes the same static area, so it cannot itself run out of memory.
      */
     public static final String LIFT_ENDED = "__souther_lift_ended";
 
@@ -319,6 +335,14 @@ public final class RuntimeAbi {
      * value of the type a descriptor describes, or nothing where it could not be.
      */
     public static final String READ = "__souther_read";
+
+    /**
+     * {@code (i32 at, i32 length, i32 descriptor, i64 behavior) -> i32}: what a host answered for
+     * an injected behavior, read as the value of the type the descriptor describes, or the call
+     * ended as {@link WasmFault#INVALID_HOST_ANSWER}. {@code behavior} is where the behavior's name
+     * is in static memory and how long, packed, which the record's {@code aux0} then holds.
+     */
+    public static final String READ_ANSWER = "__souther_read_answer";
 
     /** {@code (i32 descriptor) -> i32}: a cell of a declared shape, its fields not yet filled. */
     public static final String RECORD = "__souther_record";

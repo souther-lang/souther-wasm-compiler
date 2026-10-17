@@ -870,14 +870,16 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.HOST_CALL))
                     .localSet(written);
 
-            out.localGet(written).wrap()
+            // Read as the declaration's answer, or the call ends as the host's answer refused,
+            // naming the behavior by its export: the runtime holds a host to what it owes in one
+            // place, which this hands what it needs to say whose answer it was.
+            byte[] behavior = exportName(crossing.behavior().name()).getBytes(StandardCharsets.UTF_8);
+            return out.localGet(written).wrap()
                     .localGet(written).shiftRight(32).wrap()
-                    .call(calls.of(RuntimeAbi.JSON_PARSE))
                     .constant(shapes.toRead(shapes.of(crossing.behavior().signature().answers())))
-                    .constant(0)
-                    .constant(0)
-                    .call(calls.of(RuntimeAbi.READ));
-            return out.body();
+                    .constant((fragment.intern(behavior) & 0xffff_ffffL) | (long) behavior.length << 32)
+                    .call(calls.of(RuntimeAbi.READ_ANSWER))
+                    .body();
         }
 
         /**

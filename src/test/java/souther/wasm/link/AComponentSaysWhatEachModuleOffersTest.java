@@ -140,34 +140,92 @@ class AComponentSaysWhatEachModuleOffersTest {
 
         // What is written down for a reader of interfaces is what the component offers.
         assertThat(WitText.of(WasmCompiler.offering(program)))
-                .contains("  export souther:decode/cart;\n", "  export souther:decode/shared-money;\n")
-                .contains("package souther:decode {\n  interface cart {\n"
-                        + "    record ended { reason: u32 }\n"
-                        + "    sku: func(value: string) -> result<string, ended>;\n"
-                        + "    line-item: func(value: string) -> result<string, ended>;\n  }\n");
+                .contains("  export souther:decode/%cart;\n", "  export souther:decode/%shared-money;\n")
+                .contains("package souther:decode {\n  interface %cart {\n"
+                        + "    record invalid-answer { behavior: string, issues: string }\n"
+                        + "    record ended { reason: u32, invalid-answer: option<invalid-answer> }\n"
+                        + "    %sku: func(value: string) -> result<string, ended>;\n"
+                        + "    %line-item: func(value: string) -> result<string, ended>;\n  }\n");
     }
 
     @Test
-    void refusesABehaviorOrATypeAnInterfaceWouldNameAsWhatACallThatEndedAnswers() {
-        CheckedProgram behavior = Compiled.program(List.of("""
-                module demo
+    void refusesABehaviorOrATypeAnInterfaceWouldNameAsARecordOfWhatACallThatEndedAnswers() {
+        // Every record an interface declares, whichever way Souther spells what comes to its name.
+        assertThat(Component.RECORDS).extracting(Component.Declared::name)
+                .containsExactly("invalid-answer", "ended");
+        for (String behaviorName : List.of("ended", "invalidAnswer", "invalid_answer")) {
+            CheckedProgram behavior = Compiled.program(List.of("""
+                    module demo
 
-                behavior ended : (n: Int) -> Int
+                    behavior %1$s : (n: Int) -> Int
 
-                let ended (n) = n
+                    let %1$s (n) = n
+                    """.formatted(behaviorName)));
+
+            assertThatThrownBy(() -> Compiled.component(behavior))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("declares " + behaviorName);
+            assertThatThrownBy(() -> WitText.of(WasmCompiler.offering(behavior)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("declares " + behaviorName);
+        }
+        for (String typeName : List.of("Ended", "InvalidAnswer")) {
+            CheckedProgram type = Compiled.program(List.of("""
+                    module demo
+
+                    data %s = String
+                    """.formatted(typeName)));
+
+            assertThatThrownBy(() -> Compiled.component(type))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("declares " + typeName);
+            assertThatThrownBy(() -> WitText.of(WasmCompiler.offering(type)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("declares " + typeName);
+        }
+    }
+
+    @Test
+    void refusesTwoModulesOnePackageWouldCallByOneInterface() {
+        CheckedProgram program = Compiled.program(List.of("""
+                module shared.money
+
+                behavior one : (n: Int) -> Int
+
+                let one (n) = n
+                """, """
+                module shared_money
+
+                behavior two : (n: Int) -> Int
+
+                let two (n) = n
                 """));
-        CheckedProgram type = Compiled.program(List.of("""
-                module demo
 
-                data Ended = String
+        assertThatThrownBy(() -> Compiled.component(program))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("shared.money")
+                .hasMessageContaining("shared_money")
+                .hasMessageContaining("souther:program/shared-money");
+        assertThatThrownBy(() -> WitText.of(WasmCompiler.offering(program)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("souther:program/shared-money");
+    }
+
+    @Test
+    void writesANameWitHasAWordForAsAName() {
+        CheckedProgram program = Compiled.program(List.of("""
+                module record
+
+                behavior func : (n: Int) -> Int
+
+                let func (n) = n
                 """));
 
-        assertThatThrownBy(() -> Compiled.component(behavior))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("declares ended");
-        assertThatThrownBy(() -> WitText.of(WasmCompiler.offering(type)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("declares Ended");
+        // What a reader of interfaces parses as a name and not as the word, here and in the world.
+        assertThat(WitText.of(WasmCompiler.offering(program)))
+                .contains("  export souther:program/%record;\n")
+                .contains("  interface %record {\n")
+                .contains("    %func: func(arguments: string) -> result<string, ended>;\n");
     }
 
     @Test
@@ -336,7 +394,7 @@ class AComponentSaysWhatEachModuleOffersTest {
             int held = at.leb();
             for (int i = 0; i < held; i++) {
                 // Every instance here is one built out of functions already lifted, beside the
-                // one type they name, which an interface has to export for them to be exported.
+                // records they name, which an interface has to export for them to be exported.
                 assertThat(at.byteAt()).isEqualTo(0x01);
                 List<String> functions = new ArrayList<>();
                 List<String> types = new ArrayList<>();
@@ -348,7 +406,7 @@ class AComponentSaysWhatEachModuleOffersTest {
                     (sort == SORT_TYPE ? types : functions).add(name);
                 }
                 assertThat(types).describedAs("the types " + functions + " are exported beside")
-                        .containsExactly(Component.ENDED);
+                        .containsExactly(Component.INVALID_ANSWER, Component.ENDED);
                 instances.add(functions);
             }
         }

@@ -101,6 +101,14 @@ A host runs what it supplied for that number once, takes room for the encoded an
 `__ronto_alloc`, writes it there, and answers where it is in the low half and its length in the
 high half. The room is in the arena of the call that reached out, so it goes with that call's reset.
 
+The answer is read as the type the behavior declares, its rules included, as an argument is. An
+answer that is not a value of that type is the host's contract broken rather than the caller's
+arguments, so it ends the call with reason 13 and nothing of the body runs on it. The record's
+`aux0` points at the behavior's name, as its export is named, and `aux1` at what the reading found,
+written as a refused call's issues are, at paths from the answer's root; each is where it is in the
+low half and how long in the high half. The name is in static memory, and the issues are in the
+arena, there until the reset.
+
 What a caller writes code against is in the module too. `souther:surface` is one JSON object: each
 module's behaviors, with the export each is called through, who answers it (`here`, `injected`,
 `unwritten` or `elsewhere`), the number a call out carries for one the program reaches out for, the
@@ -141,8 +149,13 @@ issue a value comes to is the language's and not a backend's, so it is written d
 [`conformance/issues`](conformance/issues), and this backend and the JVM's are each held to it.
 
 What Souther adds is a way to say why a call ended without a value. An abort writes a fixed-width
-record outside the arena and traps; the record carries a generation, so a caller that snapshots it
-before the call can tell a Souther abort from an ordinary wasm fault.
+record outside the arena and traps. The reason and the words beside it are there after the reset;
+text a word points at is too where it is in static memory, and is not where it is in the arena, as
+13's issues are, so a host reads that before it resets. The record carries a generation, so a caller that snapshots it
+before the call can tell a Souther abort from an ordinary wasm fault. A host whose supplied
+functions call the module again keeps the last generation it has told a caller of instead, since
+a call that ended inside the host's answer has moved the generation on before the waiting call
+traps; the innermost call that ended always reads the record first.
 
 `souther.wasm.abi.RuntimeAbi` writes all of this down, and the tests beside it run the module
 rather than trusting the writing.
@@ -157,7 +170,8 @@ module becomes an interface and a behavior a function of it:
     }
     package souther:program {
       interface counting {
-        record ended { reason: u32 }
+        record invalid-answer { behavior: string, issues: string }
+        record ended { reason: u32, invalid-answer: option<invalid-answer> }
         doubled: func(arguments: string) -> result<string, ended>;
       }
     }
@@ -169,7 +183,8 @@ bracket a core caller keeps, moved to where the format states it.
 
 A call the runtime ended answers `err`, with the reason a core module's abort record holds: 3 for
 arguments that are not JSON, 6 for a division by zero, and the rest as `RuntimeAbi` numbers them.
-A core module traps there and its host reads the record afterwards, which a component cannot
+For 13, `invalid-answer` names the behavior whose import answered wrongly and carries the issues
+the record points at; for every other reason it is `none`. A core module traps there and its host reads the record afterwards, which a component cannot
 offer, because an instance that has trapped cannot be asked anything again. So when the core module
 is linked for a component, the one runtime function every ended call leaves through is replaced by
 a throw that carries nothing, and each lifted function catches it and answers the reason the record
@@ -191,7 +206,8 @@ A type a module publishes is offered too, to be read on its own as the core modu
     }
     package souther:decode {
       interface cart {
-        record ended { reason: u32 }
+        record invalid-answer { behavior: string, issues: string }
+        record ended { reason: u32, invalid-answer: option<invalid-answer> }
         sku: func(value: string) -> result<string, ended>;
         line-item: func(value: string) -> result<string, ended>;
       }
@@ -204,8 +220,9 @@ come to one name there (`LineItem` and `line_item`).
 
 A behavior's name is not the same string on both sides — Souther writes one convention and an
 interface another — so where two behaviors of a module would come to one interface name, this
-refuses rather than exporting one of them twice. It refuses one that comes to `ended` too, which
-the interface already gives the record.
+refuses rather than exporting one of them twice. It refuses one that comes to `ended` or
+`invalid-answer` too, which the interface already gives its records, and two modules whose
+interfaces in one package would have one name (`shared.money` and `shared_money`).
 
 A behavior the program does not implement is asked for rather than offered, under a package of its
 own:
@@ -282,7 +299,9 @@ repository. Nothing then checks which Souther it was built against.
 
 `--wit` writes what the program offers and what it has to be given, as a reader of interfaces reads
 them. The same either way: a component carries it and a core module does not, but what a program
-offers is the program's.
+offers is the program's. Every name a module or a behavior gave is written escaped, `%doubled`,
+since a model may call one what WIT has a word for (`record`, `func`) and which words WIT has is
+WIT's to add to; a reader of interfaces reads an escaped name as the name.
 
 A directory is read for the `.sou` files under it, in the order their paths sort, so one command
 line is one program every time. Sources are read as `souther compile` reads them: a link under a
