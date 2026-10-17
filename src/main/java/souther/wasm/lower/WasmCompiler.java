@@ -886,14 +886,17 @@ public final class WasmCompiler {
                     .localSet(answer);
 
             // An answer that is not a value of the type declared leaves nothing to run on, and is
-            // the host's to answer for rather than the caller's: the call ends, and the issues the
-            // reading found stay for the host to read before it resets.
+            // the host's to answer for rather than the caller's: the call ends. Which behavior it
+            // was and what the reading found are written here, where writing may still run out of
+            // room and end the call as that instead, so that what reads the record afterwards —
+            // a component's lifted function among them — hands nothing out to say why.
+            byte[] behavior = exportName(crossing.behavior().name()).getBytes(StandardCharsets.UTF_8);
             out.call(calls.of(RuntimeAbi.ISSUES_COUNT))
                     .ifNotZero()
                     .constant(WasmFault.INVALID_HOST_ANSWER.code())
                     .constant(descriptor)
-                    .constant((long) crossing.ordinal())
-                    .constant(0L)
+                    .constant((fragment.intern(behavior) & 0xffff_ffffL) | (long) behavior.length << 32)
+                    .call(calls.of(RuntimeAbi.ISSUES_WRITTEN))
                     .call(calls.of(RuntimeAbi.ABORT))
                     .unreachable()
                     .end();

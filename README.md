@@ -103,10 +103,11 @@ high half. The room is in the arena of the call that reached out, so it goes wit
 
 The answer is read as the type the behavior declares, its rules included, as an argument is. An
 answer that is not a value of that type is the host's contract broken rather than the caller's
-arguments, so it ends the call with reason 13, `aux0` holding the number the behavior is reached
-out under; nothing of the body runs on it. What the reading found stays in the issues until the
-reset, and `__souther_issues_written` writes them as a refused argument's issues are written, at
-paths from the answer's root.
+arguments, so it ends the call with reason 13 and nothing of the body runs on it. The record's
+`aux0` points at the behavior's name, as its export is named, and `aux1` at what the reading found,
+written as a refused call's issues are, at paths from the answer's root; each is where it is in the
+low half and how long in the high half. The name is in static memory, and the issues are in the
+arena, there until the reset.
 
 What a caller writes code against is in the module too. `souther:surface` is one JSON object: each
 module's behaviors, with the export each is called through, who answers it (`here`, `injected`,
@@ -167,7 +168,8 @@ module becomes an interface and a behavior a function of it:
     }
     package souther:program {
       interface counting {
-        record ended { reason: u32 }
+        record invalid-answer { behavior: string, issues: string }
+        record ended { reason: u32, invalid-answer: option<invalid-answer> }
         doubled: func(arguments: string) -> result<string, ended>;
       }
     }
@@ -179,9 +181,8 @@ bracket a core caller keeps, moved to where the format states it.
 
 A call the runtime ended answers `err`, with the reason a core module's abort record holds: 3 for
 arguments that are not JSON, 6 for a division by zero, and the rest as `RuntimeAbi` numbers them.
-`ended` carries the reason and nothing else, so a component's caller told 13 is not told where an
-answer it supplied was wrong.
-A core module traps there and its host reads the record afterwards, which a component cannot
+For 13, `invalid-answer` names the behavior whose import answered wrongly and carries the issues
+the record points at; for every other reason it is `none`. A core module traps there and its host reads the record afterwards, which a component cannot
 offer, because an instance that has trapped cannot be asked anything again. So when the core module
 is linked for a component, the one runtime function every ended call leaves through is replaced by
 a throw that carries nothing, and each lifted function catches it and answers the reason the record
@@ -203,7 +204,8 @@ A type a module publishes is offered too, to be read on its own as the core modu
     }
     package souther:decode {
       interface cart {
-        record ended { reason: u32 }
+        record invalid-answer { behavior: string, issues: string }
+        record ended { reason: u32, invalid-answer: option<invalid-answer> }
         sku: func(value: string) -> result<string, ended>;
         line-item: func(value: string) -> result<string, ended>;
       }

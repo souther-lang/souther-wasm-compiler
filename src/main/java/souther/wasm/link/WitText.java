@@ -68,8 +68,13 @@ public final class WitText {
             out.append("  interface ").append(exported.substring(exported.indexOf('/') + 1))
                     .append(" {\n");
             if (ends) {
+                out.append("    record ").append(Component.INVALID_ANSWER).append(" { ")
+                        .append(Component.BEHAVIOR).append(": string, ")
+                        .append(Component.ISSUES).append(": string }\n");
                 out.append("    record ").append(Component.ENDED).append(" { ")
-                        .append(Component.REASON).append(": u32 }\n");
+                        .append(Component.REASON).append(": u32, ")
+                        .append(Component.INVALID_ANSWER).append(": option<")
+                        .append(Component.INVALID_ANSWER).append("> }\n");
             }
             for (String crossing : Component.namesIn(
                     module.getKey(), module.getValue(), ends).values()) {
@@ -107,8 +112,10 @@ public final class WitText {
             //
             // Either answer is the ok of a result. Its err is a call the runtime ended, with the
             // reason a core module's abort record holds: 3 for arguments that are not JSON, 6 for
-            // a division by zero, and the rest as the runtime's ABI lists them. The instance can
-            // be called again after one. A trap is a failure the runtime gave no reason for, or
+            // a division by zero, and the rest as the runtime's ABI lists them. 13 is a function
+            // this component imports answering something other than its behavior's type; then
+            // invalid-answer names the behavior and says what is wrong with the answer, as issues
+            // naming where in it each is. The instance can be called again after one. A trap is a failure the runtime gave no reason for, or
             // arguments too large for the instance's memory, which fail before the call begins.
             """;
 

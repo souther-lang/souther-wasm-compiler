@@ -51,6 +51,7 @@ class WhatACanonicalCallOwesAndGetsBackTest {
         assertThat(module.read(area, 1)[0]).describedAs("the err case").isEqualTo((byte) 1);
         assertThat(wordAt(module, area + 4)).describedAs("the reason the record holds")
                 .isEqualTo(REASON_OUT_OF_MEMORY);
+        assertThat(module.read(area + 8, 1)[0]).describedAs("no invalid answer").isZero();
 
         // The answer too, which a call may have used the last of the room to make.
         int answered = module.call(RuntimeAbi.LIFT_AREA, 12, 34);

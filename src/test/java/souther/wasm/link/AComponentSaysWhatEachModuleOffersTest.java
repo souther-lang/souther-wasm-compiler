@@ -142,7 +142,8 @@ class AComponentSaysWhatEachModuleOffersTest {
         assertThat(WitText.of(WasmCompiler.offering(program)))
                 .contains("  export souther:decode/cart;\n", "  export souther:decode/shared-money;\n")
                 .contains("package souther:decode {\n  interface cart {\n"
-                        + "    record ended { reason: u32 }\n"
+                        + "    record invalid-answer { behavior: string, issues: string }\n"
+                        + "    record ended { reason: u32, invalid-answer: option<invalid-answer> }\n"
                         + "    sku: func(value: string) -> result<string, ended>;\n"
                         + "    line-item: func(value: string) -> result<string, ended>;\n  }\n");
     }
@@ -336,7 +337,7 @@ class AComponentSaysWhatEachModuleOffersTest {
             int held = at.leb();
             for (int i = 0; i < held; i++) {
                 // Every instance here is one built out of functions already lifted, beside the
-                // one type they name, which an interface has to export for them to be exported.
+                // records they name, which an interface has to export for them to be exported.
                 assertThat(at.byteAt()).isEqualTo(0x01);
                 List<String> functions = new ArrayList<>();
                 List<String> types = new ArrayList<>();
@@ -348,7 +349,7 @@ class AComponentSaysWhatEachModuleOffersTest {
                     (sort == SORT_TYPE ? types : functions).add(name);
                 }
                 assertThat(types).describedAs("the types " + functions + " are exported beside")
-                        .containsExactly(Component.ENDED);
+                        .containsExactly(Component.INVALID_ANSWER, Component.ENDED);
                 instances.add(functions);
             }
         }

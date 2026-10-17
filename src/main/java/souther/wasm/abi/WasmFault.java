@@ -61,9 +61,10 @@ public enum WasmFault {
      * declares: a field missing, the wrong kind of JSON, or a value one of the type's invariants
      * rules out. The host broke the contract it implements, so the call ends rather than run on
      * nothing, and the caller is not told its own arguments were wrong. {@code descriptor} is the
-     * answer's type, {@code aux0} the number the behavior is reached out under in
-     * {@code souther:surface}. What the reading found is left in the issues, which
-     * {@link RuntimeAbi#ISSUES_WRITTEN} writes until the caller resets.
+     * answer's type. {@code aux0} is the behavior's name as its export is named, where it is in
+     * static memory in the low half and how long in the high half, so it outlives the reset;
+     * {@code aux1} is what the reading found, written as a refused call's issues are, packed the
+     * same way and in the arena, so it is there until the caller resets and not after.
      */
     INVALID_HOST_ANSWER(13);
 

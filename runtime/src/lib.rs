@@ -101,7 +101,8 @@ const PAGE: usize = 65536;
 /// did not fit meant a second call, which ran what was supplied a second time.
 ///
 /// Raised to 15 when a call could end for a reason it could not before, `INVALID_HOST_ANSWER`
-/// (issue #63), and a host came to read the issues behind it through `__souther_issues_written`.
+/// (issue #63), whose record points at the behavior's name and at the issues, and a component's
+/// `ended` came to carry the two as its `invalid-answer` beside the reason.
 const ABI_VERSION: u32 = 15;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
@@ -210,16 +211,29 @@ pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
     area
 }
 
-/// The reason the record holds for the call just ended, as the `err` of the result
-/// [`__souther_lift_area`] answers the `ok` of.
+/// Why the call just ended, as the `err` of the result [`__souther_lift_area`] answers the `ok`
+/// of: `record ended { reason: u32, invalid-answer: option<invalid-answer> }`, where
+/// `record invalid-answer { behavior: string, issues: string }` is there only for
+/// `INVALID_HOST_ANSWER`.
 ///
 /// Read from the record, which is the one place a call's reason is kept: what left the call says
-/// only that it was left.
+/// only that it was left. The two strings of an invalid answer are where the record's `aux0` and
+/// `aux1` say, written before the call was left, so nothing is handed out here.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_lift_ended() -> u32 {
     let area = lifted(LIFTED_ENDED);
     let reason = core::ptr::read((FAILURE + OFF_REASON) as *const u32);
     core::ptr::write_unaligned((area + 4) as *mut u32, reason);
+    let invalid = reason == REASON_INVALID_HOST_ANSWER;
+    core::ptr::write((area + 8) as *mut u8, invalid as u8);
+    if invalid {
+        let behavior = core::ptr::read_unaligned((FAILURE + OFF_AUX0) as *const u64);
+        let issues = core::ptr::read_unaligned((FAILURE + OFF_AUX1) as *const u64);
+        core::ptr::write_unaligned((area + 12) as *mut u32, behavior as u32);
+        core::ptr::write_unaligned((area + 16) as *mut u32, (behavior >> 32) as u32);
+        core::ptr::write_unaligned((area + 20) as *mut u32, issues as u32);
+        core::ptr::write_unaligned((area + 24) as *mut u32, (issues >> 32) as u32);
+    }
     area
 }
 
@@ -228,14 +242,15 @@ const LIFTED_ANSWERED: u8 = 0;
 /// The case of a lifted result that holds why the call ended.
 const LIFTED_ENDED: u8 = 1;
 
-/// Where a lifted result is written: twelve bytes, the larger case's, a string's two words after
-/// the case byte and its padding.
+/// Where a lifted result is written: twenty-eight bytes, the larger case's. After the case byte and
+/// its padding, the `ok` is a string's two words; the `err` is the reason, the byte saying whether
+/// there is an invalid answer and its padding, and that answer's two strings.
 ///
 /// Static and not the arena's, because writing an outcome must not be able to fail. The call may
 /// have ended because nothing more could be handed out, and answering why by handing something out
 /// would end it a second time, outside anything that would catch it. One area is enough: a
 /// component's caller reads the result before the post-return, and no call begins before that.
-static mut LIFTED: [u32; 3] = [0; 3];
+static mut LIFTED: [u32; 7] = [0; 7];
 
 /// The result area, saying which case it holds.
 unsafe fn lifted(case: u8) -> u32 {
@@ -476,10 +491,11 @@ pub const REASON_ENSURES_NOT_HELD: u32 = 11;
 /// whoever calls this module, as `BAD_MARK` is: `WasmFault::NO_SUCH_TYPE`.
 pub const REASON_NO_SUCH_TYPE: u32 = 12;
 /// What a host answered for an injected behavior is not a value of the type the behavior declares.
-/// `descriptor` is the answer's type and `aux0` the number the behavior is reached out under; what
-/// the reading found stays in the issues, for the host to read through `__souther_issues_written`
-/// before it resets. Raised by generated code, and the host's contract broken rather than the
-/// caller's arguments or a Souther program's own abort: `WasmFault::INVALID_HOST_ANSWER`.
+/// `descriptor` is the answer's type. `aux0` is the behavior's name, in static memory, and `aux1`
+/// what the reading found, written as a refused call's issues are and in the arena until the
+/// caller resets; each packed as where it is in the low half and how long in the high half.
+/// Raised by generated code, and the host's contract broken rather than the caller's arguments or
+/// a Souther program's own abort: `WasmFault::INVALID_HOST_ANSWER`.
 pub const REASON_INVALID_HOST_ANSWER: u32 = 13;
 
 /// The arena, as what `alloc` allocates from: for notation-199x, and for the text this crate

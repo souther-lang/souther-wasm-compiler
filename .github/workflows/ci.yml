@@ -202,6 +202,40 @@ jobs:
             exit 1
           fi
 
+      # What answers here answers something that is not a Decimal. The call ends rather than run on
+      # nothing, and the component says which behavior answered wrongly and where, as a refused
+      # call says where its arguments were wrong (issue #63).
+      - name: Call a component whose import answers outside its type
+        run: |
+          mkdir -p /tmp/wrong
+          cd /tmp/wrong
+          cat > wrong.wat <<'WAT'
+          (module
+            (memory (export "memory") 1)
+            (global $top (mut i32) (i32.const 8192))
+            (data (i32.const 1024) "true")
+            (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+              (local $at i32)
+              (local.set $at (global.get $top))
+              (global.set $top (i32.add (global.get $top) (local.get 3)))
+              (local.get $at))
+            (func (export "souther:reached/rates#today") (param i32 i32) (result i32)
+              (i32.store (i32.const 0) (i32.const 1024))
+              (i32.store (i32.const 4) (i32.const 4))
+              (i32.const 0)))
+          WAT
+          wasm-tools parse wrong.wat -o core.wasm
+          wasm-tools component embed /tmp/answering/answering.wit --world answering core.wasm -o embedded.wasm
+          wasm-tools component new embedded.wasm -o wrong.wasm
+          wasm-tools compose /tmp/component/out.wasm -d wrong.wasm -o composed.wasm
+          wasm-tools validate --features all composed.wasm
+          got=$(wasmtime run --invoke 'priced("[5]")' composed.wasm)
+          expected='err({reason: 13, invalid-answer: some({behavior: "rates.today", issues: "{\"issues\":[{\"path\":\"\",\"code\":\"type_mismatch\",\"messageKey\":\"type_mismatch\",\"meta\":{\"actual\":\"boolean\",\"expected\":\"number\"}}]}"})})'
+          if [ "$got" != "$expected" ]; then
+            echo "priced answered $got, where $expected was expected"
+            exit 1
+          fi
+
       # The example is a program compiled by this and then called from a browser. Nothing else
       # here calls a compiled program from outside the JVM, so it is the only place that would
       # notice the boundary changing shape — and only while it is still built.

@@ -158,14 +158,12 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
     void namesTheBehaviorWhoseAnswerWasWrong() {
         Host host = Host.answering(PROBE, arguments -> "{}");
 
-        // By the number the surface says the behavior is reached out under, before its parameters.
         for (String behavior : List.of("storeRow", "readRows")) {
             String arguments = behavior.equals("storeRow") ? "[\"milk\"]" : "[]";
-            FailureRecord record = host.endingOf("example.probe." + behavior, arguments).record();
+            Ending ended = host.endingOf("example.probe." + behavior, arguments);
 
-            assertThat(record.descriptor()).isNotZero();
-            assertThat(host.surface()).containsPattern(
-                    "\"name\":\"" + behavior + "\"[^\\[]*\"reachOut\":" + record.aux0() + ",");
+            assertThat(ended.record().descriptor()).isNotZero();
+            assertThat(ended.behavior()).isEqualTo("example.probe." + behavior);
         }
     }
 
@@ -193,8 +191,11 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
                 .isEqualTo("{\"value\":{\"id\":1,\"title\":\"milk\"}}");
     }
 
-    /** Why a call ended, and what the issues it left said, read before the arena was reset. */
-    private record Ending(FailureRecord record, String issues) {
+    /**
+     * Why a call ended, and for an invalid answer which behavior's it was and what the issues
+     * said, read where the record points before the arena was reset.
+     */
+    private record Ending(FailureRecord record, String behavior, String issues) {
     }
 
     private static final String WORDING = """
@@ -211,12 +212,10 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
     private static final class Host {
 
         private final Instance instance;
-        private final byte[] module;
         private int tries;
 
-        private Host(Instance instance, byte[] module) {
+        private Host(Instance instance) {
             this.instance = instance;
-            this.module = module;
         }
 
         static Host answering(String source, Function<String, String> implementation) {
@@ -240,7 +239,7 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
                     });
             holder[0] = new Host(Instance.builder(Parser.parse(module))
                     .withImportValues(ImportValues.builder().addFunction(crossing).build())
-                    .build(), module);
+                    .build());
             return holder[0];
         }
 
@@ -248,8 +247,10 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
             return tries;
         }
 
-        String surface() {
-            return souther.wasm.Running.customSection(module, "souther:surface");
+        /** The text a record's word points at: where it is in the low half, how long in the high. */
+        private String textAt(long packed) {
+            return new String(instance.memory().readBytes((int) packed, (int) (packed >>> 32)),
+                    StandardCharsets.UTF_8);
         }
 
         /** A call that ended rather than answer, and the arena it took handed back. */
@@ -265,11 +266,10 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
                         .wrap(instance.memory().readBytes(at, RuntimeAbi.FAILURE_BYTES))
                         .order(ByteOrder.LITTLE_ENDIAN), 0);
                 assertThat(record.describesTrapAfter(snapshot)).isTrue();
-                long written = instance.export(RuntimeAbi.ISSUES_WRITTEN).apply()[0];
-                String issues = new String(instance.memory().readBytes(
-                        (int) written, (int) (written >>> 32)), StandardCharsets.UTF_8);
+                String behavior = textAt(record.aux0());
+                String issues = textAt(record.aux1());
                 instance.export(RuntimeAbi.ALLOC_RESET).apply(mark);
-                return new Ending(record, issues);
+                return new Ending(record, behavior, issues);
             }
         }
 

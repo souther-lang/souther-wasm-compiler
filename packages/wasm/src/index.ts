@@ -153,7 +153,7 @@ export async function load(
   }
   const exports = exported(instance, surface);
   reach = (ordinal, at, length) => reachOut(crossings, values, exports, ordinal, at, length);
-  return new Program(exports, surface, values, crossings);
+  return new Program(exports, surface, values);
 }
 
 /** What the module imports: the one function it reaches out through, under the name it imports it by. */
@@ -268,7 +268,6 @@ interface Runtime {
   readonly __souther_failure_addr: () => number;
   readonly __souther_failure_generation: () => number;
   readonly __souther_decode: (number: number, at: number, length: number) => [number, number];
-  readonly __souther_issues_written: () => bigint;
 }
 
 /** What each export of the runtime is, by its name: one for each the glue calls, and no other. */
@@ -281,7 +280,6 @@ const RUNTIME = {
   __souther_failure_addr: "function",
   __souther_failure_generation: "function",
   __souther_decode: "function",
-  __souther_issues_written: "function",
 } as const satisfies { readonly [name in keyof Runtime]: Kind };
 
 type Exports = Runtime & { readonly [behavior: string]: unknown };
@@ -306,8 +304,6 @@ class Program {
   readonly #values: Values;
   /** What each behavior a caller calls answers, by what it is exported as. */
   readonly #answers: ReadonlyMap<string, Shape>;
-  /** What each behavior the program reaches out for is supplied under, by the number it goes by. */
-  readonly #crossings: ReadonlyMap<number, Crossing>;
   /**
    * The generation of the last failure record a call was told it ended with.
    *
@@ -319,9 +315,8 @@ class Program {
    */
   #told: number;
 
-  constructor(exports: Exports, surface: Surface, values: Values, crossings: ReadonlyMap<number, Crossing>) {
+  constructor(exports: Exports, surface: Surface, values: Values) {
     this.#exports = exports;
-    this.#crossings = crossings;
     this.#told = exports.__souther_failure_generation();
     this.#answers = new Map(surface.modules
       .flatMap((module) => module.behaviors)
@@ -495,16 +490,17 @@ class Program {
     if (reason !== INVALID_HOST_ANSWER) {
       return new Ended(reason, trapped);
     }
-    // Read from the record before the issues are written: writing them may grow the memory, and
-    // the view taken over it before then is of a buffer that is gone.
-    const ordinal = Number(words.getBigUint64(at + FAILURE.aux0, true));
-    const behavior = this.#crossings.get(ordinal)?.named ?? `the behavior reached out for under ${ordinal}`;
-    // The issues are in the arena of the call that ended, which the caller has not reset yet.
-    const written = exports.__souther_issues_written();
-    const pointer = Number(written & 0xffff_ffffn);
-    const length = Number(written >> 32n);
-    const answer = parse(decoder.decode(this.#bytes().subarray(pointer, pointer + length)));
-    return new InvalidSuppliedAnswer(behavior, issuesIn(answer), trapped);
+    // The behavior's name is in static memory and the issues in the arena of the call that ended,
+    // which the caller has not reset yet: each where its word says.
+    const behavior = this.#textAt(words.getBigUint64(at + FAILURE.aux0, true));
+    const issues = issuesIn(parse(this.#textAt(words.getBigUint64(at + FAILURE.aux1, true))));
+    return new InvalidSuppliedAnswer(behavior, issues, trapped);
+  }
+
+  /** The text a word of the failure record points at: where it is in the low half, how long in the high. */
+  #textAt(packed: bigint): string {
+    const pointer = Number(packed & 0xffff_ffffn);
+    return decoder.decode(this.#bytes().subarray(pointer, pointer + Number(packed >> 32n)));
   }
 }
 

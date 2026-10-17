@@ -78,8 +78,9 @@ public final class RuntimeAbi {
      * to 14 when {@link #IMPORT_HOST_CALL} stopped being handed a buffer and came to answer where
      * the answer is and how long (issue #62): a buffer too short for the answer meant a second
      * call, which ran what the host supplied a second time. Raised to 15 when a call could end for a
-     * reason it could not before, {@link WasmFault#INVALID_HOST_ANSWER} (issue #63), and a host came
-     * to read the issues behind it through {@link #ISSUES_WRITTEN}.
+     * reason it could not before, {@link WasmFault#INVALID_HOST_ANSWER} (issue #63), whose record
+     * points at the behavior's name and at the issues, and {@link #LIFT_ENDED} came to write the
+     * two as the {@code invalid-answer} of a component's {@code ended}, beside the reason.
      */
     public static final int VERSION = 15;
 
@@ -192,7 +193,7 @@ public final class RuntimeAbi {
     public static final java.util.List<String> HOST_EXPORTS = java.util.List.of(
             RuntimeAbi.MEMORY, RuntimeAbi.ALLOC, RuntimeAbi.ALLOC_MARK, RuntimeAbi.ALLOC_RESET,
             RuntimeAbi.FAILURE_ADDR, RuntimeAbi.FAILURE_GENERATION, RuntimeAbi.ABI_VERSION,
-            RuntimeAbi.CANONICAL_REALLOC, RuntimeAbi.ISSUES_WRITTEN);
+            RuntimeAbi.CANONICAL_REALLOC);
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";
@@ -216,8 +217,10 @@ public final class RuntimeAbi {
     public static final String LIFT_AREA = "__souther_lift_area";
 
     /**
-     * {@code () -> i32}: puts the reason the failure record holds where a component reads a result
-     * from, as its {@code err}. Writes the same static area, so it cannot itself run out of memory.
+     * {@code () -> i32}: puts why the failure record says the call ended where a component reads a
+     * result from, as its {@code err}: the reason, and for
+     * {@link WasmFault#INVALID_HOST_ANSWER} the behavior's name and the issues the record points
+     * at. Writes the same static area, so it cannot itself run out of memory.
      */
     public static final String LIFT_ENDED = "__souther_lift_ended";
 

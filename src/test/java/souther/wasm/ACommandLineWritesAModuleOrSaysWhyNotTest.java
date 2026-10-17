@@ -145,7 +145,7 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
         assertThat(Files.readString(offers))
                 .contains("package souther:program {")
                 .contains("interface counting {")
-                .contains("record ended { reason: u32 }")
+                .contains("record ended { reason: u32, invalid-answer: option<invalid-answer> }")
                 .contains("doubled: func(arguments: string) -> result<string, ended>;")
                 .contains("with-vat: func(arguments: string) -> result<string, ended>;")
                 .contains("export souther:program/counting;");
