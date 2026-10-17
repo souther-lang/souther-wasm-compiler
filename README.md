@@ -224,8 +224,9 @@ refuses rather than exporting one of them twice. It refuses one that comes to `e
 `invalid-answer` too, which the interface already gives its records, and two modules whose
 interfaces in one package would have one name (`shared.money` and `shared_money`).
 
-A behavior the program does not implement is asked for rather than offered, under a package of its
-own:
+A behavior the program does not implement is asked for, under a package of its own, and offered
+as well where its module publishes it, since a call through the offer is read as the behavior's
+types before anything is asked of what answers it:
 
     world root {
       import souther:reached/rates;

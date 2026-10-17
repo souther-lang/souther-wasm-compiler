@@ -64,7 +64,7 @@ class AComponentSaysWhatEachModuleOffersTest {
     }
 
     @Test
-    void asksForABehaviorSuppliedFromOutsideRatherThanOfferingIt() {
+    void asksForABehaviorSuppliedFromOutsideAndOffersItWhereItsModulePublishesIt() {
         byte[] component = Compiled.component(Compiled.program(List.of("""
                 module rates
 
@@ -75,11 +75,13 @@ class AComponentSaysWhatEachModuleOffersTest {
                 let priced (n, today) = n * today("JPY")
                 """)));
 
-        // Nothing in the module answers `today`, so a component that offered it would be offering
-        // the caller's own answer back. It is asked for, under a name of its own: one interface
-        // says what a program answers and the other what it has to be given.
+        // Nothing in the module answers `today`, so it is asked for, under a name of its own: one
+        // interface says what a program answers and the other what it has to be given. Its module
+        // publishes it, so it is offered too, and a call through the offer is read as `today`'s
+        // types before anything is asked of what answers it.
         assertThat(offered(component)).containsOnlyKeys("souther:program/rates");
-        assertThat(offered(component).get("souther:program/rates")).containsExactly("priced");
+        assertThat(offered(component).get("souther:program/rates"))
+                .containsExactly("today", "priced");
         assertThat(askedFor(component)).containsExactly("souther:reached/rates");
     }
 

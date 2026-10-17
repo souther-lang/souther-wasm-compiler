@@ -137,6 +137,8 @@ jobs:
           grep -q 'fee: func(arguments: string) -> result<string, ended>' /tmp/asked/read-back.wit
           # What a program asks for answers a string; a call the host ended is the host's to say.
           grep -q 'today: func(arguments: string) -> string' /tmp/component/read-back.wit
+          # What it asks for and its module publishes, it offers as well.
+          grep -q 'today: func(arguments: string) -> result<string, ended>' /tmp/component/read-back.wit
           # Each WIT file this writes is one a reader of interfaces reads.
           wasm-tools component wit /tmp/asked/out.wit > /dev/null
           wasm-tools component wit /tmp/component/out.wit > /dev/null
@@ -214,6 +216,18 @@ jobs:
             echo "priced answered $got, where ok(\"{\\\"value\\\":10}\") was expected"
             exit 1
           fi
+          # What it asks for and offers is called through the offer: what answers it is asked for
+          # what is a String, and what is not one is refused before anything is asked.
+          got=$(wasmtime run --invoke 'today("[\"JPY\"]")' composed.wasm)
+          if [ "$got" != 'ok("{\"value\":2}")' ]; then
+            echo "today answered $got, where ok(\"{\\\"value\\\":2}\") was expected"
+            exit 1
+          fi
+          got=$(wasmtime run --invoke 'today("[5]")' composed.wasm)
+          case "$got" in
+            'ok("{\"issues\":[{\"path\":\"/0\",\"code\":\"type_mismatch\"'*) ;;
+            *) echo "today, handed a number, answered $got"; exit 1 ;;
+          esac
 
       # What answers here answers something that is not a Decimal, and then something that is not
       # JSON at all. Either way the call ends rather than run on nothing, and the component says
