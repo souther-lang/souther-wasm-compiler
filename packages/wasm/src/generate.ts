@@ -119,10 +119,12 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
   out.push("}");
   out.push("");
 
-  // What a caller may call is what a module publishes and nothing outside answers.
+  // What a caller may call is every behavior a module publishes, whoever answers it: one the host
+  // answers is called through the module all the same, which reads what it is handed as the
+  // model's types before it reaches out.
   const offered = surface.modules.map((module) => ({
     module,
-    behaviors: module.behaviors.filter((behavior) => behavior.export !== undefined && behavior.reachOut === undefined),
+    behaviors: module.behaviors.filter((behavior) => behavior.export !== undefined),
   }));
   const decodable = new Map<string, Declaration[]>();
   for (const declaration of surface.declarations.filter((each) => each.decode !== undefined)) {
