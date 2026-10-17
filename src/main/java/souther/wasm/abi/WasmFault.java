@@ -4,8 +4,8 @@ import java.util.Optional;
 
 /**
  * A way a call into a linked module can end without a value that is not a Souther program's own:
- * this carrier failing to carry an answer through, or this backend's own machinery reaching a
- * state the checker settled it never would.
+ * this carrier failing to carry an answer through, a host breaking the contract of a behavior it
+ * supplies, or this backend's own machinery reaching a state the checker settled it never would.
  *
  * <p>{@code souther.compiler.abort.AbortKind}'s sibling and not its subject. A Souther program
  * ending without a value for a reason the specification states as its own is an {@code AbortKind},
@@ -54,7 +54,18 @@ public enum WasmFault {
      * own, said in {@code souther:surface}, and a caller that read them there hands over one of
      * them. {@code aux0} is the number, {@code aux1} how many the module gives.
      */
-    NO_SUCH_TYPE(12);
+    NO_SUCH_TYPE(12),
+
+    /**
+     * What a host answered for an injected behavior is not a value of the type the behavior
+     * declares: a field missing, the wrong kind of JSON, or a value one of the type's invariants
+     * rules out. The host broke the contract it implements, so the call ends rather than run on
+     * nothing, and the caller is not told its own arguments were wrong. {@code descriptor} is the
+     * answer's type, {@code aux0} the number the behavior is reached out under in
+     * {@code souther:surface}. What the reading found is left in the issues, which
+     * {@link RuntimeAbi#ISSUES_WRITTEN} writes until the caller resets.
+     */
+    INVALID_HOST_ANSWER(13);
 
     private final int code;
 

@@ -101,6 +101,13 @@ A host runs what it supplied for that number once, takes room for the encoded an
 `__ronto_alloc`, writes it there, and answers where it is in the low half and its length in the
 high half. The room is in the arena of the call that reached out, so it goes with that call's reset.
 
+The answer is read as the type the behavior declares, its rules included, as an argument is. An
+answer that is not a value of that type is the host's contract broken rather than the caller's
+arguments, so it ends the call with reason 13, `aux0` holding the number the behavior is reached
+out under; nothing of the body runs on it. What the reading found stays in the issues until the
+reset, and `__souther_issues_written` writes them as a refused argument's issues are written, at
+paths from the answer's root.
+
 What a caller writes code against is in the module too. `souther:surface` is one JSON object: each
 module's behaviors, with the export each is called through, who answers it (`here`, `injected`,
 `unwritten` or `elsewhere`), the number a call out carries for one the program reaches out for, the
@@ -169,6 +176,8 @@ bracket a core caller keeps, moved to where the format states it.
 
 A call the runtime ended answers `err`, with the reason a core module's abort record holds: 3 for
 arguments that are not JSON, 6 for a division by zero, and the rest as `RuntimeAbi` numbers them.
+`ended` carries the reason and nothing else, so a component's caller told 13 is not told where an
+answer it supplied was wrong.
 A core module traps there and its host reads the record afterwards, which a component cannot
 offer, because an instance that has trapped cannot be asked anything again. So when the core module
 is linked for a component, the one runtime function every ended call leaves through is replaced by

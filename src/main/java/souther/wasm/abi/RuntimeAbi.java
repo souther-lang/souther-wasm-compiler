@@ -67,9 +67,11 @@ public final class RuntimeAbi {
      * {@link #RUNTIME_INIT} came to be handed the program's descriptors of the primitives. Raised
      * to 14 when {@link #IMPORT_HOST_CALL} stopped being handed a buffer and came to answer where
      * the answer is and how long (issue #62): a buffer too short for the answer meant a second
-     * call, which ran what the host supplied a second time.
+     * call, which ran what the host supplied a second time. Raised to 15 when a call could end for a
+     * reason it could not before, {@link WasmFault#INVALID_HOST_ANSWER} (issue #63), and a host came
+     * to read the issues behind it through {@link #ISSUES_WRITTEN}.
      */
-    public static final int VERSION = 14;
+    public static final int VERSION = 15;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
@@ -180,7 +182,7 @@ public final class RuntimeAbi {
     public static final java.util.List<String> HOST_EXPORTS = java.util.List.of(
             RuntimeAbi.MEMORY, RuntimeAbi.ALLOC, RuntimeAbi.ALLOC_MARK, RuntimeAbi.ALLOC_RESET,
             RuntimeAbi.FAILURE_ADDR, RuntimeAbi.FAILURE_GENERATION, RuntimeAbi.ABI_VERSION,
-            RuntimeAbi.CANONICAL_REALLOC);
+            RuntimeAbi.CANONICAL_REALLOC, RuntimeAbi.ISSUES_WRITTEN);
 
     /** The module a linked output imports from. */
     public static final String IMPORT_MODULE = "souther";

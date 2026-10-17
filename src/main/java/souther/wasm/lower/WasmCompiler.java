@@ -870,14 +870,34 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.HOST_CALL))
                     .localSet(written);
 
-            out.localGet(written).wrap()
+            // Read on a list of its own. A body runs only where its call's arguments were read
+            // whole, so there is nothing of the call's to forget; what may be there is what a call
+            // the host made back into this module while it answered left behind.
+            int answer = out.narrow();
+            int descriptor = shapes.toRead(shapes.of(crossing.behavior().signature().answers()));
+            out.call(calls.of(RuntimeAbi.ISSUES_BEGIN))
+                    .localGet(written).wrap()
                     .localGet(written).shiftRight(32).wrap()
                     .call(calls.of(RuntimeAbi.JSON_PARSE))
-                    .constant(shapes.toRead(shapes.of(crossing.behavior().signature().answers())))
+                    .constant(descriptor)
                     .constant(0)
                     .constant(0)
-                    .call(calls.of(RuntimeAbi.READ));
-            return out.body();
+                    .call(calls.of(RuntimeAbi.READ))
+                    .localSet(answer);
+
+            // An answer that is not a value of the type declared leaves nothing to run on, and is
+            // the host's to answer for rather than the caller's: the call ends, and the issues the
+            // reading found stay for the host to read before it resets.
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT))
+                    .ifNotZero()
+                    .constant(WasmFault.INVALID_HOST_ANSWER.code())
+                    .constant(descriptor)
+                    .constant((long) crossing.ordinal())
+                    .constant(0L)
+                    .call(calls.of(RuntimeAbi.ABORT))
+                    .unreachable()
+                    .end();
+            return out.localGet(answer).body();
         }
 
         /**

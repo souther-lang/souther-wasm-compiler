@@ -7,7 +7,7 @@
 // Nothing in this file knows anything about a model. It is the same whatever program it loads;
 // what a binding generated from a module knows is its own, and calls through this.
 
-import { Decoder, type Path, type Result, failed, parse, stringify } from "@raoh/core";
+import { Decoder, type Issues, type Path, type Result, failed, parse, stringify } from "@raoh/core";
 import { issuesIn, type Reading } from "./issues.ts";
 import { type Behavior, type Shape, type Surface } from "./surface.ts";
 import { AS_TYPED, type FormPolicy, Values } from "./values.ts";
@@ -29,7 +29,7 @@ const decoder = new TextDecoder();
  * misread without a word. Held to what the compiler writes by
  * `TheGlueReadsWhatThisBuildWritesTest`.
  */
-export const READS = { surface: 4, abi: 14 } as const;
+export const READS = { surface: 4, abi: 15 } as const;
 
 /** Where the module says what it offers a caller, and what it reaches out for under which numbers. */
 const SURFACE = "souther:surface";
@@ -51,7 +51,11 @@ const REASONS: Readonly<Record<number, string>> = {
   10: "bounds that did not name what they were asked to name",
   11: "what a behavior answered did not keep what it promised",
   12: "a number the module gives no type under",
+  13: "a supplied function answered something other than its behavior's type",
 };
+
+/** The reason a call ends with where a supplied function answered outside its behavior's type. */
+const INVALID_HOST_ANSWER = 13;
 
 /** Where a module is: its bytes, or where to fetch them from. */
 export type Source = string | URL | Response | ArrayBuffer | ArrayBufferView;
@@ -66,6 +70,29 @@ export class Ended extends Error {
   constructor(reason: number, cause: unknown) {
     super(`the call ended: ${REASONS[reason] ?? `reason ${reason}`}`, { cause });
     this.reason = reason;
+  }
+}
+
+/**
+ * A call that ended because a function supplied for a behavior answered something that is not a
+ * value of the type the behavior declares: a field missing, the wrong kind of JSON, or a value one
+ * of the type's rules says nothing may be. The fault is the supplied function's and not the
+ * caller's, so this is thrown rather than answered as the call's issues; the issues say where in
+ * what it answered each thing is wrong.
+ */
+export class InvalidSuppliedAnswer extends Ended {
+  /** The behavior whose function answered, by the name it was supplied under. */
+  readonly behavior: string;
+  /** What is wrong with the answer, at paths from its root. */
+  readonly issues: Issues;
+
+  constructor(behavior: string, issues: Issues, cause: unknown) {
+    super(INVALID_HOST_ANSWER, cause);
+    this.name = "InvalidSuppliedAnswer";
+    this.message = `${behavior} answered something other than the type it declares: `
+      + issues.list.map((issue) => `${issue.path.isRoot ? "(root)" : issue.path.toString()} ${issue.code}`).join(", ");
+    this.behavior = behavior;
+    this.issues = issues;
   }
 }
 
@@ -126,7 +153,7 @@ export async function load(
   }
   const exports = exported(instance, surface);
   reach = (ordinal, at, length) => reachOut(crossings, values, exports, ordinal, at, length);
-  return new Program(exports, surface, values);
+  return new Program(exports, surface, values, crossings);
 }
 
 /** What the module imports: the one function it reaches out through, under the name it imports it by. */
@@ -241,6 +268,7 @@ interface Runtime {
   readonly __souther_failure_addr: () => number;
   readonly __souther_failure_generation: () => number;
   readonly __souther_decode: (number: number, at: number, length: number) => [number, number];
+  readonly __souther_issues_written: () => bigint;
 }
 
 /** What each export of the runtime is, by its name: one for each the glue calls, and no other. */
@@ -253,6 +281,7 @@ const RUNTIME = {
   __souther_failure_addr: "function",
   __souther_failure_generation: "function",
   __souther_decode: "function",
+  __souther_issues_written: "function",
 } as const satisfies { readonly [name in keyof Runtime]: Kind };
 
 type Exports = Runtime & { readonly [behavior: string]: unknown };
@@ -277,9 +306,12 @@ class Program {
   readonly #values: Values;
   /** What each behavior a caller calls answers, by what it is exported as. */
   readonly #answers: ReadonlyMap<string, Shape>;
+  /** What each behavior the program reaches out for is supplied under, by the number it goes by. */
+  readonly #crossings: ReadonlyMap<number, Crossing>;
 
-  constructor(exports: Exports, surface: Surface, values: Values) {
+  constructor(exports: Exports, surface: Surface, values: Values, crossings: ReadonlyMap<number, Crossing>) {
     this.#exports = exports;
+    this.#crossings = crossings;
     this.#answers = new Map(surface.modules
       .flatMap((module) => module.behaviors)
       .filter((behavior) => behavior.export !== undefined)
@@ -445,7 +477,20 @@ class Program {
     if (words.getUint32(at + FAILURE.generation, true) === generation) {
       return trapped;
     }
-    return new Ended(words.getUint32(at + FAILURE.reason, true), trapped);
+    const reason = words.getUint32(at + FAILURE.reason, true);
+    if (reason !== INVALID_HOST_ANSWER) {
+      return new Ended(reason, trapped);
+    }
+    // Read from the record before the issues are written: writing them may grow the memory, and
+    // the view taken over it before then is of a buffer that is gone.
+    const ordinal = Number(words.getBigUint64(at + FAILURE.aux0, true));
+    const behavior = this.#crossings.get(ordinal)?.named ?? `the behavior reached out for under ${ordinal}`;
+    // The issues are in the arena of the call that ended, which the caller has not reset yet.
+    const written = exports.__souther_issues_written();
+    const pointer = Number(written & 0xffff_ffffn);
+    const length = Number(written >> 32n);
+    const answer = parse(decoder.decode(this.#bytes().subarray(pointer, pointer + length)));
+    return new InvalidSuppliedAnswer(behavior, issuesIn(answer), trapped);
   }
 }
 

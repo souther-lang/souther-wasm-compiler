@@ -99,7 +99,10 @@ const PAGE: usize = 65536;
 /// Raised to 14 when `host_call` stopped being handed a buffer and came to answer where the answer
 /// is and how long, packed as `__souther_host_call` answers them (issue #62). A buffer the answer
 /// did not fit meant a second call, which ran what was supplied a second time.
-const ABI_VERSION: u32 = 14;
+///
+/// Raised to 15 when a call could end for a reason it could not before, `INVALID_HOST_ANSWER`
+/// (issue #63), and a host came to read the issues behind it through `__souther_issues_written`.
+const ABI_VERSION: u32 = 15;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -415,9 +418,10 @@ const OFF_AUX1: usize = 20;
 // that raising one and reading it agree; nothing here may raise a Souther program abort under a
 // name `WasmAbortMapping` does not also use for it (`TheTwoSidesOfAReasonAgreeOnItsNumberTest`
 // holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE`,
-// `BACKEND_INVARIANT_BROKEN` and `NO_SUCH_TYPE` are this crate's own — a carrier failing to carry an answer through,
-// or this backend's own machinery reaching a state the checker settled it never would — and are
-// this crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
+// `BACKEND_INVARIANT_BROKEN`, `NO_SUCH_TYPE` and `INVALID_HOST_ANSWER` are this crate's own — a
+// carrier failing to carry an answer through, a host breaking the contract of what it supplies, or
+// this backend's own machinery reaching a state the checker settled it never would — and are this
+// crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
 /// The arena asked for more than the engine would map. `aux0` is the size that did not fit. A
 /// platform failure, not a Souther program ending without a value: `WasmFault::OUT_OF_MEMORY`.
@@ -471,6 +475,12 @@ pub const REASON_ENSURES_NOT_HELD: u32 = 11;
 /// the number, `aux1` how many the module gives. Raised by generated code, and an ABI failure by
 /// whoever calls this module, as `BAD_MARK` is: `WasmFault::NO_SUCH_TYPE`.
 pub const REASON_NO_SUCH_TYPE: u32 = 12;
+/// What a host answered for an injected behavior is not a value of the type the behavior declares.
+/// `descriptor` is the answer's type and `aux0` the number the behavior is reached out under; what
+/// the reading found stays in the issues, for the host to read through `__souther_issues_written`
+/// before it resets. Raised by generated code, and the host's contract broken rather than the
+/// caller's arguments or a Souther program's own abort: `WasmFault::INVALID_HOST_ANSWER`.
+pub const REASON_INVALID_HOST_ANSWER: u32 = 13;
 
 /// The arena, as what `alloc` allocates from: for notation-199x, and for the text this crate
 /// builds to hand to it.
