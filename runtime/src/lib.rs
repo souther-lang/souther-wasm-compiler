@@ -17,10 +17,14 @@
 //!
 //! # Failure
 //!
-//! An abort writes a fixed-width record outside the arena and traps. The record holds no pointer:
-//! a host that resets the arena before it builds a diagnostic would otherwise read freed bytes
-//! for a reason. The generation tells a Souther abort from an ordinary wasm fault — a caller
-//! snapshots it before the call and reads the record only when it differs afterwards.
+//! An abort writes a fixed-width record outside the arena and traps. The record is outside the
+//! arena so that a host still has the reason after it resets; where a reason's word points at more
+//! than it holds, it says whether that is in static memory, which outlives the reset, or in the
+//! arena, which a host reads before it resets (see `__souther_abort`). The generation tells a
+//! Souther abort from an ordinary wasm fault — a caller snapshots it before the call and reads the
+//! record only when it differs afterwards, and a host whose supplied functions call back in keeps
+//! the last generation it has told a caller of instead, since the innermost call that ended reads
+//! the record first.
 
 #![no_std]
 
@@ -95,7 +99,16 @@ const PAGE: usize = 65536;
 /// for it; a constraint names the slot of what evaluates it where it named its rule; and
 /// `__souther_runtime_init` is handed the descriptors the program holds for the primitives, which
 /// this runtime no longer holds itself.
-const ABI_VERSION: u32 = 13;
+///
+/// Raised to 14 when `host_call` stopped being handed a buffer and came to answer where the answer
+/// is and how long, packed as `__souther_host_call` answers them (issue #62). A buffer the answer
+/// did not fit meant a second call, which ran what was supplied a second time.
+///
+/// Raised to 15 when a call could end for a reason it could not before, `INVALID_HOST_ANSWER`
+/// (issue #63), whose record points at the behavior's name and at the issues, raised by
+/// `__souther_read_answer`, which an injected behavior's answer came to be read through, and a
+/// component's `ended` came to carry the two as its `invalid-answer` beside the reason.
+const ABI_VERSION: u32 = 15;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -203,16 +216,29 @@ pub unsafe extern "C" fn __souther_lift_area(at: u32, length: u32) -> u32 {
     area
 }
 
-/// The reason the record holds for the call just ended, as the `err` of the result
-/// [`__souther_lift_area`] answers the `ok` of.
+/// Why the call just ended, as the `err` of the result [`__souther_lift_area`] answers the `ok`
+/// of: `record ended { reason: u32, invalid-answer: option<invalid-answer> }`, where
+/// `record invalid-answer { behavior: string, issues: string }` is there only for
+/// `INVALID_HOST_ANSWER`.
 ///
 /// Read from the record, which is the one place a call's reason is kept: what left the call says
-/// only that it was left.
+/// only that it was left. The two strings of an invalid answer are where the record's `aux0` and
+/// `aux1` say, written before the call was left, so nothing is handed out here.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_lift_ended() -> u32 {
     let area = lifted(LIFTED_ENDED);
     let reason = core::ptr::read((FAILURE + OFF_REASON) as *const u32);
     core::ptr::write_unaligned((area + 4) as *mut u32, reason);
+    let invalid = reason == REASON_INVALID_HOST_ANSWER;
+    core::ptr::write((area + 8) as *mut u8, invalid as u8);
+    if invalid {
+        let behavior = core::ptr::read_unaligned((FAILURE + OFF_AUX0) as *const u64);
+        let issues = core::ptr::read_unaligned((FAILURE + OFF_AUX1) as *const u64);
+        core::ptr::write_unaligned((area + 12) as *mut u32, behavior as u32);
+        core::ptr::write_unaligned((area + 16) as *mut u32, (behavior >> 32) as u32);
+        core::ptr::write_unaligned((area + 20) as *mut u32, issues as u32);
+        core::ptr::write_unaligned((area + 24) as *mut u32, (issues >> 32) as u32);
+    }
     area
 }
 
@@ -221,14 +247,15 @@ const LIFTED_ANSWERED: u8 = 0;
 /// The case of a lifted result that holds why the call ended.
 const LIFTED_ENDED: u8 = 1;
 
-/// Where a lifted result is written: twelve bytes, the larger case's, a string's two words after
-/// the case byte and its padding.
+/// Where a lifted result is written: twenty-eight bytes, the larger case's. After the case byte and
+/// its padding, the `ok` is a string's two words; the `err` is the reason, the byte saying whether
+/// there is an invalid answer and its padding, and that answer's two strings.
 ///
 /// Static and not the arena's, because writing an outcome must not be able to fail. The call may
 /// have ended because nothing more could be handed out, and answering why by handing something out
 /// would end it a second time, outside anything that would catch it. One area is enough: a
 /// component's caller reads the result before the post-return, and no call begins before that.
-static mut LIFTED: [u32; 3] = [0; 3];
+static mut LIFTED: [u32; 7] = [0; 7];
 
 /// The result area, saying which case it holds.
 unsafe fn lifted(case: u8) -> u32 {
@@ -274,17 +301,18 @@ unsafe fn arena_popped() {
 /// before any lifted function does, so nothing catches what ends it, and the host is told the call
 /// failed as it would be of a trap. The component model lets a realloc answer a place or fail the
 /// call, nothing else.
+///
+/// What it hands out begins where `align` says, nothing included: the canonical ABI checks the
+/// alignment of what a realloc answers whatever its size, and a host reading the two words a
+/// lowered call answers in from an address that is not a multiple of four traps.
 #[no_mangle]
 pub unsafe extern "C" fn cabi_realloc(
     original: u32,
     original_size: u32,
-    _align: u32,
+    align: u32,
     wanted: u32,
 ) -> u32 {
-    if wanted == 0 {
-        return ARENA_TOP as u32;
-    }
-    let held = __ronto_alloc(wanted);
+    let held = alloc_aligned(wanted, align);
     if original != 0 && original_size != 0 {
         let taken = if original_size < wanted { original_size } else { wanted };
         core::ptr::copy_nonoverlapping(original as *const u8, held as *mut u8, taken as usize);
@@ -312,12 +340,16 @@ pub extern "C" fn __souther_abi_version() -> u32 {
     ABI_VERSION
 }
 
-/// Ends the call with a reason the host can name, without handing it a pointer to read it from.
+/// Ends the call with a reason the host can name.
 ///
 /// The record is written before the trap and holds only fixed-width values, so a host that resets
 /// the arena on its way to building a diagnostic still has the reason. `descriptor` names the type
 /// the reason is about, in the generated descriptor table; the two `aux` words carry whatever the
-/// reason itself needs, bounded.
+/// reason itself needs, bounded. A word may point at text, packed as where it is and how long:
+/// `UNREACHABLE_REACHED`'s reason and `INVALID_HOST_ANSWER`'s behavior are in static memory and
+/// are there after the reset, and `INVALID_HOST_ANSWER`'s issues are in the arena and are not, so
+/// a host reads them before it resets — which a host reading the record at all does, since the
+/// call that ended is its own until it resets.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_abort(reason: u32, descriptor: u32, aux0: u64, aux1: u64) -> ! {
     let generation = core::ptr::read((FAILURE + OFF_GENERATION) as *const u32);
@@ -349,30 +381,23 @@ pub extern "C" fn __souther_end_call() -> ! {
 extern "C" {
     /// The one crossing out of the module.
     ///
-    /// A host owns no part of this memory's allocation, so the buffer a behavior's answer is
-    /// written into is the caller's: `out_ptr` and `out_cap` come from the arena. The result is
-    /// the length the answer wants, which a caller compares with the capacity it offered — a
-    /// larger number means nothing was written and the call is made again against a buffer that
-    /// fits.
-    fn host_call(behavior_id: u32, in_ptr: u32, in_len: u32, out_ptr: u32, out_cap: u32) -> u32;
+    /// Answers where the encoded answer is and its length, packed as the low and high halves of an
+    /// `i64`. The host puts the answer in the arena through `__ronto_alloc`, once it knows how long
+    /// it is, so one call reaches the behavior once: a buffer offered ahead of the answer has to be
+    /// offered again when it is too short, and the call made again runs the behavior again.
+    ///
+    /// The host moves the bump pointer only through the allocator, and only while this call is
+    /// being made, which is where this module would have allocated the answer itself.
+    fn host_call(behavior_id: u32, in_ptr: u32, in_len: u32) -> u64;
 }
 
-/// Reaches an injected behavior, allocating the answer's buffer here rather than letting the host
-/// move this module's bump pointer.
+/// Reaches an injected behavior.
 ///
 /// Answers the arena pointer the encoded answer sits at, and its length, packed as the low and
 /// high halves of an `i64` — one result rather than a pair, so a call site keeps no scratch.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_host_call(behavior_id: u32, in_ptr: u32, in_len: u32) -> u64 {
-    let mut capacity = 256u32;
-    loop {
-        let out = __ronto_alloc(capacity);
-        let wanted = host_call(behavior_id, in_ptr, in_len, out, capacity);
-        if wanted <= capacity {
-            return (out as u64) | ((wanted as u64) << 32);
-        }
-        capacity = wanted;
-    }
+    host_call(behavior_id, in_ptr, in_len)
 }
 
 /// Applies a block to one value, from inside this crate.
@@ -417,9 +442,10 @@ const OFF_AUX1: usize = 20;
 // that raising one and reading it agree; nothing here may raise a Souther program abort under a
 // name `WasmAbortMapping` does not also use for it (`TheTwoSidesOfAReasonAgreeOnItsNumberTest`
 // holds both sides to that). `OUT_OF_MEMORY`, `BAD_MARK`, `MALFORMED_JSON`, `NOT_A_VALUE`,
-// `BACKEND_INVARIANT_BROKEN` and `NO_SUCH_TYPE` are this crate's own — a carrier failing to carry an answer through,
-// or this backend's own machinery reaching a state the checker settled it never would — and are
-// this crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
+// `BACKEND_INVARIANT_BROKEN`, `NO_SUCH_TYPE` and `INVALID_HOST_ANSWER` are this crate's own — a
+// carrier failing to carry an answer through, a host breaking the contract of what it supplies, or
+// this backend's own machinery reaching a state the checker settled it never would — and are this
+// crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
 /// The arena asked for more than the engine would map. `aux0` is the size that did not fit. A
 /// platform failure, not a Souther program ending without a value: `WasmFault::OUT_OF_MEMORY`.
@@ -473,6 +499,13 @@ pub const REASON_ENSURES_NOT_HELD: u32 = 11;
 /// the number, `aux1` how many the module gives. Raised by generated code, and an ABI failure by
 /// whoever calls this module, as `BAD_MARK` is: `WasmFault::NO_SUCH_TYPE`.
 pub const REASON_NO_SUCH_TYPE: u32 = 12;
+/// What a host answered for an injected behavior is not a value of the type the behavior declares.
+/// `descriptor` is the answer's type. `aux0` is the behavior's name, in static memory, and `aux1`
+/// what the reading found, written as a refused call's issues are and in the arena until the
+/// caller resets; each packed as where it is in the low half and how long in the high half.
+/// Raised by generated code, and the host's contract broken rather than the caller's arguments or
+/// a Souther program's own abort: `WasmFault::INVALID_HOST_ANSWER`.
+pub const REASON_INVALID_HOST_ANSWER: u32 = 13;
 
 /// The arena, as what `alloc` allocates from: for notation-199x, and for the text this crate
 /// builds to hand to it.
@@ -482,17 +515,13 @@ pub const REASON_NO_SUCH_TYPE: u32 = 12;
 /// call that asked for it, and nothing here keeps any of it past that call.
 ///
 /// The arena hands out exactly what it is asked for, so that a run written piece by piece stays
-/// one run, and an alignment is taken here by padding first. A caller writing a run therefore asks
-/// the library for nothing between its first piece and its last.
+/// one run, and an alignment is taken through [`alloc_aligned`], which pads first. A caller writing
+/// a run therefore asks the library for nothing between its first piece and its last.
 struct Arena;
 
 unsafe impl core::alloc::GlobalAlloc for Arena {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        let over = ARENA_TOP % layout.align();
-        if over != 0 {
-            let _ = __ronto_alloc((layout.align() - over) as u32);
-        }
-        __ronto_alloc(layout.size() as u32) as *mut u8
+        alloc_aligned(layout.size() as u32, layout.align() as u32) as *mut u8
     }
 
     unsafe fn dealloc(&self, _at: *mut u8, _layout: core::alloc::Layout) {}
@@ -517,8 +546,33 @@ static ARENA: Arena = Arena;
 /// The arena, for this crate's own modules. The exported name is the host's; this is the one a
 /// caller inside the module writes, so that what a host contract is called and what the code says
 /// stay one thing rather than two spellings of it.
+///
+/// What it hands out begins wherever the arena stands, since it hands out exactly what it is asked
+/// for: a run written piece by piece stays one run, and a header has its payload right after it. So
+/// what it answers is read a word at a time only through `read_unaligned` and `write_unaligned`.
+/// What has to begin at a multiple of something — a slice, a place the component model reads —
+/// comes from [`alloc_aligned`] or [`alloc_words`].
 pub(crate) unsafe fn alloc(size: u32) -> u32 {
     __ronto_alloc(size)
+}
+
+/// A run of `size` bytes beginning at a multiple of `align`, which is a power of two.
+///
+/// The one place an alignment is taken, by padding the arena up to it first. Every caller that
+/// needs one comes here: the allocator the library allocates through, the component model's
+/// realloc, and a slice of words.
+pub(crate) unsafe fn alloc_aligned(size: u32, align: u32) -> u32 {
+    let past = ARENA_TOP as u32 & (align - 1);
+    if past != 0 {
+        let _ = __ronto_alloc(align - past);
+    }
+    __ronto_alloc(size)
+}
+
+/// `count` words from the arena, as a slice: a slice of `u32` has to begin at a multiple of four,
+/// which [`alloc`] does not.
+pub(crate) unsafe fn alloc_words(count: usize) -> &'static mut [u32] {
+    core::slice::from_raw_parts_mut(alloc_aligned(4 * count as u32, 4) as usize as *mut u32, count)
 }
 
 /// Ending the call, for this crate's own modules.

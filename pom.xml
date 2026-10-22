@@ -6,7 +6,7 @@
 
     <groupId>org.souther-lang</groupId>
     <artifactId>souther-wasm-compiler</artifactId>
-    <version>0.1.0</version>
+    <version>0.4.1-SNAPSHOT</version>
 
     <name>Souther Wasm Compiler</name>
     <description>Compiles a checked Souther program to a WebAssembly module.</description>
@@ -38,7 +38,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <souther.version>0.4.0</souther.version>
+        <souther.version>0.4.1</souther.version>
         <jspecify.version>1.0.0</jspecify.version>
         <chicory.version>1.7.5</chicory.version>
         <junit.version>5.14.0</junit.version>
@@ -117,8 +117,14 @@
                 <configuration>
                     <!-- A heap the suite fits twice over, so that what a test keeps alive for good
                          — a cache with no bound, a module held after its test — fails the build
-                         rather than growing with every test added. The suite fits in 128 MB. -->
-                    <argLine>-Xmx256m</argLine>
+                         rather than growing with every test added. The suite fits in 128 MB.
+
+                         And a stack for what the tests nest. Chicory interprets a wasm call as
+                         several Java frames on the calling thread, so a value nested three hundred
+                         deep needs about 1.5 MB on x86-64 Linux, interpreted, and fits the 1 MB the
+                         JVM gives by default only once the interpreter has been compiled: left to
+                         the default, a test passes or not by how warm the JVM happens to be. -->
+                    <argLine>-Xmx256m -Xss4m</argLine>
                 </configuration>
             </plugin>
             <!-- What only the jars can be asked: which of them says it is a backend, and whether

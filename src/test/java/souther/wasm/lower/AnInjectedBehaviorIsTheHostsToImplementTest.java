@@ -5,15 +5,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.dylibso.chicory.runtime.HostFunction;
 import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
+import com.dylibso.chicory.wasm.ChicoryException;
 import com.dylibso.chicory.wasm.Parser;
 import com.dylibso.chicory.wasm.types.ValType;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import souther.wasm.Compiled;
+import souther.wasm.abi.FailureCause;
+import souther.wasm.abi.FailureRecord;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.WasmFault;
 
 /**
  * A behavior the model declares and something outside implements.
@@ -22,9 +28,9 @@ import souther.wasm.abi.RuntimeAbi;
  * value, both written as the documents a caller writes. So a host implements one the way it calls
  * one, and knows nothing of how this module holds a value.
  *
- * <p>The host is handed a number for which behavior it is and a buffer to write the answer into.
- * The buffer is this module's, because the bump pointer is this module's — a host that allocated
- * would be moving it.
+ * <p>The host is handed a number for which behavior it is, runs it once, and puts the answer in this
+ * module's arena through the module's own allocator, answering where it is and how long. The
+ * length is known before anything is allocated, so no answer is too long for where it goes.
  */
 class AnInjectedBehaviorIsTheHostsToImplementTest {
 
@@ -81,22 +87,142 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
     }
 
     @Test
-    void asksAgainWithMoreRoomWhereTheAnswerDidNotFit() {
-        String wide = "x".repeat(4000);
-        Host host = Host.answering("""
-                module wording
+    void reachesOutOnceWhateverTheLengthOfTheAnswer() {
+        Host host = Host.answering(WORDING, arguments -> "\"" + "x".repeat(
+                Integer.parseInt(arguments.substring(1, arguments.length() - 1))) + "\"");
 
-                behavior nameOf : (n: Int) -> String
+        // Past the 256 bytes a buffer offered ahead of the answer once held, and past the 64 KiB
+        // the memory starts with, which the answer has to grow it for.
+        for (int length : new int[] {200, 255, 1000, 70_000}) {
+            int before = host.tries();
 
-                behavior echoed : (n: Int) -> String depends on nameOf
+            assertThat(host.answerOf("wording.echoed", "[" + length + "]"))
+                    .isEqualTo("{\"value\":\"" + "x".repeat(length) + "\"}");
+            assertThat(host.tries() - before).describedAs("tries for %d", length).isEqualTo(1);
+        }
+    }
 
-                let echoed (n, nameOf) = nameOf(n)
-                """, arguments -> "\"" + wide + "\"");
+    @Test
+    void takesTheLengthOfAnAnswerInBytesAndNotInCharacters() {
+        String wide = "日本語🍣".repeat(100);
+        Host host = Host.answering(WORDING, arguments -> "\"" + wide + "\"");
 
         assertThat(host.answerOf("wording.echoed", "[1]"))
                 .isEqualTo("{\"value\":\"" + wide + "\"}");
-        assertThat(host.tries()).isGreaterThan(1);
+        assertThat(host.tries()).isEqualTo(1);
     }
+
+    private static final String PROBE = """
+            module example.probe
+
+            data Id = Int
+                invariant value >= 1
+
+            data Title = String
+                invariant String.length(value) >= 1
+
+            data Row = { id: Id, title: Title }
+
+            behavior storeRow : (title: Title) -> Row
+
+            behavior readRows : () -> List<Row>
+            """;
+
+    @Test
+    void endsTheCallWhereAnAnswerBreaksARuleOfItsType() {
+        Host host = Host.answering(PROBE, arguments -> "{\"id\":0,\"title\":\"milk\"}");
+
+        Ending ended = host.endingOf("example.probe.storeRow", "[\"milk\"]");
+
+        assertThat(ended.record().cause())
+                .contains(new FailureCause.Wasm(WasmFault.INVALID_HOST_ANSWER));
+        assertThat(ended.issues()).contains("\"path\":\"/id\",\"code\":\"out_of_range\"")
+                .doesNotContain("/title");
+    }
+
+    @Test
+    void saysWhereEachPartOfAWrongAnswerIsWrong() {
+        assertThat(Host.answering(PROBE, arguments -> "{\"id\":2}")
+                .endingOf("example.probe.storeRow", "[\"milk\"]").issues())
+                .contains("\"path\":\"/title\",\"code\":\"required\"");
+        assertThat(Host.answering(PROBE, arguments -> "\"not a row\"")
+                .endingOf("example.probe.storeRow", "[\"milk\"]").issues())
+                .contains("\"path\":\"\",\"code\":\"type_mismatch\"");
+        assertThat(Host.answering(PROBE, arguments -> "[{\"id\":1,\"title\":\"a\"},{\"id\":0,\"title\":\"\"}]")
+                .endingOf("example.probe.readRows", "[]").issues())
+                .contains("\"path\":\"/1/id\"", "\"path\":\"/1/title\"")
+                .doesNotContain("\"path\":\"/0");
+    }
+
+    @Test
+    void endsTheCallWhereAnAnswerIsNotJsonAsTheHostsAndNotTheCallers() {
+        // Text that is not one document is the host's contract broken as much as a field missing
+        // is, and not the caller's arguments being malformed, which a reason of its own says.
+        for (String answer : List.of("nope", "{\"id\":1", "{\"id\":1,\"title\":\"a\"} trailing")) {
+            Ending ended = Host.answering(PROBE, arguments -> answer)
+                    .endingOf("example.probe.storeRow", "[\"milk\"]");
+
+            assertThat(ended.record().cause()).describedAs(answer)
+                    .contains(new FailureCause.Wasm(WasmFault.INVALID_HOST_ANSWER));
+            assertThat(ended.behavior()).isEqualTo("example.probe.storeRow");
+            assertThat(ended.issues()).describedAs(answer).isEqualTo("{\"issues\":[{\"path\":\"\","
+                    + "\"code\":\"invalid_format\",\"messageKey\":\"invalid_format.json\",\"meta\":{}}]}");
+        }
+    }
+
+    @Test
+    void namesTheBehaviorWhoseAnswerWasWrong() {
+        Host host = Host.answering(PROBE, arguments -> "{}");
+
+        for (String behavior : List.of("storeRow", "readRows")) {
+            String arguments = behavior.equals("storeRow") ? "[\"milk\"]" : "[]";
+            Ending ended = host.endingOf("example.probe." + behavior, arguments);
+
+            assertThat(ended.record().descriptor()).isNotZero();
+            assertThat(ended.behavior()).isEqualTo("example.probe." + behavior);
+        }
+    }
+
+    @Test
+    void runsNothingOfTheBodyOnAWrongAnswer() {
+        Host host = Host.answering(SOURCE, arguments -> "{\"per\":\"seven\"}");
+
+        Ending ended = host.endingOf("pricing.twice", "[\"ordinary\"]");
+
+        assertThat(ended.record().cause())
+                .contains(new FailureCause.Wasm(WasmFault.INVALID_HOST_ANSWER));
+        assertThat(ended.issues()).contains("\"path\":\"/per\"");
+        assertThat(host.tries()).describedAs("the second reaching out").isEqualTo(1);
+    }
+
+    @Test
+    void answersTheNextCallAfterAWrongAnswer() {
+        String[] answer = {"{\"id\":0,\"title\":\"\"}"};
+        Host host = Host.answering(PROBE, arguments -> answer[0]);
+
+        host.endingOf("example.probe.storeRow", "[\"milk\"]");
+        answer[0] = "{\"id\":1,\"title\":\"milk\"}";
+
+        assertThat(host.answerOf("example.probe.storeRow", "[\"milk\"]"))
+                .isEqualTo("{\"value\":{\"id\":1,\"title\":\"milk\"}}");
+    }
+
+    /**
+     * Why a call ended, and for an invalid answer which behavior's it was and what the issues
+     * said, read where the record points before the arena was reset.
+     */
+    private record Ending(FailureRecord record, String behavior, String issues) {
+    }
+
+    private static final String WORDING = """
+            module wording
+
+            behavior nameOf : (n: Int) -> String
+
+            behavior echoed : (n: Int) -> String depends on nameOf
+
+            let echoed (n, nameOf) = nameOf(n)
+            """;
 
     /** A module with something outside standing behind the behaviors the model did not write. */
     private static final class Host {
@@ -114,8 +240,8 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
             HostFunction crossing = new HostFunction(
                     RuntimeAbi.IMPORT_MODULE,
                     RuntimeAbi.IMPORT_HOST_CALL,
-                    List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32, ValType.I32),
-                    List.of(ValType.I32),
+                    List.of(ValType.I32, ValType.I32, ValType.I32),
+                    List.of(ValType.I64),
                     (instance, arguments) -> {
                         holder[0].tries++;
                         String written = new String(
@@ -123,10 +249,9 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
                                 StandardCharsets.UTF_8);
                         byte[] answer = implementation.apply(written)
                                 .getBytes(StandardCharsets.UTF_8);
-                        if (answer.length <= arguments[4]) {
-                            instance.memory().write((int) arguments[3], answer);
-                        }
-                        return new long[] {answer.length};
+                        long into = instance.export(RuntimeAbi.ALLOC).apply(answer.length)[0];
+                        instance.memory().write((int) into, answer);
+                        return new long[] {(into & 0xffff_ffffL) | ((long) answer.length << 32)};
                     });
             holder[0] = new Host(Instance.builder(Parser.parse(module))
                     .withImportValues(ImportValues.builder().addFunction(crossing).build())
@@ -136,6 +261,32 @@ class AnInjectedBehaviorIsTheHostsToImplementTest {
 
         int tries() {
             return tries;
+        }
+
+        /** The text a record's word points at: where it is in the low half, how long in the high. */
+        private String textAt(long packed) {
+            return new String(instance.memory().readBytes((int) packed, (int) (packed >>> 32)),
+                    StandardCharsets.UTF_8);
+        }
+
+        /** A call that ended rather than answer, and the arena it took handed back. */
+        Ending endingOf(String export, String arguments) {
+            int snapshot = (int) instance.export(RuntimeAbi.FAILURE_GENERATION).apply()[0];
+            int mark = (int) instance.export(RuntimeAbi.ALLOC_MARK).apply()[0];
+            try {
+                String answered = answerOf(export, arguments);
+                throw new AssertionError(export + " answered " + answered + " rather than ending");
+            } catch (ChicoryException trapped) {
+                int at = (int) instance.export(RuntimeAbi.FAILURE_ADDR).apply()[0];
+                FailureRecord record = FailureRecord.read(ByteBuffer
+                        .wrap(instance.memory().readBytes(at, RuntimeAbi.FAILURE_BYTES))
+                        .order(ByteOrder.LITTLE_ENDIAN), 0);
+                assertThat(record.describesTrapAfter(snapshot)).isTrue();
+                String behavior = textAt(record.aux0());
+                String issues = textAt(record.aux1());
+                instance.export(RuntimeAbi.ALLOC_RESET).apply(mark);
+                return new Ending(record, behavior, issues);
+            }
         }
 
         String answerOf(String export, String arguments) {

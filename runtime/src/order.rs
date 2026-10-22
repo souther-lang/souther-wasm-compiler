@@ -504,10 +504,7 @@ pub unsafe fn keyed(node: u32) {
         }
         json::TAG_OBJECT => {
             let held = json::__souther_json_length(node);
-            let order = core::slice::from_raw_parts_mut(
-                crate::alloc(4 * held.max(1)) as usize as *mut u32,
-                held as usize,
-            );
+            let order = crate::alloc_words(held as usize);
             for (i, each) in order.iter_mut().enumerate() {
                 *each = i as u32;
             }
@@ -520,21 +517,17 @@ pub unsafe fn keyed(node: u32) {
                     json::__souther_json_length(y),
                 )
             });
-            let entries = alloc_pairs(held);
+            let entries = crate::alloc_words(2 * held as usize);
             for (to, &from) in order.iter().enumerate() {
                 let value = json::__souther_json_value(node, from);
                 keyed(value);
-                *entries.add(2 * to) = json::__souther_json_key(node, from);
-                *entries.add(2 * to + 1) = value;
+                entries[2 * to] = json::__souther_json_key(node, from);
+                entries[2 * to + 1] = value;
             }
-            json::put_entries(node, entries, held);
+            json::put_entries(node, entries.as_ptr(), held);
         }
         _ => {}
     }
-}
-
-unsafe fn alloc_pairs(held: u32) -> *mut u32 {
-    crate::alloc(8 * held.max(1)) as usize as *mut u32
 }
 
 /// Two numbers as written, by the amount each writes.
@@ -671,7 +664,7 @@ pub unsafe fn sort_places(places: &mut [u32], against: &dyn Fn(u32, u32) -> i32)
     if held < 2 {
         return;
     }
-    let other = core::slice::from_raw_parts_mut(crate::alloc(4 * held as u32) as usize as *mut u32, held);
+    let other = crate::alloc_words(held);
     let mut width = 1;
     let (mut from, mut into) = (places.as_mut_ptr(), other.as_mut_ptr());
     while width < held {

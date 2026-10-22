@@ -51,6 +51,7 @@ class WhatACanonicalCallOwesAndGetsBackTest {
         assertThat(module.read(area, 1)[0]).describedAs("the err case").isEqualTo((byte) 1);
         assertThat(wordAt(module, area + 4)).describedAs("the reason the record holds")
                 .isEqualTo(REASON_OUT_OF_MEMORY);
+        assertThat(module.read(area + 8, 1)[0]).describedAs("no invalid answer").isZero();
 
         // The answer too, which a call may have used the last of the room to make.
         int answered = module.call(RuntimeAbi.LIFT_AREA, 12, 34);
@@ -73,6 +74,25 @@ class WhatACanonicalCallOwesAndGetsBackTest {
         // Where the arena began, not where it last stood: what a call owes back is the whole of
         // what it made, and a mark somewhere in the middle of one is not that.
         assertThat(module.call(RuntimeAbi.ALLOC_MARK)).isEqualTo(began).isNotEqualTo(partway);
+    }
+
+    @Test
+    void beginsWhatItHandsOutWhereTheAlignmentItIsToldSays() {
+        Running module = Running.bareRuntime();
+
+        // The two words a lowered call answers in are asked for at four, and are read from an
+        // address that is a multiple of it or not at all.
+        for (int taken = 0; taken < 8; taken++) {
+            module.call(RuntimeAbi.ALLOC, 1);
+            for (int align : new int[] {1, 2, 4, 8}) {
+                // Nothing at all too: an empty list is still read from where its elements would be.
+                for (int wanted : new int[] {0, 8}) {
+                    int held = module.call(RuntimeAbi.CANONICAL_REALLOC, 0, 0, align, wanted);
+                    assertThat(held % align).describedAs("%d bytes at %d after %d odd bytes",
+                            wanted, align, taken).isZero();
+                }
+            }
+        }
     }
 
     @Test

@@ -7,7 +7,7 @@
 // Nothing in this file knows anything about a model. It is the same whatever program it loads;
 // what a binding generated from a module knows is its own, and calls through this.
 
-import { Decoder, type Path, type Result, failed, parse, stringify } from "@raoh/core";
+import { Decoder, type Issues, type Path, type Result, failed, parse, stringify } from "@raoh/core";
 import { issuesIn, type Reading } from "./issues.ts";
 import { type Behavior, type Shape, type Surface } from "./surface.ts";
 import { AS_TYPED, type FormPolicy, Values } from "./values.ts";
@@ -29,7 +29,7 @@ const decoder = new TextDecoder();
  * misread without a word. Held to what the compiler writes by
  * `TheGlueReadsWhatThisBuildWritesTest`.
  */
-export const READS = { surface: 4, abi: 13 } as const;
+export const READS = { surface: 4, abi: 15 } as const;
 
 /** Where the module says what it offers a caller, and what it reaches out for under which numbers. */
 const SURFACE = "souther:surface";
@@ -51,7 +51,11 @@ const REASONS: Readonly<Record<number, string>> = {
   10: "bounds that did not name what they were asked to name",
   11: "what a behavior answered did not keep what it promised",
   12: "a number the module gives no type under",
+  13: "a supplied function answered something other than its behavior's type",
 };
+
+/** The reason a call ends with where a supplied function answered outside its behavior's type. */
+const INVALID_HOST_ANSWER = 13;
 
 /** Where a module is: its bytes, or where to fetch them from. */
 export type Source = string | URL | Response | ArrayBuffer | ArrayBufferView;
@@ -66,6 +70,29 @@ export class Ended extends Error {
   constructor(reason: number, cause: unknown) {
     super(`the call ended: ${REASONS[reason] ?? `reason ${reason}`}`, { cause });
     this.reason = reason;
+  }
+}
+
+/**
+ * A call that ended because a function supplied for a behavior answered something that is not a
+ * value of the type the behavior declares: a field missing, the wrong kind of JSON, or a value one
+ * of the type's rules says nothing may be. The fault is the supplied function's and not the
+ * caller's, so this is thrown rather than answered as the call's issues; the issues say where in
+ * what it answered each thing is wrong.
+ */
+export class InvalidSuppliedAnswer extends Ended {
+  /** The behavior whose function answered, by the name it was supplied under. */
+  readonly behavior: string;
+  /** What is wrong with the answer, at paths from its root. */
+  readonly issues: Issues;
+
+  constructor(behavior: string, issues: Issues, cause: unknown) {
+    super(INVALID_HOST_ANSWER, cause);
+    this.name = "InvalidSuppliedAnswer";
+    this.message = `${behavior} answered something other than the type it declares: `
+      + issues.list.map((issue) => `${issue.path.isRoot ? "(root)" : issue.path.toString()} ${issue.code}`).join(", ");
+    this.behavior = behavior;
+    this.issues = issues;
   }
 }
 
@@ -109,14 +136,14 @@ export async function load(
   const values = new Values(surface);
   // The module is handed what it reaches out through before there is a memory to read what it asks
   // from: one reaching out while it is instantiated is told so, and not answered from nothing.
-  let reach: ((ordinal: number, at: number, length: number, into: number, room: number) => number) | undefined;
+  let reach: ((ordinal: number, at: number, length: number) => bigint) | undefined;
   const instance = await WebAssembly.instantiate(module, {
     [HOST_CALL.module]: {
-      [HOST_CALL.name]: (ordinal: number, at: number, length: number, into: number, room: number) => {
+      [HOST_CALL.name]: (ordinal: number, at: number, length: number) => {
         if (reach === undefined) {
           throw new Error("this program reached out while it was being instantiated, before anything could answer");
         }
-        return reach(ordinal, at, length, into, room);
+        return reach(ordinal, at, length);
       },
     },
   });
@@ -125,7 +152,7 @@ export async function load(
     throw new Error(`this module's runtime is ABI ${abi}, and this glue calls ABI ${READS.abi}`);
   }
   const exports = exported(instance, surface);
-  reach = (ordinal, at, length, into, room) => reachOut(crossings, values, exports.memory, ordinal, at, length, into, room);
+  reach = (ordinal, at, length) => reachOut(crossings, values, exports, ordinal, at, length);
   return new Program(exports, surface, values);
 }
 
@@ -277,9 +304,20 @@ class Program {
   readonly #values: Values;
   /** What each behavior a caller calls answers, by what it is exported as. */
   readonly #answers: ReadonlyMap<string, Shape>;
+  /**
+   * The generation of the last failure record a call was told it ended with.
+   *
+   * A record is one per instance and not one per call, and a supplied function may call this
+   * program again while the call that reached out waits on it. The call that ends always reads the
+   * record first, since its frames are the innermost, so a generation once told is not any other
+   * call's ending: not that of a call whose supplied function caught it and threw something of its
+   * own, nor that of one that went on and trapped in wasm. Each is told once, here.
+   */
+  #told: number;
 
   constructor(exports: Exports, surface: Surface, values: Values) {
     this.#exports = exports;
+    this.#told = exports.__souther_failure_generation();
     this.#answers = new Map(surface.modules
       .flatMap((module) => module.behaviors)
       .filter((behavior) => behavior.export !== undefined)
@@ -409,7 +447,6 @@ class Program {
   #crossed(document: unknown, reach: (at: number, length: number) => [number, number], answers: Shape):
     Result<unknown> {
     const exports = this.#exports;
-    const generation = exports.__souther_failure_generation();
     const mark = exports.__ronto_alloc_mark();
     try {
       const written = encoder.encode(stringify(document));
@@ -424,7 +461,7 @@ class Program {
       }
       return answer.has("issues") ? failed(issuesIn(answer)) : { value: this.#values.read(answers, answer.get("value")) };
     } catch (trapped) {
-      throw this.#whyItEnded(generation, trapped);
+      throw this.#whyItEnded(trapped);
     } finally {
       exports.__ronto_alloc_reset(mark);
     }
@@ -436,16 +473,34 @@ class Program {
 
   /**
    * Why a call ended without a value. A Souther abort writes a record outside the arena and traps,
-   * and the record carries a generation, so a trap with an unchanged one came from wasm itself.
+   * and the record carries a generation, so a trap with one already told (see {@link #told}) is not
+   * a Souther abort of this call's: wasm's own, or what a supplied function threw, which goes on as
+   * it was thrown.
    */
-  #whyItEnded(generation: number, trapped: unknown): unknown {
+  #whyItEnded(trapped: unknown): unknown {
     const exports = this.#exports;
     const at = exports.__souther_failure_addr();
     const words = new DataView(exports.memory.buffer);
-    if (words.getUint32(at + FAILURE.generation, true) === generation) {
+    const generation = words.getUint32(at + FAILURE.generation, true);
+    if (generation === this.#told) {
       return trapped;
     }
-    return new Ended(words.getUint32(at + FAILURE.reason, true), trapped);
+    this.#told = generation;
+    const reason = words.getUint32(at + FAILURE.reason, true);
+    if (reason !== INVALID_HOST_ANSWER) {
+      return new Ended(reason, trapped);
+    }
+    // The behavior's name is in static memory and the issues in the arena of the call that ended,
+    // which the caller has not reset yet: each where its word says.
+    const behavior = this.#textAt(words.getBigUint64(at + FAILURE.aux0, true));
+    const issues = issuesIn(parse(this.#textAt(words.getBigUint64(at + FAILURE.aux1, true))));
+    return new InvalidSuppliedAnswer(behavior, issues, trapped);
+  }
+
+  /** The text a word of the failure record points at: where it is in the low half, how long in the high. */
+  #textAt(packed: bigint): string {
+    const pointer = Number(packed & 0xffff_ffffn);
+    return decoder.decode(this.#bytes().subarray(pointer, pointer + Number(packed >> 32n)));
   }
 }
 
@@ -457,25 +512,28 @@ export type { Program };
  * Answering is a call and not a promise. There is no stopping wasm in the middle and picking it up
  * again, so what a model reaches out for has to be something the page already has. What answers is
  * called as a function and not as anything's method, so `this` in it is `undefined`.
+ *
+ * What answers is called once, and its answer put in the module's arena, where the call that reached
+ * out reads it: answered with where it is in the low half and how long in the high half.
  */
-function reachOut(crossings: ReadonlyMap<number, Crossing>, values: Values, memory: WebAssembly.Memory,
-  ordinal: number, at: number, length: number, into: number, room: number): number {
+function reachOut(crossings: ReadonlyMap<number, Crossing>, values: Values, exports: Runtime,
+  ordinal: number, at: number, length: number): bigint {
   const crossing = crossings.get(ordinal);
   if (crossing === undefined) {
     throw new Error(`this program reached out under a number it does not name: ${ordinal}`);
   }
   // What is asked is read as the behavior's parameters are, as a value the module answers is.
-  const written = parse(decoder.decode(new Uint8Array(memory.buffer).subarray(at, at + length)));
+  const written = parse(decoder.decode(new Uint8Array(exports.memory.buffer).subarray(at, at + length)));
   const parameters = crossing.behavior.parameters;
   if (!Array.isArray(written) || written.length !== parameters.length) {
     throw new Error(`${crossing.named} was asked something other than its ${parameters.length} arguments`);
   }
   const asked = written.map((each, place) => values.read(parameters[place]!.type, each)) as never[];
   const answer = encoder.encode(stringify(Reflect.apply(crossing.answer, undefined, asked)));
-  if (answer.length <= room) {
-    new Uint8Array(memory.buffer).set(answer, into);
-  }
-  return answer.length;
+  const into = exports.__ronto_alloc(answer.length) >>> 0;
+  // Read after allocating: growing the memory leaves the buffer read before it detached.
+  new Uint8Array(exports.memory.buffer).set(answer, into);
+  return (BigInt(answer.length) << 32n) | BigInt(into);
 }
 
 /** A type a module publishes, read by the module: the issues it gives below where it is read. */

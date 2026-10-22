@@ -23,9 +23,9 @@ import souther.wasm.abi.RuntimeAbi;
  *
  * <p>Nothing here is a component. What a component adds is who the lowered calls are and where the
  * memory came from, and neither of those is what could be got wrong: what could is that a call out
- * of the program reaches the behavior it was numbered for, and that what comes back keeps the
- * bargain the program's own crossing has always made — the buffer is the program's, and what is
- * answered is how long the answer wanted to be.
+ * of the program reaches the behavior it was numbered for, that what comes back is where the
+ * lowering put the answer and how long it is, packed as the program's own crossing answers them, and
+ * that the lowering is called once whatever it answers.
  *
  * <p>So the lowerings are stood in for by functions that write what a lowering writes. Reaching
  * one is the whole of what these two modules do.
@@ -38,46 +38,39 @@ class AProgramReachesOutThroughATableTest {
     /** Where a stand-in lowering puts the answer itself. */
     private static final int ANSWER = 0x200;
 
-    /** Where the program's own buffer is, in the memory these are run against. */
-    private static final int BUFFER = 0x400;
-
     @Test
     void reachesTheBehaviorTheCallWasNumberedFor() {
         Reached reached = new Reached(List.of("first", "second"));
 
-        assertThat(reached.call(0, "asked", BUFFER, 64)).isEqualTo(5);
-        assertThat(reached.at(BUFFER, 5)).isEqualTo("first");
-
-        assertThat(reached.call(1, "asked", BUFFER, 64)).isEqualTo(6);
-        assertThat(reached.at(BUFFER, 6)).isEqualTo("second");
+        assertThat(reached.answerOf(0, "asked")).isEqualTo("first");
+        assertThat(reached.answerOf(1, "asked")).isEqualTo("second");
     }
 
     @Test
     void handsTheCallWhatTheProgramWroteAsItsArguments() {
         Reached reached = new Reached(List.of("answered"));
 
-        reached.call(0, "[\"JPY\"]", BUFFER, 64);
+        reached.call(0, "[\"JPY\"]");
 
         assertThat(reached.asked).containsExactly("[\"JPY\"]");
     }
 
     @Test
-    void writesNothingWhereTheAnswerDoesNotFitAndSaysHowLongItWanted() {
-        Reached reached = new Reached(List.of("second"));
-        reached.write(BUFFER, "......");
+    void answersWhereTheLoweringPutTheAnswerRatherThanACopyOfIt() {
+        Reached reached = new Reached(List.of("first", "second"));
 
-        // Six characters into five bytes: the program asks again against a longer buffer, and what
-        // it holds until then is what it held, not half an answer.
-        assertThat(reached.call(0, "asked", BUFFER, 5)).isEqualTo(6);
-        assertThat(reached.at(BUFFER, 6)).isEqualTo("......");
+        long answered = reached.call(1, "asked");
+
+        assertThat((int) answered).isEqualTo(ANSWER + 0x40);
+        assertThat((int) (answered >>> 32)).isEqualTo(6);
     }
 
     @Test
-    void writesTheWholeAnswerWhereItFitsExactly() {
-        Reached reached = new Reached(List.of("first"));
+    void callsTheLoweringOnceWhateverTheLengthOfItsAnswer() {
+        Reached reached = new Reached(List.of("x".repeat(1000)));
 
-        assertThat(reached.call(0, "asked", BUFFER, 5)).isEqualTo(5);
-        assertThat(reached.at(BUFFER, 5)).isEqualTo("first");
+        assertThat(reached.answerOf(0, "asked")).isEqualTo("x".repeat(1000));
+        assertThat(reached.asked).hasSize(1);
     }
 
     /** The two modules, instantiated against a memory and lowerings that answer what they are told. */
@@ -125,12 +118,21 @@ class AProgramReachesOutThroughATableTest {
                     });
         }
 
-        /** One call out of the program, as the program itself would make it. */
-        int call(int ordinal, String arguments, int into, int room) {
-            int at = 0x800;
+        /**
+         * One call out of the program, as the program itself would make it: where the answer is in
+         * the low half, how long in the high.
+         */
+        long call(int ordinal, String arguments) {
+            int at = 0x8000;
             write(at, arguments);
-            return (int) answering.export(RuntimeAbi.IMPORT_HOST_CALL).apply(ordinal, at,
-                    arguments.getBytes(StandardCharsets.UTF_8).length, into, room)[0];
+            return answering.export(RuntimeAbi.IMPORT_HOST_CALL).apply(ordinal, at,
+                    arguments.getBytes(StandardCharsets.UTF_8).length)[0];
+        }
+
+        /** What one call out of the program answered, read where it says it is. */
+        String answerOf(int ordinal, String arguments) {
+            long answered = call(ordinal, arguments);
+            return at((int) answered, (int) (answered >>> 32));
         }
 
         void write(int at, String text) {

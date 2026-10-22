@@ -214,10 +214,11 @@ public final class WasmCompiler {
     /**
      * The behaviors a program offers, as its {@link #offering} holds them.
      *
-     * <p>A behavior the program does not implement is not among them. Nothing in the module
-     * answers it, so what it crosses as is asked for rather than offered, and that is
-     * {@link #reachedOutFor} rather than this. Nor is one its module keeps, which is no module's
-     * to call from outside ({@link #publishes}).
+     * <p>Every one its module publishes, whoever answers it. One the program does not implement is
+     * asked for as well ({@link #reachedOutFor}), and offered all the same: a caller calls it
+     * through the module, which reads what it is handed as the behavior's types before it reaches
+     * out, as the core export of it does. One its module keeps is not among them, being no
+     * module's to call from outside ({@link #publishes}).
      *
      * @param program what a Souther compile checked
      * @return every behavior's core export name, by the module that declares it
@@ -227,7 +228,7 @@ public final class WasmCompiler {
         for (CheckedModule module : program.modules()) {
             Map<String, String> named = new LinkedHashMap<>();
             for (CheckedBehavior behavior : module.behaviors()) {
-                if (publishes(module, behavior) && !isReachedOutFor(behavior)) {
+                if (publishes(module, behavior)) {
                     named.put(behavior.name().name(), exportName(behavior.name()));
                 }
             }
@@ -870,14 +871,16 @@ public final class WasmCompiler {
                     .call(calls.of(RuntimeAbi.HOST_CALL))
                     .localSet(written);
 
-            out.localGet(written).wrap()
+            // Read as the declaration's answer, or the call ends as the host's answer refused,
+            // naming the behavior by its export: the runtime holds a host to what it owes in one
+            // place, which this hands what it needs to say whose answer it was.
+            byte[] behavior = exportName(crossing.behavior().name()).getBytes(StandardCharsets.UTF_8);
+            return out.localGet(written).wrap()
                     .localGet(written).shiftRight(32).wrap()
-                    .call(calls.of(RuntimeAbi.JSON_PARSE))
                     .constant(shapes.toRead(shapes.of(crossing.behavior().signature().answers())))
-                    .constant(0)
-                    .constant(0)
-                    .call(calls.of(RuntimeAbi.READ));
-            return out.body();
+                    .constant((fragment.intern(behavior) & 0xffff_ffffL) | (long) behavior.length << 32)
+                    .call(calls.of(RuntimeAbi.READ_ANSWER))
+                    .body();
         }
 
         /**

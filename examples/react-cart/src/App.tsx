@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { messageOf, type Issue, type Reading } from "@souther/wasm";
+import { messageOf, type Issue, type Reading } from "@souther-lang/wasm";
 import { yen } from "./amount.ts";
 import { load, type Bound, type Membership, type Priced } from "./cart.ts";
 import "./app.css";

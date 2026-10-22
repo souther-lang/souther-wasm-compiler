@@ -7,10 +7,13 @@ import java.util.Optional;
 /**
  * What the runtime wrote about a call it ended.
  *
- * <p>Fixed width and holding no pointer. A host that means to describe an abort resets the arena
- * on its way to building the description, and a reason it had to follow a pointer for would be
- * freed by then — so the reason is a code and the type it is about is a descriptor id, both of
- * which outlive the memory the call ran in.
+ * <p>Fixed width, and outside the arena. A host that means to describe an abort may reset the
+ * arena on its way to building the description, so the reason is a code and the type it is about a
+ * descriptor id, both of which outlive the memory the call ran in, and so are the two words. Where
+ * a reason's word points at text, packed as where it is and how long, the reason says where that
+ * is: {@code UNREACHABLE_REACHED}'s reason and {@link WasmFault#INVALID_HOST_ANSWER}'s behavior
+ * are in static memory and outlive the reset, and {@link WasmFault#INVALID_HOST_ANSWER}'s issues
+ * are in the arena and do not, so a host copies them before it resets.
  *
  * @param generation how many aborts this instance has written, this one included
  * @param reason the code the runtime wrote, which {@link FailureCause#of} names where it can

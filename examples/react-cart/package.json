@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "model": "if ! command -v souther >/dev/null; then echo 'souther is not on the PATH. Install it, and the wasm backend beside it: see README.md' >&2; exit 1; fi; if [ ! -f ../../packages/wasm/dist/cli.js ]; then echo 'The glue has not been built. From packages/wasm: npm ci && npm run build' >&2; exit 1; fi; souther compile --target wasm model -o public/cart.wasm && souther-wasm-bindings public/cart.wasm -o src/cart.ts",
+    "model": "if ! command -v souther >/dev/null; then echo 'souther is not on the PATH. Install it: see README.md' >&2; exit 1; fi; souther compile --target wasm model -o public/cart.wasm && souther-wasm-bindings public/cart.wasm -o src/cart.ts",
     "typecheck": "tsc --noEmit",
     "dev": "npm run model && vite",
     "build": "npm run model && tsc --noEmit && vite build",
@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@raoh/core": "0.9.0",
-    "@souther/wasm": "file:../../packages/wasm",
+    "@souther-lang/wasm": "0.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

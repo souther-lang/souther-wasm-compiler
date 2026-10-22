@@ -8,9 +8,9 @@ import souther.wasm.emit.WasmWriter;
 /**
  * The two small modules that let a component answer what a program reaches out for.
  *
- * <p>A program reaches out through a call in its own memory: a behavior's number, where the
- * arguments are, and a buffer of its own to write the answer into. None of that is a thing the
- * component model carries, and a component's own call carries a string and answers one. So
+ * <p>A program reaches out through a call in its own memory: a behavior's number and where the
+ * arguments are, answered with where the answer is. None of that is a thing the component model
+ * carries, and a component's own call carries a string and answers one. So
  * something has to stand between them, and what it needs is the program's memory — which does not
  * exist until the program has been instantiated, which cannot happen until something answers what
  * it reaches out for.
@@ -45,10 +45,10 @@ final class ReachingOut {
         // One type: what a crossing out of a program is.
         section(writer, TYPE, w -> w.writeUnsignedLeb128(1)
                 .write(FUNC_TYPE)
-                .writeUnsignedLeb128(5)
-                .write(new byte[] {I32, I32, I32, I32, I32})
+                .writeUnsignedLeb128(3)
+                .write(new byte[] {I32, I32, I32})
                 .writeUnsignedLeb128(1)
-                .write(I32));
+                .write(I64));
         section(writer, FUNCTION, w -> w.writeUnsignedLeb128(1).writeUnsignedLeb128(0));
         // A table with a place for each behavior, and no more: a number outside it is one this
         // compiler wrote, and the machine refuses the call rather than reaching somewhere.
@@ -67,7 +67,7 @@ final class ReachingOut {
         section(writer, CODE, w -> {
             byte[] body = body(b -> {
                 b.writeUnsignedLeb128(0); // no locals
-                for (int i = 0; i < 5; i++) {
+                for (int i = 0; i < 3; i++) {
                     b.write(LOCAL_GET).writeUnsignedLeb128(i);
                 }
                 // Which one to reach is the behavior's own number, which is what the table is
@@ -85,9 +85,8 @@ final class ReachingOut {
      * The module that holds what the component's own calls came to, and fills the table with them.
      *
      * <p>One function per behavior, each the same but for which lowering it calls. What each does
-     * is the whole of the difference between the two shapes: a component's call writes its answer
-     * where it is told to and says where that is, and a program's call writes into a buffer the
-     * program owns and says how long the answer wanted to be.
+     * is the whole of the difference between the two shapes: a component's call writes where its
+     * answer is into two words it is told of, and a program's call answers the two packed.
      *
      * @param crossings how many behaviors the program reaches out for
      */
@@ -98,8 +97,8 @@ final class ReachingOut {
         section(writer, TYPE, w -> {
             w.writeUnsignedLeb128(4);
             // 0: what a crossing out of a program is.
-            w.write(FUNC_TYPE).writeUnsignedLeb128(5).write(new byte[] {I32, I32, I32, I32, I32})
-                    .writeUnsignedLeb128(1).write(I32);
+            w.write(FUNC_TYPE).writeUnsignedLeb128(3).write(new byte[] {I32, I32, I32})
+                    .writeUnsignedLeb128(1).write(I64);
             // 1: what one of the component's own calls came to, told where to put its answer.
             w.write(FUNC_TYPE).writeUnsignedLeb128(3).write(new byte[] {I32, I32, I32})
                     .writeUnsignedLeb128(0);
@@ -167,13 +166,12 @@ final class ReachingOut {
     private static final String HELD = "souther";
 
     /**
-     * One behavior: ask the arena where the answer may go, make the call, and give the program back
-     * what it asked for.
+     * One behavior: ask the arena for the two words the answer is said in, make the call, and give
+     * the program back what they say.
      *
-     * <p>The program owns the buffer and says how long it is, and what comes back says how long the
-     * answer wanted to be — so where the answer does not fit, nothing is written and the program
-     * asks again against a longer one. That is what the program's own crossing has always meant,
-     * and it is the whole of what is different about the component's.
+     * <p>The lowering has already put the answer in the program's arena, through its realloc, so
+     * nothing is copied: where it is and how long are packed as the program's crossing answers
+     * them. The lowering is called once whatever the length of what it answers.
      */
     private static byte[] adapting(int lowering) {
         return body(b -> {
@@ -184,28 +182,22 @@ final class ReachingOut {
                     .write(I32_CONST).writeSignedLeb128(4)
                     .write(I32_CONST).writeSignedLeb128(8)
                     .write(CALL).writeUnsignedLeb128(0)
-                    .write(LOCAL_SET).writeUnsignedLeb128(5);
+                    .write(LOCAL_SET).writeUnsignedLeb128(3);
             // The call, told the arguments and where its answer goes.
             b.write(LOCAL_GET).writeUnsignedLeb128(1)
                     .write(LOCAL_GET).writeUnsignedLeb128(2)
-                    .write(LOCAL_GET).writeUnsignedLeb128(5)
+                    .write(LOCAL_GET).writeUnsignedLeb128(3)
                     .write(CALL).writeUnsignedLeb128(lowering);
-            // Where it does fit, into the program's own buffer.
-            b.write(LOCAL_GET).writeUnsignedLeb128(5).write(I32_LOAD).writeUnsignedLeb128(2)
-                    .writeUnsignedLeb128(4); // the length
-            b.write(LOCAL_GET).writeUnsignedLeb128(4);
-            b.write(I32_LE_U);
-            b.write(IF).write(EMPTY_BLOCK);
-            b.write(LOCAL_GET).writeUnsignedLeb128(3);
-            b.write(LOCAL_GET).writeUnsignedLeb128(5).write(I32_LOAD).writeUnsignedLeb128(2)
-                    .writeUnsignedLeb128(0); // where the answer is
-            b.write(LOCAL_GET).writeUnsignedLeb128(5).write(I32_LOAD).writeUnsignedLeb128(2)
-                    .writeUnsignedLeb128(4);
-            b.write(MISC).writeUnsignedLeb128(10).write((byte) 0).write((byte) 0); // memory.copy
-            b.write(END);
-            // And how long it wanted to be, either way.
-            b.write(LOCAL_GET).writeUnsignedLeb128(5).write(I32_LOAD).writeUnsignedLeb128(2)
-                    .writeUnsignedLeb128(4);
+            // Where the answer is, low; how long it is, high.
+            b.write(LOCAL_GET).writeUnsignedLeb128(3).write(I32_LOAD).writeUnsignedLeb128(2)
+                    .writeUnsignedLeb128(0)
+                    .write(I64_EXTEND_I32_U);
+            b.write(LOCAL_GET).writeUnsignedLeb128(3).write(I32_LOAD).writeUnsignedLeb128(2)
+                    .writeUnsignedLeb128(4)
+                    .write(I64_EXTEND_I32_U)
+                    .write(I64_CONST).writeSignedLeb128(32)
+                    .write(I64_SHL)
+                    .write(I64_OR);
             b.write(END);
         });
     }
@@ -265,6 +257,7 @@ final class ReachingOut {
 
     private static final byte FUNC_TYPE = 0x60;
     private static final byte I32 = 0x7f;
+    private static final byte I64 = 0x7e;
     private static final byte FUNCREF = 0x70;
     private static final byte LIMITS_BOTH = 0x01;
     private static final byte EXPORT_FUNC = 0x00;
@@ -276,9 +269,10 @@ final class ReachingOut {
     private static final byte LOCAL_SET = 0x21;
     private static final byte I32_CONST = 0x41;
     private static final byte I32_LOAD = 0x28;
-    private static final byte I32_LE_U = 0x4d;
-    private static final byte IF = 0x04;
-    private static final byte EMPTY_BLOCK = 0x40;
+    private static final byte I64_CONST = 0x42;
+    private static final byte I64_SHL = (byte) 0x86;
+    private static final byte I64_OR = (byte) 0x84;
+    private static final byte I64_EXTEND_I32_U = (byte) 0xad;
     private static final byte CALL = 0x10;
     private static final byte CALL_INDIRECT = 0x11;
     private static final byte MISC = (byte) 0xfc;
