@@ -6,7 +6,7 @@
 
     <groupId>org.souther-lang</groupId>
     <artifactId>souther-wasm-compiler</artifactId>
-    <version>0.4.1-SNAPSHOT</version>
+    <version>0.4.2-SNAPSHOT</version>
 
     <name>Souther Wasm Compiler</name>
     <description>Compiles a checked Souther program to a WebAssembly module.</description>
