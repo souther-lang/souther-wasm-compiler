@@ -371,15 +371,22 @@ it resolves anything else and there is nothing to install first.
 
 ## Releasing
 
-The backend is released at its own version, which the jar's manifest records as
-`Implementation-Version`; which Souther it works with is the descriptor's to say, so a fix here
-releases no Souther. A release is built against a released Souther and nothing else: `souther.version`
-in `pom.xml` names one on Maven Central, and `@souther-lang/wasm` asks for a released `@raoh/core`.
-
 The `souther` CLI fetches the backend from Maven Central where none is installed, and trusts it
 because a released file there cannot change. It reads `souther.version` out of each release's pom
 and takes the newest release built against itself, so each Souther release needs a release of this
 backend built against it.
+
+So the backend is released at the version of the Souther it is built against: 0.4.1 is built
+against Souther 0.4.1, and `@souther-lang/wasm` is published at the same number. A number of its
+own would say nothing the Souther's does not. A fix here between two Souther releases is released
+as `<souther>-<n>`, `0.4.1-1` after `0.4.1`, which the CLI takes as the newer of the two built
+against Souther 0.4.1. npm reads a version with a dash as a prerelease, older than the one before
+the dash, so `@souther-lang/wasm` is not published at such a number, and a fix that changes it
+waits for the next Souther.
+
+A release is built against a released Souther and nothing else: `souther.version` in `pom.xml`
+names one on Maven Central, and `@souther-lang/wasm` asks for a released `@raoh/core`. The jar's
+manifest records the backend's version as `Implementation-Version`.
 
 Nothing is published from CI. A release sets the version and `souther.version` on `main`, tags the
 commit `v<version>`, and from a clean clone at that tag runs
