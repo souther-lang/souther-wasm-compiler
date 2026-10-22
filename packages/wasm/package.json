@@ -1,6 +1,6 @@
 {
   "name": "@souther-lang/wasm",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "description": "Load and call a Souther program compiled to WebAssembly, and generate its TypeScript binding",
   "license": "EPL-2.0",
   "repository": {
