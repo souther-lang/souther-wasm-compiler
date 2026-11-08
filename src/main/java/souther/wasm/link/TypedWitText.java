@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import souther.wasm.abi.WasmFault;
 
 /**
  * What a program offers as typed interfaces, written out as a reader of interfaces reads it.
@@ -65,13 +66,13 @@ public final class TypedWitText {
             // a call the runtime ended, with the reason a core module's abort record holds. A
             // function of souther:typed-decode takes one value of its type and answers it back,
             // or the same refusal. What a program reaches out for answers its behavior's type, and
-            // an answer that breaks one of the type's rules ends the call with reason 13, whose
+            // an answer that breaks one of the type's rules ends the call with reason %d, whose
             // invalid-answer names the behavior and says what is wrong as issues.
             //
             // An amount and a date cross as the text the JSON boundary writes them as, and a map
             // as a list of its entries. An issue's meta is JSON text: what it holds depends on its
             // code.
-            """;
+            """.formatted(WasmFault.INVALID_HOST_ANSWER.code());
 
     /** The whole file: what a caller has to know, then the interfaces. */
     public static String written(TypedOffering offering) {

@@ -701,14 +701,11 @@ final class Descriptors {
 
     /**
      * Places where a value of a descriptor's type lies when it crosses typed, as the Canonical ABI
-     * lays out what the type crosses as ({@code runtime/src/typed.rs}): its size, alignment and
-     * how many core values it flattens to; for a variant, how wide its case is, where what the
-     * case carries lies and how many cases it has, and for an option and a unit which number each
-     * of its cases is; for a product, where each field lies; for a map, how wide an entry is and
-     * where its key and its value lie.
+     * lays out what the type crosses as ({@code runtime/src/typed.rs}).
      *
      * <p>Worked out by {@link CanonicalAbi} and nowhere here, from the WIT type the program's
-     * typed interfaces say the type crosses as.
+     * typed interfaces say the type crosses as. Each word says one thing of one kind of type
+     * ({@link Layout}), so that a word meant for a variant is never read as one meant for a map.
      */
     private int layoutOf(int descriptor, int kind) {
         Type origin = origins.get(descriptor);
@@ -718,41 +715,72 @@ final class Descriptors {
         }
         CanonicalAbi abi = typed.abi();
         WitType type = typed.types().apply(origin);
-        int discriminant = 0;
-        int payload = 0;
-        int cases = 0;
-        List<Integer> offsets = List.of();
+        Layout layout = new Layout(abi.size(type), abi.alignment(type), abi.flatten(type).size());
         switch (kind) {
-            case KIND_PRODUCT -> offsets = abi.offsets(type);
+            case KIND_PRODUCT -> layout.fields = abi.offsets(type);
             case KIND_SUM, KIND_ENUMERATION, KIND_OPTION, KIND_UNIT -> {
-                discriminant = abi.discriminantSize(type);
-                payload = abi.payloadOffset(type);
-                cases = abi.caseCount(type);
+                layout.discriminant = abi.discriminantSize(type);
+                layout.payload = abi.payloadOffset(type);
+                layout.cases = abi.caseCount(type);
                 if (kind == KIND_OPTION) {
-                    offsets = List.of(abi.caseNumber(type, "none"), abi.caseNumber(type, "some"));
+                    layout.none = abi.caseNumber(type, "none");
+                    layout.some = abi.caseNumber(type, "some");
                 } else if (kind == KIND_UNIT) {
                     // A unit standing as a value is an enum of itself alone.
-                    offsets = List.of(abi.caseNumber(type, ((WitType.Named) type).name()));
+                    layout.only = abi.caseNumber(type, ((WitType.Named) type).name());
                 }
             }
             case KIND_MAP -> {
+                // A map is a list of its entries: its own value is the list's pointer and length,
+                // and each entry is a tuple of a key and a value, laid out and aligned as one.
                 WitType entry = ((WitType.ListOf) type).element();
-                payload = abi.size(entry);
-                offsets = abi.offsets(entry);
+                layout.entrySize = abi.size(entry);
+                layout.entryAlignment = abi.alignment(entry);
+                layout.key = abi.offsets(entry).get(0);
+                layout.value = abi.offsets(entry).get(1);
             }
             default -> {
             }
         }
-        ByteArrayOutputStream table = new ByteArrayOutputStream();
-        WasmWriter out = new WasmWriter(table)
-                .writeLittleEndian4(abi.size(type))
-                .writeLittleEndian4(abi.alignment(type))
-                .writeLittleEndian4(abi.flatten(type).size())
-                .writeLittleEndian4(discriminant)
-                .writeLittleEndian4(payload)
-                .writeLittleEndian4(cases);
-        offsets.forEach(out::writeLittleEndian4);
-        return fragment.place(table.toByteArray());
+        return fragment.place(layout.written());
+    }
+
+    /**
+     * A typed layout as {@code runtime/src/typed.rs} reads it: what every type has, then a word
+     * for each thing one kind of type has, nothing for the others.
+     */
+    private static final class Layout {
+        final int size;
+        final int alignment;
+        final int flats;
+        int discriminant;
+        int payload;
+        int cases;
+        int none;
+        int some;
+        int only;
+        int entrySize;
+        int entryAlignment;
+        int key;
+        int value;
+        List<Integer> fields = List.of();
+
+        Layout(int size, int alignment, int flats) {
+            this.size = size;
+            this.alignment = alignment;
+            this.flats = flats;
+        }
+
+        byte[] written() {
+            ByteArrayOutputStream table = new ByteArrayOutputStream();
+            WasmWriter out = new WasmWriter(table);
+            for (int word : new int[] {size, alignment, flats, discriminant, payload, cases, none,
+                    some, only, entrySize, entryAlignment, key, value}) {
+                out.writeLittleEndian4(word);
+            }
+            fields.forEach(out::writeLittleEndian4);
+            return table.toByteArray();
+        }
     }
 
     /** Whether a kind is of a value a model declared, which is ordered as what it was made as. */

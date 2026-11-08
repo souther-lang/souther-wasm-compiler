@@ -26,7 +26,8 @@ import tools.jackson.databind.ObjectMapper;
 class AMapIsKeyedTheSameWhicheverWayItCrossesTest {
 
     private static final String KEYED = """
-            module keyed exposing ( Code, Colour, Red, Green, byColour, byDay, byCode, nested )
+            module keyed exposing ( Code, Colour, Red, Green, byColour, byDay, byCode, nested,
+                                    lengths )
 
             data Code = String
             data Red
@@ -48,6 +49,10 @@ class AMapIsKeyedTheSameWhicheverWayItCrossesTest {
             behavior nested : (xs: List<List<String>>) -> Set<Set<String>>
 
             let nested (xs) = Set.fromList(List.map(x -> Set.fromList(x), xs))
+
+            behavior lengths : (xs: List<String>) -> Map<String, Int>
+
+            let lengths (xs) = Map.fromList(List.map(x -> (x, String.length(x)), xs))
             """;
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -152,6 +157,31 @@ class AMapIsKeyedTheSameWhicheverWayItCrossesTest {
             read.add(members);
         });
         assertThat(laid).isEqualTo(read).hasSize(3);
+    }
+
+    /**
+     * Where a map's entries lie, which a caller lifting the list of them checks begins at what an
+     * entry is aligned to, and not at what the list's own pointer and length are: an entry of a
+     * string and an Int is aligned to eight. Lists of every length from one to sixteen, so that
+     * the arena stands at every place an allocation before the entries can leave it.
+     */
+    @Test
+    void laysAMapsEntriesOutWhereAnEntryIsAligned() {
+        for (int n = 1; n <= 16; n++) {
+            Running module = module();
+            List<String> keys = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                keys.add("k".repeat(i + 1));
+            }
+            int strings = module.call(RuntimeAbi.ALLOC, 8 * n);
+            for (int i = 0; i < n; i++) {
+                module.write(strings + 8 * i, ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(module.staged(keys.get(i))).putInt(keys.get(i).length()).array());
+            }
+            int area = (int) module.callWith(Component.Lifted.typed("keyed.lengths"), strings, n)[0];
+            assertThat(byteAt(module, area)).describedAs("ok").isZero();
+            assertThat(wordAt(module, area + 4) % 8).describedAs("entries of " + n).isZero();
+        }
     }
 
     private static List<String> entriesOf(JsonNode json) {

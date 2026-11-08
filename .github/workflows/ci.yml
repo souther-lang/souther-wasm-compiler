@@ -329,7 +329,9 @@ jobs:
       - name: Call a typed component that reaches out, composed by wac with what answers it
         run: |
           # What is reached for takes a type of the model, so the two components each import the
-          # interface that declares it, and the composition has to take them for one.
+          # interface that declares it, and the composition has to take them for one. A map goes
+          # out both ways, answered and handed to what is reached for: a list of entries whose
+          # room a caller lifting it requires to begin where an entry is aligned, at eight.
           mkdir -p /tmp/paired /tmp/typed-answering
           cat > /tmp/paired/rates.sou <<'SOURCE'
           module rates
@@ -341,6 +343,16 @@ jobs:
           behavior priced : (n: Decimal) -> Decimal depends on today
 
           let priced (n, today) = n * today(Pair { from = "JPY", to = "USD" })
+
+          behavior quoted : (n: Int) -> Map<String, Int>
+
+          let quoted (n) = Map.fromList([("JPY", n), ("USD", n * 2)])
+
+          behavior counted : (prices: Map<String, Int>) -> Int
+
+          behavior tallied : (n: Int) -> Int depends on counted
+
+          let tallied (n, counted) = counted(Map.fromList([("a", n), ("bb", n), ("ccc", n)]))
           SOURCE
           souther compile --target wasm /tmp/paired --component --component-abi typed \
             -o /tmp/paired/typed.wasm --wit /tmp/paired/typed.wit
@@ -358,6 +370,8 @@ jobs:
               (i32.store (i32.const 12) (i32.const ${#1}))
               (i32.const 8))
             (func (export "cm32p2|souther:typed-reached/rates@0.1|today_post") (param i32))
+            (func (export "cm32p2|souther:typed-reached/rates@0.1|counted") (param i32 i32) (result i64)
+              (i64.extend_i32_u (local.get 1)))
             (func (export "cm32p2_realloc") (param i32 i32 i32 i32) (result i32)
               (local \$at i32)
               (local.set \$at (i32.and (i32.add (global.get \$top) (i32.sub (local.get 2) (i32.const 1)))
@@ -383,6 +397,16 @@ jobs:
           got=$(wasmtime run --invoke 'priced("5")' composed.wasm)
           if [ "$got" != 'ok("10")' ]; then
             echo "priced answered $got, where ok(\"10\") was expected"
+            exit 1
+          fi
+          got=$(wasmtime run --invoke 'quoted(5)' composed.wasm)
+          if [ "$got" != 'ok([("JPY", 5), ("USD", 10)])' ]; then
+            echo "quoted answered $got"
+            exit 1
+          fi
+          got=$(wasmtime run --invoke 'tallied(7)' composed.wasm)
+          if [ "$got" != 'ok(3)' ]; then
+            echo "tallied answered $got, where ok(3) was expected"
             exit 1
           fi
           answering x

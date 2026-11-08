@@ -16,14 +16,25 @@
 //!
 //! ```text
 //! +0  u32 size              how many bytes a value takes in memory
-//! +4  u32 alignment
+//! +4  u32 alignment         what it is aligned to there
 //! +8  u32 flats             how many core values it flattens to
-//! +12 u32 discriminant      how many bytes say which case a variant is
-//! +16 u32 payload           where a variant's case lies; a map's entry's size
-//! +20 u32 cases             how many cases a variant has
-//! +24 u32 per member, where it lies: a product's fields; a map's entry's key and value; and
-//!         which number a case is: an option's none and some, a unit's one case
+//! +12 u32 discriminant      a variant's: how many bytes say which case it is
+//! +16 u32 payload           a variant's: where what its case carries lies
+//! +20 u32 cases             a variant's: how many cases it has
+//! +24 u32 none              an option's: the case that holds nothing
+//! +28 u32 some              an option's: the case that holds something
+//! +32 u32 only              a unit's: the one case it is, as an enum of itself alone
+//! +36 u32 entry size        a map's: how many bytes one entry, a tuple of a key and a value, takes
+//! +40 u32 entry alignment   a map's: what an entry is aligned to, which its list's room begins at
+//! +44 u32 key               a map's: where an entry's key lies in it
+//! +48 u32 value             a map's: where an entry's value lies in it
+//! +52 u32 per field, where it lies: a product's
 //! ```
+//!
+//! Each word says one thing of one kind of type, and nothing for the others. A map's own value is
+//! a list's pointer and length, and its entries are something else again, laid out and aligned as
+//! a tuple; a word saying the one where the other was meant laid entries out at four that a caller
+//! lifting them requires at eight.
 //!
 //! A sum's case and an enumeration's are numbered as the descriptor lists them, which is the order
 //! the checker lists them in and the typed interfaces declare them in: both read the one list.
@@ -54,7 +65,14 @@ const L_FLATS: u32 = 8;
 const L_DISCRIMINANT: u32 = 12;
 const L_PAYLOAD: u32 = 16;
 const L_CASES: u32 = 20;
-const L_OFFSETS: u32 = 24;
+const L_NONE: u32 = 24;
+const L_SOME: u32 = 28;
+const L_ONLY: u32 = 32;
+const L_ENTRY_SIZE: u32 = 36;
+const L_ENTRY_ALIGN: u32 = 40;
+const L_KEY: u32 = 44;
+const L_VALUE: u32 = 48;
+const L_FIELDS: u32 = 52;
 
 /// What a function's arguments are, as the compiler wrote it for one function:
 ///
@@ -172,18 +190,44 @@ unsafe fn payload(descriptor: u32) -> u32 {
     word(layout(descriptor) + L_PAYLOAD)
 }
 
-unsafe fn offset(descriptor: u32, index: u32) -> u32 {
-    word(layout(descriptor) + L_OFFSETS + 4 * index)
+/// Where a product's field lies in it.
+unsafe fn field(descriptor: u32, index: u32) -> u32 {
+    word(layout(descriptor) + L_FIELDS + 4 * index)
+}
+
+/// The one case a unit is, as an enum of itself alone.
+unsafe fn only(descriptor: u32) -> u32 {
+    word(layout(descriptor) + L_ONLY)
+}
+
+/// How many bytes a map's entry takes, which is how far one entry is from the next.
+unsafe fn entry_size(descriptor: u32) -> u32 {
+    word(layout(descriptor) + L_ENTRY_SIZE)
+}
+
+/// What a map's entry is aligned to.
+unsafe fn entry_alignment(descriptor: u32) -> u32 {
+    word(layout(descriptor) + L_ENTRY_ALIGN)
+}
+
+/// Where a map's entry's key lies in it.
+unsafe fn key_at(descriptor: u32) -> u32 {
+    word(layout(descriptor) + L_KEY)
+}
+
+/// Where a map's entry's value lies in it.
+unsafe fn value_at(descriptor: u32) -> u32 {
+    word(layout(descriptor) + L_VALUE)
 }
 
 /// The case of an option that holds nothing.
 unsafe fn none(descriptor: u32) -> u32 {
-    offset(descriptor, 0)
+    word(layout(descriptor) + L_NONE)
 }
 
 /// The case of an option that holds something.
 unsafe fn some(descriptor: u32) -> u32 {
-    offset(descriptor, 1)
+    word(layout(descriptor) + L_SOME)
 }
 
 /// Which case a variant laid out at `at` is, in as many bytes as its layout says.
@@ -310,7 +354,7 @@ unsafe fn loaded(at: u32, descriptor: u32) -> u32 {
         KIND_UNIT => json::made_holding(TAG_OBJECT, 0),
         KIND_NEWTYPE => loaded(at, descriptor::member(descriptor, 0)),
         KIND_PRODUCT => fields(descriptor, |i, member| {
-            let place = at + offset(descriptor, i);
+            let place = at + field(descriptor, i);
             if descriptor::kind(member) == KIND_OPTION {
                 if case_at(place, member) == none(member) {
                     return 0;
@@ -357,15 +401,15 @@ unsafe fn elements(at: u32, count: u32, descriptor: u32) -> u32 {
 unsafe fn entries(at: u32, count: u32, descriptor: u32) -> u32 {
     let keys = descriptor::member(descriptor, 0);
     let values = descriptor::member(descriptor, 1);
-    let stride = payload(descriptor);
+    let stride = entry_size(descriptor);
     let object = json::made_holding(TAG_OBJECT, count);
     for i in 0..count {
         let entry = at + i * stride;
         json::put_entry(
             object,
             i,
-            loaded(entry + offset(descriptor, 0), keys),
-            loaded(entry + offset(descriptor, 1), values),
+            loaded(entry + key_at(descriptor), keys),
+            loaded(entry + value_at(descriptor), values),
         );
     }
     object
@@ -480,11 +524,11 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
         KIND_TIME => put_text(at, temporal::written_time(cell)),
         KIND_DATE_TIME => put_text(at, temporal::written_both(cell)),
         KIND_INSTANT => put_text(at, temporal::written_moment(cell)),
-        KIND_UNIT => put_case(at, descriptor, offset(descriptor, 0)),
+        KIND_UNIT => put_case(at, descriptor, only(descriptor)),
         KIND_NEWTYPE => stored(__souther_record_get(cell, 0), descriptor::member(descriptor, 0), at),
         KIND_PRODUCT => {
             for i in 0..descriptor::arity(descriptor) {
-                stored(__souther_record_get(cell, i), descriptor::member(descriptor, i), at + offset(descriptor, i));
+                stored(__souther_record_get(cell, i), descriptor::member(descriptor, i), at + field(descriptor, i));
             }
         }
         KIND_SUM => {
@@ -530,12 +574,12 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
             let keys = descriptor::member(descriptor, 0);
             let values = descriptor::member(descriptor, 1);
             let count = __souther_map_length(cell);
-            let stride = payload(descriptor);
-            let room = alloc_aligned(crate::room(0, count, stride), alignment(descriptor));
+            let stride = entry_size(descriptor);
+            let room = alloc_aligned(crate::room(0, count, stride), entry_alignment(descriptor));
             for i in 0..count {
                 let entry = room + i * stride;
-                stored(__souther_map_key(cell, i), keys, entry + offset(descriptor, 0));
-                stored(__souther_map_value(cell, i), values, entry + offset(descriptor, 1));
+                stored(__souther_map_key(cell, i), keys, entry + key_at(descriptor));
+                stored(__souther_map_value(cell, i), values, entry + value_at(descriptor));
             }
             put_word(at, room);
             put_word(at + 4, count);
@@ -585,7 +629,7 @@ unsafe fn flattened(cell: u32, descriptor: u32, slots: u32, index: &mut u32) {
             }
         }
         KIND_ENUMERATION => put_slot(slots, first, value::case_among(cell, descriptor) as u64),
-        KIND_UNIT => put_slot(slots, first, offset(descriptor, 0) as u64),
+        KIND_UNIT => put_slot(slots, first, only(descriptor) as u64),
         KIND_OPTION => {
             if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
                 put_slot(slots, first, none(descriptor) as u64);
