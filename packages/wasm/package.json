@@ -22,7 +22,7 @@
     }
   },
   "bin": {
-    "souther-wasm-bindings": "./dist/cli.js"
+    "souther-wasm-bindings": "dist/cli.js"
   },
   "files": [
     "dist",
