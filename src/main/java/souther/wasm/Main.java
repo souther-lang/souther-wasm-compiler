@@ -17,6 +17,7 @@ import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.link.TypedWitText;
 import souther.wasm.link.WitText;
 import souther.wasm.lower.NotLowered;
 import souther.wasm.lower.WasmCompiler;
@@ -38,13 +39,18 @@ public final class Main {
             souther compile --target wasm — compiles a Souther program to WebAssembly
 
               souther compile --target wasm <source or directory>... -o <file> [--component]
-                  [--wit <file>]
+                  [--wit <file>] [--component-abi json|typed]
 
               -o <file>     where to write. Required.
               --component   write a component, one interface per Souther module, rather than a
                             core module. A behavior crosses as func(arguments: string) -> string.
               --wit <file>  also write what the program offers, as a reader of interfaces reads
                             it. The same whether a component is written or not.
+              --component-abi json|typed
+                            how a component's functions cross, and what --wit writes. json, the
+                            default, is the string above, under souther:program. typed takes and
+                            answers the types of the model, under souther:typed-program@0.1.0,
+                            each module's types an interface of souther:typed-types@0.1.0.
 
             A directory is read for the .sou files under it, in the order their paths sort; a
             link under it is refused rather than followed. A lone file with no module header is
@@ -81,6 +87,7 @@ public final class Main {
         Map<String, Path> files = new HashMap<>();
         Set<String> asked = new HashSet<>();
         boolean component = false;
+        String abi = null;
         List<String> complaints = new ArrayList<>();
         for (int i = 0; i < arguments.length; i++) {
             String held = arguments[i];
@@ -97,6 +104,21 @@ public final class Main {
                     }
                 }
                 case "--component" -> component = true;
+                case "--component-abi" -> {
+                    if (i + 1 == arguments.length || arguments[i + 1].startsWith("-")) {
+                        complaints.add("--component-abi names no ABI: it is json or typed");
+                    } else if (abi != null) {
+                        i++;
+                        complaints.add("--component-abi is given more than once, and names one"
+                                + " ABI");
+                    } else {
+                        abi = arguments[++i];
+                        if (!ABIS.contains(abi)) {
+                            complaints.add("no such component ABI: " + abi
+                                    + "; it is json or typed");
+                        }
+                    }
+                }
                 case "-h", "--help" -> {
                     out.print(USAGE);
                     return NOTHING_WRONG;
@@ -116,6 +138,12 @@ public final class Main {
         if (!asked.contains("-o")) {
             complaints.add("-o is required: it names where to write the module");
         }
+        // An ABI is how a component crosses, and the interfaces --wit writes are a component's: a
+        // line naming one and asking for neither has said something nothing here does.
+        if (abi != null && !component && !asked.contains("--wit")) {
+            complaints.add("--component-abi says how a component crosses, and nothing here"
+                    + " writes one or what one offers: add --component or --wit");
+        }
         if (!complaints.isEmpty()) {
             complaints.forEach(problems::println);
             problems.print(USAGE);
@@ -123,6 +151,7 @@ public final class Main {
         }
         Path into = files.get("-o");
         Path offering = files.get("--wit");
+        boolean typed = TYPED.equals(abi);
 
         CompilationSources read;
         try {
@@ -141,11 +170,17 @@ public final class Main {
         String offers = null;
         try {
             CheckedProgram program = CheckedProgram.of(read, ModulePath.EMPTY);
-            written = component
-                    ? WasmCompiler.compileAsComponent(program)
-                    : WasmCompiler.compile(program);
+            if (!component) {
+                written = WasmCompiler.compile(program);
+            } else if (typed) {
+                written = WasmCompiler.compileAsTypedComponent(program);
+            } else {
+                written = WasmCompiler.compileAsComponent(program);
+            }
             if (offering != null) {
-                offers = WitText.written(WasmCompiler.offering(program));
+                offers = typed
+                        ? TypedWitText.written(WasmCompiler.typedOffering(program))
+                        : WitText.written(WasmCompiler.offering(program));
             }
         } catch (CompileException e) {
             Refusal.lines(e, read).forEach(problems::println);
@@ -180,6 +215,12 @@ public final class Main {
         out.println("wrote " + into + " from " + count + (count == 1 ? " source" : " sources"));
         return NOTHING_WRONG;
     }
+
+    /** The ABI a component crosses in that takes and answers the model's types. */
+    private static final String TYPED = "typed";
+
+    /** The ABIs a component may cross in: JSON text, the default, or the model's types. */
+    private static final Set<String> ABIS = Set.of("json", TYPED);
 
     /** Nothing wrong: a module was written. */
     private static final int NOTHING_WRONG = 0;

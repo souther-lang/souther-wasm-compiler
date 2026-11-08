@@ -281,6 +281,88 @@ jobs:
           refused 'true' '{"path":"","code":"type_mismatch","messageKey":"type_mismatch","meta":{"actual":"boolean","expected":"number"}}'
           refused 'nope' '{"path":"","code":"invalid_format","messageKey":"invalid_format.json","meta":{}}'
 
+      # The same programs as components that take and answer the model's types. What is held of
+      # them is what is held of the JSON ones: each is a component, it says the interfaces --wit
+      # wrote, and it answers each call as the model does. A type of the model is an interface of
+      # its own that every interface naming the type uses, which the read-back says.
+      - name: Require every typed component this writes to be one, and call it
+        run: |
+          for source in /tmp/asked /tmp/component /tmp/worded; do
+            souther compile --target wasm "$source" --component --component-abi typed \
+              -o "$source/typed.wasm" --wit "$source/typed.wit"
+            wasm-tools validate --features all "$source/typed.wasm"
+            wasm-tools component wit "$source/typed.wasm" > "$source/typed-read-back.wit"
+            wasm-tools component wit "$source/typed.wit" > /dev/null
+          done
+          grep -q 'import souther:typed-types/shipping@0.1.0' /tmp/asked/typed-read-back.wit
+          grep -q 'use souther:typed-types/shipping@0.1.0.{parcel}' /tmp/asked/typed-read-back.wit
+          grep -q 'fee: func(total: s64) -> result<s64, refusal>' /tmp/asked/typed-read-back.wit
+          grep -q 'import souther:typed-reached/rates@0.1.0' /tmp/component/typed-read-back.wit
+          grep -q 'today: func(pair: string) -> string' /tmp/component/typed-read-back.wit
+          answers() {
+            got=$(wasmtime run --invoke "$2" "$1")
+            if [ "$got" != "$3" ]; then
+              echo "$2 answered $got, where $3 was expected"
+              exit 1
+            fi
+          }
+          answers /tmp/asked/typed.wasm 'fee(4999)' 'ok(500)'
+          answers /tmp/asked/typed.wasm 'fee(5000)' 'ok(0)'
+          answers /tmp/asked/typed.wasm 'check-parcel({weight: 2})' 'ok({weight: 2})'
+
+      # A typed component that reaches out, composed with what answers it in the text format: a
+      # string in and a string out, the answer laid out at an address the lowering is told, as
+      # the Canonical ABI lowers a function of that type. Then one whose answer is no Decimal,
+      # which ends the call naming the behavior and the issues as records.
+      - name: Call a typed component that reaches out, composed with what answers it
+        run: |
+          mkdir -p /tmp/typed-answering
+          cd /tmp/typed-answering
+          awk '{print} /^world program \{/{inworld=1} inworld && /^\}/{print "\nworld answering {\n  export souther:typed-reached/%rates@0.1.0;\n}"; inworld=0}' \
+            /tmp/component/typed.wit > answering.wit
+          answering() {
+            cat > answering.wat <<WAT
+          (module
+            (memory (export "cm32p2_memory") 1)
+            (global \$top (mut i32) (i32.const 8192))
+            (data (i32.const 1024) "$1")
+            (func (export "cm32p2|souther:typed-reached/rates@0.1|today") (param i32 i32) (result i32)
+              (i32.store (i32.const 8) (i32.const 1024))
+              (i32.store (i32.const 12) (i32.const ${#1}))
+              (i32.const 8))
+            (func (export "cm32p2|souther:typed-reached/rates@0.1|today_post") (param i32))
+            (func (export "cm32p2_realloc") (param i32 i32 i32 i32) (result i32)
+              (local \$at i32)
+              (local.set \$at (i32.and (i32.add (global.get \$top) (i32.sub (local.get 2) (i32.const 1)))
+                                      (i32.sub (i32.const 0) (local.get 2))))
+              (global.set \$top (i32.add (local.get \$at) (local.get 3)))
+              (local.get \$at))
+            (func (export "cm32p2_initialize")))
+          WAT
+            wasm-tools parse answering.wat -o core.wasm
+            wasm-tools component embed answering.wit --world answering core.wasm -o embedded.wasm
+            wasm-tools component new embedded.wasm -o answering.wasm
+            wasm-tools compose /tmp/component/typed.wasm -d answering.wasm -o composed.wasm
+            wasm-tools validate --features all composed.wasm
+          }
+          answering 2
+          got=$(wasmtime run --invoke 'priced("5")' composed.wasm)
+          if [ "$got" != 'ok("10")' ]; then
+            echo "priced answered $got, where ok(\"10\") was expected"
+            exit 1
+          fi
+          got=$(wasmtime run --invoke 'priced("5x")' composed.wasm)
+          case "$got" in
+            'err(issues([{path: "/0", code: "type_mismatch"'*) ;;
+            *) echo "priced, handed text that is no amount, answered $got"; exit 1 ;;
+          esac
+          answering x
+          got=$(wasmtime run --invoke 'priced("5")' composed.wasm)
+          case "$got" in
+            'err(ended({reason: 13, invalid-answer: some({behavior: "rates.today", issues: [{path: "", code: "type_mismatch"'*) ;;
+            *) echo "priced, answered x, answered $got"; exit 1 ;;
+          esac
+
 
       # The example is a program compiled by this and then called from a browser. Nothing else
       # here calls a compiled program from outside the JVM, so it is the only place that would
