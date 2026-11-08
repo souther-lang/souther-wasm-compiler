@@ -268,6 +268,13 @@ public final class RuntimeAbi {
     public static final String TYPED_ENDED = "__souther_typed_ended";
 
     /**
+     * {@code (i32 at, i32 answer, i64 behavior) -> i32}: reads what a typed function the program
+     * reaches out to answered, at {@code at}, as {@link #READ_ANSWER} reads a JSON one.
+     * {@code answer} is where the behavior's answer record is.
+     */
+    public static final String TYPED_ANSWER = "__souther_typed_answer";
+
+    /**
      * {@code () -> !}: leaves a call whose reason the failure record holds, carrying nothing. A
      * core module traps here; a component's link replaces the body with a throw its lifted
      * functions catch.

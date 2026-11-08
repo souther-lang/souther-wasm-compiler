@@ -154,6 +154,134 @@ final class ReachingOut {
         return out.toByteArray();
     }
 
+    /**
+     * The module that fills the table, for a program whose behaviors cross typed.
+     *
+     * <p>The table and what fills it are the JSON one's. What differs is what each function in it
+     * does with the two places the program's call out hands it: the first is where the arguments
+     * are, flattened one core value to an eight-byte slot or laid out as the record of them, and
+     * the second is where the answer goes. Each lowering takes the core values its typed function
+     * flattens to, so each function here loads them out of the slots for it, and puts back the one
+     * core value it answers where the answer goes; a lowering whose answer is laid out in memory is
+     * handed the second place to lay it out at.
+     *
+     * @param lowered the core function each behavior's own call is lowered to, by its number
+     */
+    static byte[] fillingTheTableTyped(List<CanonicalAbi.CoreSignature> lowered) {
+        int crossings = lowered.size();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        WasmWriter writer = new WasmWriter(out);
+        preamble(writer);
+        section(writer, TYPE, w -> {
+            w.writeUnsignedLeb128(3 + crossings);
+            // 0: what a crossing out of a program is.
+            w.write(FUNC_TYPE).writeUnsignedLeb128(3).write(new byte[] {I32, I32, I32})
+                    .writeUnsignedLeb128(1).write(I64);
+            // 1: what the arena hands out with.
+            w.write(FUNC_TYPE).writeUnsignedLeb128(4).write(new byte[] {I32, I32, I32, I32})
+                    .writeUnsignedLeb128(1).write(I32);
+            // 2: what a start function is, which takes nothing and answers nothing.
+            w.write(FUNC_TYPE).writeUnsignedLeb128(0).writeUnsignedLeb128(0);
+            // 3 on: what each behavior's own call is lowered to.
+            for (CanonicalAbi.CoreSignature each : lowered) {
+                w.write(FUNC_TYPE).writeUnsignedLeb128(each.params().size());
+                each.params().forEach(flat -> w.write(core(flat)));
+                w.writeUnsignedLeb128(each.results().size());
+                each.results().forEach(flat -> w.write(core(flat)));
+            }
+        });
+        section(writer, IMPORT, w -> {
+            w.writeUnsignedLeb128(3 + crossings);
+            imported(w, HELD, MEMORY_NAME, IMPORT_MEMORY, held -> held.write((byte) 0)
+                    .writeUnsignedLeb128(1));
+            imported(w, HELD, TABLE, IMPORT_TABLE, held -> held.write(FUNCREF)
+                    .write(LIMITS_BOTH).writeUnsignedLeb128(crossings).writeUnsignedLeb128(crossings));
+            imported(w, HELD, RuntimeAbi.CANONICAL_REALLOC, IMPORT_FUNC,
+                    held -> held.writeUnsignedLeb128(1));
+            for (int i = 0; i < crossings; i++) {
+                int type = 3 + i;
+                imported(w, HELD, lowered(i), IMPORT_FUNC, held -> held.writeUnsignedLeb128(type));
+            }
+        });
+        section(writer, FUNCTION, w -> {
+            w.writeUnsignedLeb128(crossings + 1);
+            for (int i = 0; i < crossings; i++) {
+                w.writeUnsignedLeb128(0);
+            }
+            w.writeUnsignedLeb128(2);
+        });
+        int adapters = 1 + crossings;
+        int filling = adapters + crossings;
+        section(writer, START, w -> w.writeUnsignedLeb128(filling));
+        section(writer, ELEMENT, w -> {
+            w.writeUnsignedLeb128(1)
+                    .writeUnsignedLeb128(1)
+                    .write((byte) 0x00)
+                    .writeUnsignedLeb128(crossings);
+            for (int i = 0; i < crossings; i++) {
+                w.writeUnsignedLeb128(adapters + i);
+            }
+        });
+        section(writer, CODE, w -> {
+            w.writeUnsignedLeb128(crossings + 1);
+            for (int i = 0; i < crossings; i++) {
+                byte[] body = adaptingTyped(1 + i, lowered.get(i));
+                w.writeUnsignedLeb128(body.length).write(body);
+            }
+            byte[] filled = filling(crossings);
+            w.writeUnsignedLeb128(filled.length).write(filled);
+        });
+        return out.toByteArray();
+    }
+
+    /**
+     * One typed behavior: the core values its lowering takes, out of the slots the program put
+     * them in or as the place the record of them is; the call; and the one core value it answered
+     * put where the answer goes, or nothing to put where the lowering laid the answer out there.
+     */
+    private static byte[] adaptingTyped(int lowering, CanonicalAbi.CoreSignature signature) {
+        return body(b -> {
+            b.writeUnsignedLeb128(0);
+            boolean answersOne = signature.results().size() == 1;
+            if (answersOne) {
+                b.write(LOCAL_GET).writeUnsignedLeb128(2);
+            }
+            int arguments = signature.params().size() - (signature.answerInMemory() ? 1 : 0);
+            if (signature.argumentsInMemory()) {
+                b.write(LOCAL_GET).writeUnsignedLeb128(1);
+            } else {
+                for (int k = 0; k < arguments; k++) {
+                    b.write(LOCAL_GET).writeUnsignedLeb128(1)
+                            .write(I64_LOAD).writeUnsignedLeb128(3).writeUnsignedLeb128(8 * k);
+                    if (signature.params().get(k) == CanonicalAbi.Flat.I32) {
+                        b.write(I32_WRAP_I64);
+                    }
+                }
+            }
+            if (signature.answerInMemory()) {
+                b.write(LOCAL_GET).writeUnsignedLeb128(2);
+            }
+            b.write(CALL).writeUnsignedLeb128(lowering);
+            if (answersOne) {
+                if (signature.results().getFirst() == CanonicalAbi.Flat.I32) {
+                    b.write(I64_EXTEND_I32_U);
+                }
+                b.write(I64_STORE).writeUnsignedLeb128(3).writeUnsignedLeb128(0);
+            }
+            b.write(I64_CONST).writeSignedLeb128(0);
+            b.write(END);
+        });
+    }
+
+    private static byte core(CanonicalAbi.Flat flat) {
+        return switch (flat) {
+            case I32 -> I32;
+            case I64 -> I64;
+            case F32 -> (byte) 0x7d;
+            case F64 -> (byte) 0x7c;
+        };
+    }
+
     /** The name the lowering of one behavior's own call is imported under. */
     static String lowered(int ordinal) {
         return "souther#lowered-" + ordinal;
@@ -273,6 +401,9 @@ final class ReachingOut {
     private static final byte I64_SHL = (byte) 0x86;
     private static final byte I64_OR = (byte) 0x84;
     private static final byte I64_EXTEND_I32_U = (byte) 0xad;
+    private static final byte I64_LOAD = 0x29;
+    private static final byte I64_STORE = 0x37;
+    private static final byte I32_WRAP_I64 = (byte) 0xa7;
     private static final byte CALL = 0x10;
     private static final byte CALL_INDIRECT = 0x11;
     private static final byte MISC = (byte) 0xfc;

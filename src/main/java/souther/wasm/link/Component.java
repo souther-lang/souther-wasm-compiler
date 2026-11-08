@@ -373,7 +373,7 @@ public final class Component {
      * with an injected behavior is refused before it gets here, and what stands here is reached by
      * nothing.
      */
-    private static byte[] unreachedHost() {
+    static byte[] unreachedHost() {
         return ComponentWriter.enc(w -> {
             w.write(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
             section(w, 1, ComponentWriter.enc(t -> t.writeUnsignedLeb128(1)

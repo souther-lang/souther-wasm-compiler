@@ -47,7 +47,9 @@ import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
 import souther.wasm.link.Offering;
+import souther.wasm.link.TypedComponent;
 import souther.wasm.link.TypedOffering;
+import souther.wasm.link.TypedWitText;
 import souther.wasm.link.WitType;
 import souther.wasm.link.WasmFragment;
 import souther.wasm.link.WitText;
@@ -143,6 +145,17 @@ public final class WasmCompiler {
      */
     public static byte[] typedCore(CheckedProgram program) {
         return Linker.link(written(program, runtimeModule(), Lifting.TYPED));
+    }
+
+    /**
+     * Compiles a checked program as a component whose functions take and answer the model's types,
+     * as {@link TypedWitText} writes them.
+     *
+     * @param program what a Souther compile checked
+     * @return the component
+     */
+    public static byte[] compileAsTypedComponent(CheckedProgram program) {
+        return TypedComponent.around(typedCore(program), typedOffering(program));
     }
 
     /**
@@ -368,7 +381,9 @@ public final class WasmCompiler {
             fragment.write(each.index(), emitter.overValues(each));
         }
         for (Crossing each : injected) {
-            fragment.write(each.index(), emitter.reachingOut(each));
+            fragment.write(each.index(), typed == null
+                    ? emitter.reachingOut(each)
+                    : typedReachingOut(fragment, emitter, shapes, abi, typed.offering(), each));
         }
         for (Composed each : composed) {
             fragment.write(each.index(), emitter.composing(each));
@@ -563,6 +578,50 @@ public final class WasmCompiler {
             return new Typed(signature, fragment.functionType(takes, List.of(Type.I32)),
                     arguments, result);
         }
+    }
+
+    /**
+     * What stands for a behavior the program reaches out for, typed: its arguments written as the
+     * function a component imports for it takes them, and what that answered read as the
+     * behavior's answer.
+     */
+    private static byte[] typedReachingOut(WasmFragment fragment, Emitter emitter,
+            Descriptors shapes, CanonicalAbi abi, TypedOffering offering, Crossing crossing) {
+        CheckedBehavior behavior = crossing.behavior();
+        TypedOffering.Function function =
+                offering.reached().get(behavior.name().module()).get(behavior.name().name());
+        List<WitType> parameters = function.parameters().stream()
+                .map(WitType.Field::type).toList();
+        CanonicalAbi.CoreSignature signature = abi.lowered(parameters, function.answers());
+        WitType together = new WitType.TupleOf(parameters);
+        List<Integer> offsets = signature.argumentsInMemory()
+                ? abi.offsets(together)
+                : java.util.Collections.nCopies(parameters.size(), 0);
+        ByteArrayOutputStream record = new ByteArrayOutputStream();
+        WasmWriter out = new WasmWriter(record)
+                .writeLittleEndian4(parameters.size())
+                .writeLittleEndian4(signature.argumentsInMemory() ? 1 : 0);
+        List<souther.compiler.types.Type> takes = behavior.signature().takes();
+        for (int i = 0; i < takes.size(); i++) {
+            out.writeLittleEndian4(shapes.toCross(shapes.of(takes.get(i))))
+                    .writeLittleEndian4(offsets.get(i));
+        }
+        int arguments = fragment.place(record.toByteArray());
+        ByteArrayOutputStream answered = new ByteArrayOutputStream();
+        new WasmWriter(answered)
+                .writeLittleEndian4(shapes.toCross(shapes.toRead(
+                        shapes.of(behavior.signature().answers()))))
+                .writeLittleEndian4(signature.answerInMemory() ? 1 : 0);
+        int answer = fragment.place(answered.toByteArray());
+        int flats = 0;
+        for (WitType each : parameters) {
+            flats += abi.flatten(each).size();
+        }
+        int argumentSlots = signature.argumentsInMemory()
+                ? (abi.size(together) + 7) / 8 : flats;
+        int answerSlots = signature.answerInMemory()
+                ? (abi.size(function.answers()) + 7) / 8 : 1;
+        return emitter.typedReachingOut(crossing, arguments, answer, argumentSlots, answerSlots);
     }
 
     /**
@@ -1062,6 +1121,54 @@ public final class WasmCompiler {
                     .constant(shapes.toRead(shapes.of(crossing.behavior().signature().answers())))
                     .constant((fragment.intern(behavior) & 0xffff_ffffL) | (long) behavior.length << 32)
                     .call(calls.of(RuntimeAbi.READ_ANSWER))
+                    .body();
+        }
+
+        /**
+         * A behavior supplied from outside, typed: its arguments written as the function the
+         * component imports for it takes them, into room of their own, and what that answered,
+         * which the host puts in room of its own, read as the type the declaration answers.
+         *
+         * <p>The call out is the one a JSON one makes, the behavior's number and two places: here
+         * where the arguments are and where the answer goes, which the function filling the table
+         * hands the lowering it calls.
+         *
+         * @param arguments where the arguments record is, as the lowering takes them
+         * @param answer where the answer record is
+         * @param argumentSlots how many eight-byte slots the arguments take
+         * @param answerSlots how many the answer does
+         */
+        byte[] typedReachingOut(Crossing crossing, int arguments, int answer, int argumentSlots,
+                int answerSlots) {
+            var takes = crossing.behavior().signature().takes();
+            out = new BodyWriter(takes.size(), 1);
+            locals = new HashMap<>();
+            writing = crossing.behavior().name();
+            requirementsInScope = Set.copyOf(crossing.behavior().requirements());
+            int called = out.wide(0);
+            int values = out.narrow();
+            int at = out.narrow();
+            int answered = out.narrow();
+            out.constant(takes.size()).call(calls.of(RuntimeAbi.TUPLE)).localSet(values);
+            for (int i = 0; i < takes.size(); i++) {
+                out.localGet(values).constant(i).localGet(i).call(calls.of(RuntimeAbi.TUPLE_SET));
+            }
+            out.constant(argumentSlots).call(calls.of(RuntimeAbi.TYPED_SLOTS)).localSet(at)
+                    .constant(answerSlots).call(calls.of(RuntimeAbi.TYPED_SLOTS)).localSet(answered)
+                    .localGet(values)
+                    .constant(arguments)
+                    .localGet(at)
+                    .call(calls.of(RuntimeAbi.TYPED_LOWERED))
+                    .constant(crossing.ordinal())
+                    .localGet(at)
+                    .localGet(answered)
+                    .call(calls.of(RuntimeAbi.HOST_CALL))
+                    .localSet(called);
+            byte[] behavior = exportName(crossing.behavior().name()).getBytes(StandardCharsets.UTF_8);
+            return out.localGet(answered)
+                    .constant(answer)
+                    .constant((fragment.intern(behavior) & 0xffff_ffffL) | (long) behavior.length << 32)
+                    .call(calls.of(RuntimeAbi.TYPED_ANSWER))
                     .body();
         }
 

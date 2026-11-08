@@ -872,7 +872,7 @@ pub unsafe extern "C" fn __souther_read_answer(
 }
 
 /// Ends the call on an answer whose issues have been recorded.
-unsafe fn refuse_answer(descriptor: u32, behavior: u64) -> ! {
+pub(crate) unsafe fn refuse_answer(descriptor: u32, behavior: u64) -> ! {
     abort(REASON_INVALID_HOST_ANSWER, descriptor, behavior, issues::__souther_issues_written())
 }
 

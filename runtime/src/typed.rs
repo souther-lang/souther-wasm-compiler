@@ -568,7 +568,7 @@ unsafe fn flattened(cell: u32, descriptor: u32, slots: u32, index: &mut u32) {
 }
 
 /// Writes the arguments of a call out, flattened into slots or laid out as a record of them, as the
-/// function the call goes to takes them.
+/// function the call goes to takes them. `values` is a tuple of them, in order.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_typed_lowered(values: u32, arguments: u32, at: u32) {
     let arity = word(arguments + A_ARITY);
@@ -576,13 +576,42 @@ pub unsafe extern "C" fn __souther_typed_lowered(values: u32, arguments: u32, at
     let mut index = 0;
     for i in 0..arity {
         let descriptor = word(arguments + A_ARGUMENTS + 8 * i);
-        let cell = word(values + 4 * i);
+        let cell = value::__souther_tuple_get(values, i);
         if in_memory {
             stored(cell, descriptor, at + word(arguments + A_ARGUMENTS + 8 * i + 4));
         } else {
             flattened(cell, descriptor, at, &mut index);
         }
     }
+}
+
+/// What a function the program reaches out to answered, as the record the compiler wrote for the
+/// behavior says it lies:
+///
+/// ```text
+/// +0  u32 the descriptor of the behavior's answer
+/// +4  u32 whether it lies in memory, as the answer laid out, rather than in one slot
+/// ```
+const H_DESCRIPTOR: u32 = 0;
+const H_IN_MEMORY: u32 = 4;
+
+/// Reads what a function the program reaches out to answered as the behavior's type, as
+/// `__souther_read_answer` reads a JSON one: a value that breaks a rule of its type is the host
+/// answering outside the behavior's type, and ends the call naming the behavior and the issues.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_typed_answer(at: u32, answer: u32, behavior: u64) -> u32 {
+    issues::forget();
+    let descriptor = word(answer + H_DESCRIPTOR);
+    let document = if word(answer + H_IN_MEMORY) != 0 {
+        loaded(at, descriptor)
+    } else {
+        lifted(at, &mut 0, descriptor)
+    };
+    let read = value::__souther_read(document, descriptor, 0, 0);
+    if issues::__souther_issues_count() != 0 {
+        value::refuse_answer(descriptor, behavior);
+    }
+    read
 }
 
 /// Where a call's typed answer is written, which the canonical ABI reads it out of before the
