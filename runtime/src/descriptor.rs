@@ -46,13 +46,14 @@
 //! A list and an option are written with one member so that everything with members is read the
 //! same way. What their member is called is nothing, because nothing names it.
 //!
-//! Before every descriptor, sixteen bytes say what reads, writes and orders a value of its type:
+//! Before every descriptor, sixteen bytes say what reads, writes and orders a value of its type,
+//! and where it lies when it crosses typed:
 //!
 //! ```text
 //! -16 u32 the slot of its reader       (`__souther_read_*`)
 //! -12 u32 the slot of its writer       (`__souther_write_*`)
 //! -8  u32 the slot of its order        (`__souther_order_*`)
-//! -4  u32 nothing
+//! -4  u32 where its typed layout is    (`crate::typed`)
 //! ```
 //!
 //! Each is filled only where the program asks it of the type, and is nothing otherwise. Which
@@ -175,6 +176,12 @@ pub unsafe fn ordered_exactly(descriptor: u32, left: u32, right: u32) -> i32 {
     let order: extern "C" fn(u32, u32) -> i32 =
         core::mem::transmute(read(descriptor as usize + 4) as usize);
     order(left, right)
+}
+
+/// Where a value of the type lies when it crosses typed, as the compiler laid it out by the
+/// Canonical ABI (`crate::typed`), or nothing where no typed boundary carries the type.
+pub unsafe fn layout(descriptor: u32) -> u32 {
+    read(descriptor as usize - 4)
 }
 
 /// The table slot of what checks a product's invariants, or zero where it has none.

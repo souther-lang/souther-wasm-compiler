@@ -56,8 +56,11 @@ const OFF_META: usize = 24;
 const OFF_META_LENGTH: usize = 28;
 const OFF_MESSAGE: usize = 32;
 const OFF_MESSAGE_LENGTH: usize = 36;
-const OFF_NEXT: usize = 40;
-const RECORD: usize = 44;
+/// Whether the decoder said the issue in its own words: a word of its own, and not a message of
+/// no length, which is words that say nothing and not no words.
+const OFF_SAID: usize = 40;
+const OFF_NEXT: usize = 44;
+const RECORD: usize = 48;
 
 /// Forgets what an earlier call found.
 ///
@@ -90,7 +93,7 @@ pub unsafe fn issue(code: &[u8], path: u32, path_length: u32, meta: (u32, u32)) 
 /// Records one issue under a message key of its own, which says which of its code's constraints it
 /// was.
 pub unsafe fn keyed(code: &[u8], key: &[u8], path: u32, path_length: u32, meta: (u32, u32)) {
-    said(code, key, path, path_length, meta, b"");
+    record(code, key, path, path_length, meta, None);
 }
 
 /// Records one issue the decoder says in its own words: a sentence the catalog's template for its
@@ -104,6 +107,17 @@ pub unsafe fn said(
     meta: (u32, u32),
     message: &[u8],
 ) {
+    record(code, key, path, path_length, meta, Some(message));
+}
+
+unsafe fn record(
+    code: &[u8],
+    key: &[u8],
+    path: u32,
+    path_length: u32,
+    meta: (u32, u32),
+    message: Option<&[u8]>,
+) {
     let record = alloc(RECORD as u32);
     put(record, OFF_CODE, code.as_ptr() as u32);
     put(record, OFF_CODE_LENGTH, code.len() as u32);
@@ -113,8 +127,11 @@ pub unsafe fn said(
     put(record, OFF_PATH_LENGTH, path_length);
     put(record, OFF_META, meta.0);
     put(record, OFF_META_LENGTH, meta.1);
-    put(record, OFF_MESSAGE, message.as_ptr() as u32);
-    put(record, OFF_MESSAGE_LENGTH, message.len() as u32);
+    if let Some(words) = message {
+        put(record, OFF_SAID, 1);
+        put(record, OFF_MESSAGE, words.as_ptr() as u32);
+        put(record, OFF_MESSAGE_LENGTH, words.len() as u32);
+    }
     put(record, OFF_NEXT, 0);
     if FIRST == 0 {
         FIRST = record;
@@ -145,7 +162,7 @@ pub unsafe extern "C" fn __souther_issues_written() -> u64 {
         quoted(get(record, OFF_KEY), get(record, OFF_KEY_LENGTH));
         write(b",\"meta\":");
         text::push(get(record, OFF_META), get(record, OFF_META_LENGTH));
-        if get(record, OFF_MESSAGE_LENGTH) > 0 {
+        if get(record, OFF_SAID) != 0 {
             write(b",\"message\":");
             quoted(get(record, OFF_MESSAGE), get(record, OFF_MESSAGE_LENGTH));
         }
@@ -155,6 +172,38 @@ pub unsafe extern "C" fn __souther_issues_written() -> u64 {
     write(b"]}");
     let (at, length) = text::ended();
     packed(at, length)
+}
+
+/// One issue found, as its parts, for a boundary that lays them out itself: a typed one hands a
+/// caller a list of records where the JSON boundary hands it a document.
+pub(crate) struct Found {
+    pub path: (u32, u32),
+    pub code: (u32, u32),
+    pub key: (u32, u32),
+    pub meta: (u32, u32),
+    /// Nothing where the decoder said nothing in its own words.
+    pub message: Option<(u32, u32)>,
+}
+
+/// Every issue this call found, in the order it found them.
+pub(crate) unsafe fn each(mut found: impl FnMut(u32, Found)) {
+    let mut record = FIRST;
+    let mut index = 0;
+    while record != 0 {
+        found(index, Found {
+            path: (get(record, OFF_PATH), get(record, OFF_PATH_LENGTH)),
+            code: (get(record, OFF_CODE), get(record, OFF_CODE_LENGTH)),
+            key: (get(record, OFF_KEY), get(record, OFF_KEY_LENGTH)),
+            meta: (get(record, OFF_META), get(record, OFF_META_LENGTH)),
+            message: if get(record, OFF_SAID) != 0 {
+                Some((get(record, OFF_MESSAGE), get(record, OFF_MESSAGE_LENGTH)))
+            } else {
+                None
+            },
+        });
+        index += 1;
+        record = get(record, OFF_NEXT);
+    }
 }
 
 /// Appends bytes to the run being written at the arena's top.
@@ -182,26 +231,25 @@ unsafe fn put(record: u32, offset: usize, value: u32) {
 /// raised while a document is being read, and what it says may be a value written out for it — the
 /// duplicates a list held — which is written through that run. The two must not share a buffer.
 pub mod meta {
-    use crate::alloc;
+    use crate::text::Run;
 
-    static mut AT: u32 = 0;
-    static mut WRITTEN: u32 = 0;
-    static mut ROOM: u32 = 0;
+    static mut RUN: Run = Run::EMPTY;
     static mut ENTRIES: u32 = 0;
+
+    /// The object being written, which only this crate's one thread writes.
+    unsafe fn run() -> &'static mut Run {
+        &mut *core::ptr::addr_of_mut!(RUN)
+    }
 
     /// Forgets the object being written, as the arena it lives in is popped.
     pub(crate) unsafe fn forget() {
-        AT = 0;
-        WRITTEN = 0;
-        ROOM = 0;
+        *run() = Run::EMPTY;
         ENTRIES = 0;
     }
 
     /// Starts an object.
     pub unsafe fn begin() {
-        AT = alloc(64);
-        WRITTEN = 0;
-        ROOM = 64;
+        run().begin(64);
         ENTRIES = 0;
         put(b"{");
     }
@@ -215,7 +263,7 @@ pub mod meta {
     /// Ends the object, answering where it is and how long.
     pub unsafe fn end() -> (u32, u32) {
         put(b"}");
-        (AT, WRITTEN)
+        run().ended()
     }
 
     /// An entry whose value is text, quoted as JSON writes it.
@@ -288,16 +336,6 @@ pub mod meta {
     }
 
     unsafe fn push(from: u32, length: u32) {
-        if WRITTEN + length > ROOM {
-            let wanted = (WRITTEN + length) * 2;
-            let wider = alloc(wanted);
-            if WRITTEN > 0 {
-                core::ptr::copy_nonoverlapping(AT as *const u8, wider as *mut u8, WRITTEN as usize);
-            }
-            AT = wider;
-            ROOM = wanted;
-        }
-        core::ptr::copy_nonoverlapping(from as *const u8, (AT + WRITTEN) as *mut u8, length as usize);
-        WRITTEN += length;
+        run().push(from, length);
     }
 }

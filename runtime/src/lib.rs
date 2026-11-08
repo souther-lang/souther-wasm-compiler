@@ -43,6 +43,7 @@ mod rational;
 mod temporal;
 mod text;
 mod tree;
+mod typed;
 mod value;
 
 use core::panic::PanicInfo;
@@ -108,7 +109,12 @@ const PAGE: usize = 65536;
 /// (issue #63), whose record points at the behavior's name and at the issues, raised by
 /// `__souther_read_answer`, which an injected behavior's answer came to be read through, and a
 /// component's `ended` came to carry the two as its `invalid-answer` beside the reason.
-const ABI_VERSION: u32 = 15;
+///
+/// Raised to 16 when the word before a descriptor's operations came to say where a value of its
+/// type lies when it crosses typed (`typed`), and a typed component's lifted functions came to be
+/// handed core values and to answer through `__souther_typed_answered`, `__souther_typed_refused`
+/// and `__souther_typed_ended` (issue #73).
+const ABI_VERSION: u32 = 16;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -556,6 +562,26 @@ pub(crate) unsafe fn alloc(size: u32) -> u32 {
     __ronto_alloc(size)
 }
 
+/// How many bytes an allocation of `count` things `width` bytes each takes, after `header` bytes.
+///
+/// The one place a size is worked out from how many of something there are. Worked out in the
+/// thirty-two bits an address is, a size past what one can say wrapped round to a small one, and
+/// the room asked for was then less than what was written into it: a list of half a billion
+/// eight-byte values asked for nothing at all. A size that cannot be said is more room than there
+/// can ever be, so the call ends as one that ran out of it, as the arena ends one asking for
+/// more than memory can grow to.
+pub(crate) unsafe fn room(header: u32, count: u32, width: u32) -> u32 {
+    match count.checked_mul(width).and_then(|bytes| bytes.checked_add(header)) {
+        Some(bytes) => bytes,
+        None => abort(REASON_OUT_OF_MEMORY, 0, count as u64, width as u64),
+    }
+}
+
+/// Two sizes together, ending the call as [`room`] does where they cannot be said.
+pub(crate) unsafe fn together(first: u32, second: u32) -> u32 {
+    room(first, second, 1)
+}
+
 /// A run of `size` bytes beginning at a multiple of `align`, which is a power of two.
 ///
 /// The one place an alignment is taken, by padding the arena up to it first. Every caller that
@@ -572,7 +598,7 @@ pub(crate) unsafe fn alloc_aligned(size: u32, align: u32) -> u32 {
 /// `count` words from the arena, as a slice: a slice of `u32` has to begin at a multiple of four,
 /// which [`alloc`] does not.
 pub(crate) unsafe fn alloc_words(count: usize) -> &'static mut [u32] {
-    core::slice::from_raw_parts_mut(alloc_aligned(4 * count as u32, 4) as usize as *mut u32, count)
+    core::slice::from_raw_parts_mut(alloc_aligned(room(0, count as u32, 4), 4) as usize as *mut u32, count)
 }
 
 /// Ending the call, for this crate's own modules.

@@ -15,10 +15,20 @@ Compatibility is kept at the boundaries this compiler offers the ones who use wh
 - the JavaScript package `@souther-lang/wasm` (`packages/wasm`);
 - what a module it writes holds a host to: the host contract and its ABI version, the
   `souther:surface` section and its version, and the interfaces a component exports and imports
-  (`souther:program/*`, `souther:decode/*`, `souther:reached/*`).
+  (`souther:program/*`, `souther:decode/*`, `souther:reached/*`), and those of a typed one
+  (`souther:typed-types/*`, `souther:typed-program/*`, `souther:typed-decode/*` and
+  `souther:typed-reached/*`, all at the one version `0.1.0`).
 
 Each of these that has a version moves it when it changes, and its tests fail where it changes
 without moving.
+
+A version says what a reader of it can rely on, and the ABI's says it of the runtime a module
+carries, not of the JSON a behavior takes and answers. Raising it keeps what goes in and comes out
+of a call as it was; what it changes is which glue reads the module. `@souther-lang/wasm` reads
+modules of the one ABI it was released with and refuses any other when it loads one, rather than
+reading it as this one: a module written by an earlier compiler is read by the glue released with
+that compiler. The ABI went from 15 to 16 when a descriptor came to say where a value lies when it
+crosses typed; a JSON call answers what it answered under 15.
 
 The Java classes here are how this compiler is written, and none of them is offered to a caller. A
 `public` declaration is one another package of this compiler uses; it is not a Java API, and
@@ -264,6 +274,84 @@ what a lowering writes, because what could be got wrong about them is which beha
 call reaches, what it answers of where the lowering put the answer, and that it calls the lowering
 once.
 
+## As a typed component
+
+`--component --component-abi typed` writes a component whose functions take and answer the model's
+types, so that a caller generating bindings from the component (`jco types`, `wit-bindgen`,
+wasmtime's `bindgen!`) gets `DraftRequest` rather than a string, and `wac` checks what it composes
+by type. The interfaces are a version of their own, `0.1.0`, which is how a Souther value crosses
+typed and not any model's types.
+
+    world root {
+      import souther:typed-types/trip@0.1.0;
+      export souther:typed-program/trip@0.1.0;
+      export souther:typed-decode/trip@0.1.0;
+    }
+    package souther:typed-types@0.1.0 {
+      interface trip {
+        type employee-id = string;
+        record draft-request { applicant: employee-id, planned-cost: s64 }
+        record rejected { reason: string }
+        record submitted { applicant: employee-id, planned-cost: s64 }
+        variant submit-result { rejected(rejected), submitted(submitted) }
+      }
+    }
+    package souther:typed-program@0.1.0 {
+      interface trip {
+        use souther:typed-types/trip@0.1.0.{draft-request, submit-result};
+        record issue { path: string, code: string, message-key: string, meta: string, message: option<string> }
+        record invalid-answer { behavior: string, issues: list<issue> }
+        record ended { reason: u32, invalid-answer: option<invalid-answer> }
+        variant refusal { issues(list<issue>), ended(ended) }
+        submit: func(request: draft-request) -> result<submit-result, refusal>;
+      }
+    }
+
+A module's types are an interface of their own, which the component imports and which declares
+each type once. Every interface naming one uses it from there: what the program offers, what a
+caller reads on its own, and what the program reaches out for. Importing it asks nothing of a host,
+since it holds only types, and two components built to it compose by those names.
+
+A product is a `record`, a newtype a `type` naming what it wraps, a sum a `variant` whose cases are
+named after their types (an `enum` where none carries anything), and a union a behavior answers
+that nobody named is `<behavior>-result`. A unit standing as a value is an `enum` of itself alone.
+A list and a set are a `list`, an optional field an `option`, and a map a `list` of `tuple`s of a
+key and a value: a WIT `map` takes no enumeration as its key, and is not yet where every runtime is.
+An `Int` is an `s64`. A `Decimal` and the four temporals are a `string`, the text the JSON
+boundary writes them as, since WIT has no exact decimal and no local date. A type that holds itself
+is refused where it would cross, because WIT declares no recursive type; one that no boundary names
+is not.
+
+Two things a Souther type says WIT does not. A newtype is a `type` naming what it wraps, and a WIT
+`type` is another name for the same type rather than a type of its own: `employee-id` and
+`product-id` over `string` are one type to WIT and to `wac`, and a caller handing one where the
+other goes is told nothing by either. Souther holds each to its own rules when it reads it, and
+does not know which of the two the caller meant where both rules hold. And an interface is named
+after its module, `souther:typed-types/customer@0.1.0`, which says nothing of which program the
+module is from: two programs built apart that each declare a `customer` module with types of its
+own offer interfaces of one name that are not one interface. What the typed interfaces are for is
+composing components built from one model; naming a model in them is a question of its own, and
+not one the version answers, which is how a value crosses and not whose it is.
+
+WIT says the shape of a value and nothing of its rules. What a typed function is handed is made
+into the document the JSON boundary would have parsed and read by the same readers, so a newtype's
+rules, a set's distinct members and the text of an amount or a date are held to as they are there,
+and an issue names the same place, `/0/applicant`. The one thing only a typed caller can get
+wrong is the text of an amount, which it hands over as a string: text that is no amount is refused
+as `invalid_format` at its place, as text that is no date is, rather than as a string standing
+where a number goes. What goes back out is written straight into the
+Canonical ABI's layout, a set's members and a map's entries in the order JSON writes them. A call
+the boundary refused answers `err(issues(...))`, and one the runtime ended `err(ended(...))` with
+the reason a core module's abort record holds; a function the program reaches out to that answers
+a value breaking its type's rules ends the call with reason 13, its issues as records. An issue's
+`meta` stays JSON text, since what it holds depends on its `code`.
+
+Where each value lies in memory and what core values it flattens to is worked out once, in
+`CanonicalAbi`, and carried to the runtime beside each type's descriptor; the runtime works out
+nothing itself. CI holds the flattening of every function of the typed interfaces of a program
+writing every form to what `wasm-tools component embed --dummy` says of the same WIT, and calls a
+typed component, and one composed with what answers what it reaches out for, with `wasmtime`.
+
 ## What is not written yet
 
 - A behavior whose body nobody has written yet: one that says what it depends on and has no `let`.
@@ -275,6 +363,7 @@ once.
     souther compile --target wasm src/ -o program.wasm
     souther compile --target wasm src/ -o program.wasm --component
     souther compile --target wasm src/ -o program.wasm --wit program.wit
+    souther compile --target wasm src/ -o program.wasm --component --component-abi typed
 
 Everything after `wasm` is this backend's: the `souther` command line reads none of it, finds the
 backend's jar and runs it as a process of its own. It finds it in `$SOUTHER_HOME/backends`, or where
@@ -300,7 +389,9 @@ repository. Nothing then checks which Souther it was built against.
 
 `--wit` writes what the program offers and what it has to be given, as a reader of interfaces reads
 them. The same either way: a component carries it and a core module does not, but what a program
-offers is the program's. Every name a module or a behavior gave is written escaped, `%doubled`,
+offers is the program's. With `--component-abi typed` it writes the typed interfaces, and the
+same whether a component is written or not; `--component-abi` on a line asking for neither a
+component nor its interfaces is refused. Every name a module or a behavior gave is written escaped, `%doubled`,
 since a model may call one what WIT has a word for (`record`, `func`) and which words WIT has is
 WIT's to add to; a reader of interfaces reads an escaped name as the name.
 

@@ -152,7 +152,7 @@ pub unsafe fn __souther_string_of(pieces: &[&str]) -> u32 {
 
 /// A string of `times` copies of `text`, written straight into the cell.
 pub unsafe fn __souther_string_repeated(text: &str, times: u32) -> u32 {
-    let length = text.len() as u32 * times;
+    let length = crate::room(0, times, text.len() as u32);
     let cell = header(TAG_STRING, length);
     let mut at = alloc(length) as usize;
     for _ in 0..times {
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn __souther_unit(descriptor: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_record(descriptor: u32) -> u32 {
     let cell = header(TAG_RECORD, descriptor);
-    let _ = alloc(4 * descriptor::arity(descriptor));
+    let _ = alloc(crate::room(0, descriptor::arity(descriptor), 4));
     cell
 }
 
@@ -525,7 +525,7 @@ pub(crate) unsafe fn map_entries(cell: u32) -> u32 {
     if entries != 0 || word(cell + LIST_LENGTH) == 0 {
         return entries;
     }
-    let laid = alloc(8 * word(cell + LIST_LENGTH));
+    let laid = alloc(crate::room(0, word(cell + LIST_LENGTH), 8));
     tree::laid_out(word(cell + MAP_TREE), laid, 8, true);
     put_word(cell + MAP_ENTRIES, laid);
     laid
@@ -670,7 +670,7 @@ pub const TAG_RATIONAL: u32 = 19;
 #[no_mangle]
 pub unsafe extern "C" fn __souther_tuple(held: u32) -> u32 {
     let cell = header(TAG_TUPLE, held);
-    let _ = alloc(4 * held);
+    let _ = alloc(crate::room(0, held, 4));
     cell
 }
 
@@ -718,7 +718,7 @@ pub unsafe extern "C" fn __souther_builder(descriptor: u32) -> u32 {
     // How many it holds, how many it has room for, and the room: three things and not two. The
     // arena hands out exactly what is asked for, so a cell asked for too little ends where the
     // next one begins, and the last place written is the next cell's first word.
-    let _ = alloc(8 + 4 * INITIAL_ROOM);
+    let _ = alloc(crate::room(8, INITIAL_ROOM, 4));
     core::ptr::write_unaligned((cell as usize + HEADER) as *mut u32, 0);
     core::ptr::write_unaligned((cell as usize + HEADER + 4) as *mut u32, INITIAL_ROOM);
     cell
@@ -764,9 +764,10 @@ unsafe fn grown(builder: u32, value: u32) -> u32 {
     }
     let descriptor = core::ptr::read_unaligned((builder as usize + 4) as *const u32);
     let wider = header(TAG_BUILDER, descriptor);
-    let _ = alloc(8 + 4 * (room * 2 + 1));
+    let wider_room = crate::room(1, room, 2);
+    let _ = alloc(crate::room(8, wider_room, 4));
     core::ptr::write_unaligned((wider as usize + HEADER) as *mut u32, held + 1);
-    core::ptr::write_unaligned((wider as usize + HEADER + 4) as *mut u32, room * 2 + 1);
+    core::ptr::write_unaligned((wider as usize + HEADER + 4) as *mut u32, wider_room);
     for i in 0..held {
         core::ptr::write_unaligned(
             (wider as usize + HEADER + 8 + 4 * i as usize) as *mut u32,
@@ -872,7 +873,7 @@ pub unsafe extern "C" fn __souther_read_answer(
 }
 
 /// Ends the call on an answer whose issues have been recorded.
-unsafe fn refuse_answer(descriptor: u32, behavior: u64) -> ! {
+pub(crate) unsafe fn refuse_answer(descriptor: u32, behavior: u64) -> ! {
     abort(REASON_INVALID_HOST_ANSWER, descriptor, behavior, issues::__souther_issues_written())
 }
 
@@ -1133,7 +1134,18 @@ unsafe fn text(value: u32, path: u32, path_length: u32) -> u32 {
 /// the type — not a wrong format, which is text that is no reading of its type at all.
 unsafe fn amount(value: u32, path: u32, path_length: u32) -> u32 {
     let tag = json::__souther_json_tag(value);
-    if tag != json::TAG_NUMBER {
+    // Text a typed caller handed over as an amount is refused as text that is no amount, as text
+    // that is no date is, and not as a string where a number goes: it was told to hand a string.
+    if tag == json::TAG_AMOUNT_TEXT
+        && !json::is_number(json::__souther_json_bytes(value), json::__souther_json_length(value))
+    {
+        issues::said(CODE_INVALID_FORMAT, CODE_INVALID_FORMAT, path, path_length,
+            issues::meta::none(),
+            b"is not a Decimal written as digits, with a sign, a fraction and an exponent where it \
+                has them");
+        return 0;
+    }
+    if tag != json::TAG_NUMBER && tag != json::TAG_AMOUNT_TEXT {
         mismatch(path, path_length, tag, b"number");
         return 0;
     }
@@ -1350,7 +1362,7 @@ unsafe fn sorted_in_place(cell: u32, element: u32) {
     if held < 2 {
         return;
     }
-    let room = alloc(4 * held);
+    let room = alloc(crate::room(0, held, 4));
     let elements = __souther_list_elements(cell);
     let mut width = 1;
     while width < held {
@@ -1584,7 +1596,7 @@ pub(crate) unsafe fn sorted_by_key(cell: u32, keys: u32) {
     if held < 2 {
         return;
     }
-    let room = alloc(8 * held);
+    let room = alloc(crate::room(0, held, 8));
     let entries = map_entries(cell);
     let mut width = 1;
     while width < held {
@@ -1768,7 +1780,7 @@ unsafe fn entry(object: u32, name: u32, name_length: u32) -> u32 {
 /// The JSON pointer of a place inside another, written into the arena.
 unsafe fn below(path: u32, path_length: u32, step: (u32, u32)) -> (u32, u32) {
     let (step, step_length) = step;
-    let total = path_length + 1 + step_length;
+    let total = crate::room(path_length, 1, crate::together(1, step_length));
     let at = alloc(total);
     core::ptr::copy_nonoverlapping(path as *const u8, at as *mut u8, path_length as usize);
     core::ptr::write((at + path_length) as *mut u8, b'/');
@@ -1977,7 +1989,7 @@ pub(crate) unsafe fn member_of(cell: u32, descriptor: u32) -> Option<u32> {
 
 /// The same, where the value has to be one: a place whose type the checker settled holds a value
 /// of one of its members.
-unsafe fn case_among(cell: u32, descriptor: u32) -> u32 {
+pub(crate) unsafe fn case_among(cell: u32, descriptor: u32) -> u32 {
     match member_of(cell, descriptor) {
         Some(i) => i,
         None => abort(REASON_NOT_A_VALUE, descriptor, cell as u64, 0),
@@ -2002,53 +2014,89 @@ unsafe fn members_written(cell: u32, element: u32) {
         }
         return;
     }
-    let first = text::so_far();
-    let ends = alloc(4 * held);
-    for i in 0..held {
-        written(__souther_list_get(cell, i), element);
-        core::ptr::write_unaligned((ends + 4 * i) as usize as *mut u32, text::so_far());
-    }
-    let end = |i: u32| core::ptr::read_unaligned((ends + 4 * i) as usize as *const u32);
-    let start = |i: u32| if i == 0 { first } else { end(i - 1) };
-    // Read back from where the run is now, which its growing may have moved, and kept apart from it,
-    // since the run is written over next.
-    let (run, _) = text::ended();
-    let copied_at = alloc(end(held - 1) - first);
-    core::ptr::copy_nonoverlapping(
-        (run + first) as usize as *const u8,
-        copied_at as usize as *mut u8,
-        (end(held - 1) - first) as usize,
-    );
-    let read = alloc(4 * held);
-    for i in 0..held {
-        let node = json::parse_own(copied_at + start(i) - first, end(i) - start(i));
-        order::keyed(node);
-        core::ptr::write_unaligned((read + 4 * i) as usize as *mut u32, node);
-    }
-    let node = |i: u32| core::ptr::read_unaligned((read + 4 * i) as usize as *const u32);
-    // A set of numbers, of text or of names stands in the order it is written in already, which is
-    // asked of each neighbour once before anything is moved.
-    if (1..held).all(|i| order::as_written(node(i - 1), node(i)) < 0) {
-        text::back_to(first);
-        for i in 0..held {
-            if i > 0 {
-                write(b",");
-            }
-            text::push(copied_at + start(i) - first, end(i) - start(i));
-        }
-        return;
-    }
-    let order = crate::alloc_words(held as usize);
-    for (i, each) in order.iter_mut().enumerate() {
-        *each = i as u32;
-    }
-    order::sort_places(order, &|a, b| order::as_written(node(a), node(b)));
-    text::back_to(first);
-    for (k, &i) in order.iter().enumerate() {
+    let members = in_written_order(cell, element);
+    for k in 0..held {
         if k > 0 {
             write(b",");
         }
-        text::push(copied_at + start(i) - first, end(i) - start(i));
+        let (at, length) = members.text(members.place(k));
+        text::push(at, length);
+    }
+}
+
+/// A set's members, each as it is written, and the order they stand in by what they are written
+/// as: what [`members_written`] writes a set as, and what a boundary writing a set otherwise hands
+/// its members over in, so that one set is one list whichever way it crosses.
+///
+/// Written into the run the caller is writing, from where it stands, and taken back out of it, so
+/// nothing of them is left in it: the writing a set's members are ordered by is not yet the
+/// writing of the set. Every member goes into the one run; a run started for each took the room a
+/// run starts with for each, and a set of a thousand short strings, ordered so for a typed caller,
+/// took two and a half times what the JSON call answering it took. Nor is a run started for each
+/// set: a typed answer has no run of its own, and its sets are ordered in the one the call has,
+/// taken back each time, which is room taken once and not once a set.
+pub(crate) unsafe fn in_written_order(cell: u32, element: u32) -> WrittenMembers {
+    let held = __souther_list_length(cell);
+    // Fewer than two members stand in the one order there is, and nothing is written to say so.
+    if held < 2 {
+        return WrittenMembers { copied: 0, ends: crate::alloc_words(0), order: None };
+    }
+    let first = text::so_far();
+    let ends = crate::alloc_words(held as usize);
+    for i in 0..held {
+        written(__souther_list_get(cell, i), element);
+        ends[i as usize] = text::so_far() - first;
+    }
+    // Read back from where the run is now, which its growing may have moved, and kept apart from it,
+    // since the run is written over next.
+    let length = if held == 0 { 0 } else { ends[held as usize - 1] };
+    let (run, _) = text::ended();
+    let copied = alloc(length);
+    core::ptr::copy_nonoverlapping((run + first) as usize as *const u8, copied as usize as *mut u8,
+        length as usize);
+    text::back_to(first);
+    let mut members = WrittenMembers { copied, ends, order: None };
+    let read = crate::alloc_words(held as usize);
+    for i in 0..held {
+        let (at, length) = members.text(i);
+        let node = json::parse_own(at, length);
+        order::keyed(node);
+        read[i as usize] = node;
+    }
+    // A set of numbers, of text or of names stands in the order it is written in already, which is
+    // asked of each neighbour once before anything is moved, or room taken to move it in.
+    if !(1..held).all(|i| order::as_written(read[i as usize - 1], read[i as usize]) < 0) {
+        let order = crate::alloc_words(held as usize);
+        for (i, each) in order.iter_mut().enumerate() {
+            *each = i as u32;
+        }
+        order::sort_places(order, &|a, b| order::as_written(read[a as usize], read[b as usize]));
+        members.order = Some(order);
+    }
+    members
+}
+
+/// A set's members as [`in_written_order`] wrote them: the text of each, where it ends, and the
+/// order of their places, where it is not the order they were written in.
+pub(crate) struct WrittenMembers {
+    copied: u32,
+    ends: &'static mut [u32],
+    order: Option<&'static mut [u32]>,
+}
+
+impl WrittenMembers {
+    /// The place of the member that stands `k`th.
+    pub(crate) fn place(&self, k: u32) -> u32 {
+        match &self.order {
+            Some(order) => order[k as usize],
+            None => k,
+        }
+    }
+
+    /// Where the text of the member at a place is, and how long.
+    unsafe fn text(&self, place: u32) -> (u32, u32) {
+        let start = if place == 0 { 0 } else { self.ends[place as usize - 1] };
+        (self.copied + start, self.ends[place as usize] - start)
     }
 }
 
@@ -2132,7 +2180,7 @@ fn kind_of(tag: u32) -> &'static [u8] {
         json::TAG_NULL => b"null",
         json::TAG_FALSE | json::TAG_TRUE => b"boolean",
         json::TAG_NUMBER => b"number",
-        json::TAG_STRING => b"string",
+        json::TAG_STRING | json::TAG_AMOUNT_TEXT => b"string",
         json::TAG_ARRAY => b"array",
         _ => b"object",
     }

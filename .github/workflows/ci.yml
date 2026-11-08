@@ -91,11 +91,16 @@ jobs:
       # sections hold what they were meant to hold and nothing about whether the index in one
       # section names the thing in another — and a component that reaches out is almost entirely
       # indices between sections.
+      # Each tool is fetched whole into a file before it is unpacked, and the fetch is tried again
+      # where it fails: a release download is a server elsewhere, and one that answered 504 three
+      # runs running failed builds that had nothing wrong with them. Piped into tar, a fetch tried
+      # again would hand tar the start of the file twice.
       - name: Install wasm-tools
         run: |
           version=1.258.0
-          curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v$version/wasm-tools-$version-x86_64-linux.tar.gz" \
-            | tar xz -C /tmp
+          curl -sSfL --retry 8 --retry-delay 15 --retry-all-errors -o /tmp/wasm-tools.tar.gz \
+            "https://github.com/bytecodealliance/wasm-tools/releases/download/v$version/wasm-tools-$version-x86_64-linux.tar.gz"
+          tar xzf /tmp/wasm-tools.tar.gz -C /tmp
           echo "/tmp/wasm-tools-$version-x86_64-linux" >> "$GITHUB_PATH"
       - name: Require every component this writes to be one
         run: |
@@ -143,6 +148,17 @@ jobs:
           wasm-tools component wit /tmp/asked/out.wit > /dev/null
           wasm-tools component wit /tmp/component/out.wit > /dev/null
           wasm-tools component wit /tmp/worded/out.wit > /dev/null
+          # The typed interfaces a test holds to their version are WIT a component can be made to,
+          # every form a value crosses in among them.
+          typed=src/test/resources/souther/wasm/lower/souther-typed-0.1.0.wit
+          wasm-tools component wit "$typed" > /dev/null
+          wasm-tools component embed --dummy "$typed" -o /tmp/typed-core.wasm
+          wasm-tools component new /tmp/typed-core.wasm -o /tmp/typed.wasm
+          wasm-tools validate --features all /tmp/typed.wasm
+          # The core function each typed one is, as the tool flattens it, is the file the
+          # compiler's own flattening is held to.
+          wasm-tools print /tmp/typed-core.wasm | node scripts/core-signatures.mjs \
+            | diff - src/test/resources/souther/wasm/lower/souther-typed-0.1.0.core.txt
 
       # Validating says each index names something of the right type, and not that a function
       # lifts the right one: every function here takes a string and answers the same result, so a lift
@@ -151,8 +167,9 @@ jobs:
       - name: Install wasmtime
         run: |
           version=47.0.4
-          curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v$version/wasmtime-v$version-x86_64-linux.tar.xz" \
-            | tar xJ -C /tmp
+          curl -sSfL --retry 8 --retry-delay 15 --retry-all-errors -o /tmp/wasmtime.tar.xz \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/v$version/wasmtime-v$version-x86_64-linux.tar.xz"
+          tar xJf /tmp/wasmtime.tar.xz -C /tmp
           echo "/tmp/wasmtime-v$version-x86_64-linux" >> "$GITHUB_PATH"
       - name: Call each function a component this writes offers
         run: |
@@ -269,6 +286,141 @@ jobs:
           }
           refused 'true' '{"path":"","code":"type_mismatch","messageKey":"type_mismatch","meta":{"actual":"boolean","expected":"number"}}'
           refused 'nope' '{"path":"","code":"invalid_format","messageKey":"invalid_format.json","meta":{}}'
+
+      # The same programs as components that take and answer the model's types. What is held of
+      # them is what is held of the JSON ones: each is a component, it says the interfaces --wit
+      # wrote, and it answers each call as the model does. A type of the model is an interface of
+      # its own that every interface naming the type uses, which the read-back says.
+      - name: Require every typed component this writes to be one, and call it
+        run: |
+          for source in /tmp/asked /tmp/component /tmp/worded; do
+            souther compile --target wasm "$source" --component --component-abi typed \
+              -o "$source/typed.wasm" --wit "$source/typed.wit"
+            wasm-tools validate --features all "$source/typed.wasm"
+            wasm-tools component wit "$source/typed.wasm" > "$source/typed-read-back.wit"
+            wasm-tools component wit "$source/typed.wit" > /dev/null
+          done
+          grep -q 'import souther:typed-types/shipping@0.1.0' /tmp/asked/typed-read-back.wit
+          grep -q 'use souther:typed-types/shipping@0.1.0.{parcel}' /tmp/asked/typed-read-back.wit
+          grep -q 'fee: func(total: s64) -> result<s64, refusal>' /tmp/asked/typed-read-back.wit
+          grep -q 'import souther:typed-reached/rates@0.1.0' /tmp/component/typed-read-back.wit
+          grep -q 'today: func(pair: string) -> string' /tmp/component/typed-read-back.wit
+          answers() {
+            got=$(wasmtime run --invoke "$2" "$1")
+            if [ "$got" != "$3" ]; then
+              echo "$2 answered $got, where $3 was expected"
+              exit 1
+            fi
+          }
+          answers /tmp/asked/typed.wasm 'fee(4999)' 'ok(500)'
+          answers /tmp/asked/typed.wasm 'fee(5000)' 'ok(0)'
+          answers /tmp/asked/typed.wasm 'check-parcel({weight: 2})' 'ok({weight: 2})'
+          # /tmp/worded is held to being a component and to its interfaces, and is not called:
+          # wasmtime's --invoke reads `func` as WIT's word and not as a name, and takes no escape.
+
+      # What issue a value written wrong is refused with, from a caller or from what the program
+      # reaches out to, is the readers' and is held by the JVM tests, which run the same core module
+      # and answer the call out themselves. What only a component runtime can say is held here:
+      # that wac composes a typed component with one built apart from it to the same interfaces,
+      # the types interface the two share being one interface, and that a call goes through it and
+      # back, and through to the end of the call where what answers it answers outside its type.
+      - name: Install wac
+        run: |
+          version=0.12.0
+          mkdir -p "/tmp/wac-$version"
+          curl -sSfL --retry 8 --retry-delay 15 --retry-all-errors -o "/tmp/wac-$version/wac" \
+            "https://github.com/bytecodealliance/wac/releases/download/v$version/wac-cli-x86_64-unknown-linux-musl"
+          chmod +x "/tmp/wac-$version/wac"
+          echo "/tmp/wac-$version" >> "$GITHUB_PATH"
+      - name: Call a typed component that reaches out, composed by wac with what answers it
+        run: |
+          # What is reached for takes a type of the model, so the two components each import the
+          # interface that declares it, and the composition has to take them for one. A map goes
+          # out both ways, answered and handed to what is reached for: a list of entries whose
+          # room a caller lifting it requires to begin where an entry is aligned, at eight.
+          mkdir -p /tmp/paired /tmp/typed-answering
+          cat > /tmp/paired/rates.sou <<'SOURCE'
+          module rates
+
+          data Pair = { from: String, to: String }
+
+          behavior today : (pair: Pair) -> Decimal
+
+          behavior priced : (n: Decimal) -> Decimal depends on today
+
+          let priced (n, today) = n * today(Pair { from = "JPY", to = "USD" })
+
+          behavior quoted : (n: Int) -> Map<String, Int>
+
+          let quoted (n) = Map.fromList([("JPY", n), ("USD", n * 2)])
+
+          behavior counted : (prices: Map<String, Int>) -> Int
+
+          behavior tallied : (n: Int) -> Int depends on counted
+
+          let tallied (n, counted) = counted(Map.fromList([("a", n), ("bb", n), ("ccc", n)]))
+          SOURCE
+          souther compile --target wasm /tmp/paired --component --component-abi typed \
+            -o /tmp/paired/typed.wasm --wit /tmp/paired/typed.wit
+          cd /tmp/typed-answering
+          awk '{print} /^world program \{/{inworld=1} inworld && /^\}/{print "\nworld answering {\n  export souther:typed-reached/%rates@0.1.0;\n}"; inworld=0}' \
+            /tmp/paired/typed.wit > answering.wit
+          answering() {
+            cat > answering.wat <<WAT
+          (module
+            (memory (export "cm32p2_memory") 1)
+            (global \$top (mut i32) (i32.const 8192))
+            (data (i32.const 1024) "$1")
+            (func (export "cm32p2|souther:typed-reached/rates@0.1|today") (param i32 i32 i32 i32) (result i32)
+              (i32.store (i32.const 8) (i32.const 1024))
+              (i32.store (i32.const 12) (i32.const ${#1}))
+              (i32.const 8))
+            (func (export "cm32p2|souther:typed-reached/rates@0.1|today_post") (param i32))
+            (func (export "cm32p2|souther:typed-reached/rates@0.1|counted") (param i32 i32) (result i64)
+              (i64.extend_i32_u (local.get 1)))
+            (func (export "cm32p2_realloc") (param i32 i32 i32 i32) (result i32)
+              (local \$at i32)
+              (local.set \$at (i32.and (i32.add (global.get \$top) (i32.sub (local.get 2) (i32.const 1)))
+                                      (i32.sub (i32.const 0) (local.get 2))))
+              (global.set \$top (i32.add (local.get \$at) (local.get 3)))
+              (local.get \$at))
+            (func (export "cm32p2_initialize")))
+          WAT
+            wasm-tools parse answering.wat -o core.wasm
+            wasm-tools component embed answering.wit --world answering core.wasm -o embedded.wasm
+            wasm-tools component new embedded.wasm -o answering.wasm
+            wac plug /tmp/paired/typed.wasm --plug answering.wasm -o composed.wasm
+            wasm-tools validate --features all composed.wasm
+          }
+          answering 2
+          # Composed, the reached interface is answered, and the types interface both import is
+          # still imported, once: it was one interface to the two of them.
+          wasm-tools component wit composed.wasm > composed.wit
+          if grep -q 'import souther:typed-reached/rates' composed.wit; then
+            echo "what answers today was not composed in"; exit 1
+          fi
+          test "$(grep -c 'import souther:typed-types/rates@0.1.0' composed.wit)" = 1
+          got=$(wasmtime run --invoke 'priced("5")' composed.wasm)
+          if [ "$got" != 'ok("10")' ]; then
+            echo "priced answered $got, where ok(\"10\") was expected"
+            exit 1
+          fi
+          got=$(wasmtime run --invoke 'quoted(5)' composed.wasm)
+          if [ "$got" != 'ok([("JPY", 5), ("USD", 10)])' ]; then
+            echo "quoted answered $got"
+            exit 1
+          fi
+          got=$(wasmtime run --invoke 'tallied(7)' composed.wasm)
+          if [ "$got" != 'ok(3)' ]; then
+            echo "tallied answered $got, where ok(3) was expected"
+            exit 1
+          fi
+          answering x
+          got=$(wasmtime run --invoke 'priced("5")' composed.wasm)
+          case "$got" in
+            'err(ended({reason: 13, invalid-answer: some({behavior: "rates.today", issues: [{'*) ;;
+            *) echo "priced, answered x, answered $got"; exit 1 ;;
+          esac
 
 
       # The example is a program compiled by this and then called from a browser. Nothing else

@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import org.jspecify.annotations.Nullable;
 import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.core.BlockReaches;
@@ -42,10 +43,16 @@ import souther.wasm.abi.WasmAbortMapping;
 import souther.wasm.abi.WasmFault;
 import souther.wasm.emit.Type;
 import souther.wasm.emit.WasmWriter;
+import souther.wasm.link.CanonicalAbi;
 import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
 import souther.wasm.link.Offering;
+import souther.wasm.link.TypedBuild;
+import souther.wasm.link.TypedComponent;
+import souther.wasm.link.TypedOffering;
+import souther.wasm.link.TypedWitText;
+import souther.wasm.link.WitType;
 import souther.wasm.link.WasmFragment;
 import souther.wasm.link.WitText;
 
@@ -89,7 +96,7 @@ public final class WasmCompiler {
      * @return the linked module
      */
     public static byte[] compile(CheckedProgram program, byte[] runtime) {
-        return Linker.link(written(program, runtime, false));
+        return Linker.link(written(program, runtime, Lifting.NONE, null, null));
     }
 
     /**
@@ -100,7 +107,7 @@ public final class WasmCompiler {
      * @return the linked module, with all of the runtime in it
      */
     public static byte[] unshaken(CheckedProgram program) {
-        return Linker.unshaken(written(program, runtimeModule(), false));
+        return Linker.unshaken(written(program, runtimeModule(), Lifting.NONE, null, null));
     }
 
     /**
@@ -126,7 +133,57 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(Linker.link(written(program, runtime, true)), offering(program));
+        return Component.around(Linker.link(written(program, runtime, Lifting.JSON, null, null)),
+                offering(program));
+    }
+
+    /**
+     * The core module a typed component is built around: the program, with a function for each
+     * behavior and each type a caller may read on its own that takes and answers what the
+     * Canonical ABI lifts a typed one from ({@link Component.Lifted#typed}).
+     *
+     * @param program what a Souther compile checked
+     * @return the linked core module
+     */
+    public static byte[] typedCore(CheckedProgram program) {
+        return compiledTyped(program).core();
+    }
+
+    /**
+     * A typed compile: the core module, and what it settled that what wraps it reads.
+     *
+     * @param core the linked core module
+     * @param build the offering, its layout, and the name and core type of each function the
+     *     module was written with
+     */
+    public record TypedCompiled(byte[] core, TypedBuild build) {
+    }
+
+    /**
+     * Compiles a checked program typed, once, for its core module and for the component and the
+     * interfaces written around it.
+     *
+     * @param program what a Souther compile checked
+     * @return the core module and what it settled
+     */
+    public static TypedCompiled compiledTyped(CheckedProgram program) {
+        WitTypes typed = WitTypes.read(program);
+        TypedBuild.Recording recording = new TypedBuild.Recording(typed.offering());
+        byte[] core = Linker.link(written(program, runtimeModule(), Lifting.TYPED, typed,
+                recording));
+        return new TypedCompiled(core, recording.build());
+    }
+
+    /**
+     * Compiles a checked program as a component whose functions take and answer the model's types,
+     * as {@link TypedWitText} writes them.
+     *
+     * @param program what a Souther compile checked
+     * @return the component
+     */
+    public static byte[] compileAsTypedComponent(CheckedProgram program) {
+        TypedCompiled compiled = compiledTyped(program);
+        return TypedComponent.around(compiled.core(), compiled.build());
     }
 
     /**
@@ -138,6 +195,17 @@ public final class WasmCompiler {
      */
     public static Offering offering(CheckedProgram program) {
         return new Offering(offered(program), readable(program), reachedOutFor(program));
+    }
+
+    /**
+     * What a program offers and has to be given with the type of everything that crosses, as the
+     * typed interfaces are written from it.
+     *
+     * @param program what a Souther compile checked
+     * @return the program's typed offering
+     */
+    public static TypedOffering typedOffering(CheckedProgram program) {
+        return WitTypes.of(program);
     }
 
     /**
@@ -180,7 +248,7 @@ public final class WasmCompiler {
      * call out carries for them: a call out names what it reaches by its place here, and
      * {@code souther:surface} says each one's place as its {@code reachOut}.
      */
-    private static List<CheckedBehavior> reachingOut(CheckedProgram program) {
+    static List<CheckedBehavior> reachingOut(CheckedProgram program) {
         List<CheckedBehavior> reaching = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
@@ -237,7 +305,23 @@ public final class WasmCompiler {
         return behaviors;
     }
 
-    private static WasmFragment written(CheckedProgram program, byte[] runtime, boolean lifted) {
+    /** Which functions a component lifts are written beside the core module's own. */
+    private enum Lifting {
+        /** None: a core module, whose host keeps the arena's bracket itself. */
+        NONE,
+        /** What a component crossing in JSON lifts. */
+        JSON,
+        /** What a component crossing typed lifts. */
+        TYPED
+    }
+
+    /**
+     * @param typed what each type crosses typed as, for a typed compile, and nothing otherwise
+     * @param recording where what the typed compile settles is written down, beside {@code typed}
+     */
+    private static WasmFragment written(CheckedProgram program, byte[] runtime, Lifting lifting,
+            @Nullable WitTypes typed, TypedBuild.@Nullable Recording recording) {
+        CanonicalAbi abi = recording == null ? null : recording.abi();
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
         Runtime calls = new Runtime(plan);
@@ -253,7 +337,7 @@ public final class WasmCompiler {
             int index = fragment.declare(overCells(fragment, 1));
             checks.put(name, index);
             return fragment.slot(index);
-        });
+        }, typed == null ? null : new Descriptors.Typed(typed::typeOf, abi));
         holder[0] = shapes;
 
         // Every index is settled before the first body is written, because a call writes the index
@@ -329,7 +413,9 @@ public final class WasmCompiler {
             fragment.write(each.index(), emitter.overValues(each));
         }
         for (Crossing each : injected) {
-            fragment.write(each.index(), emitter.reachingOut(each));
+            fragment.write(each.index(), typed == null
+                    ? emitter.reachingOut(each)
+                    : typedReachingOut(fragment, emitter, shapes, recording, each));
         }
         for (Composed each : composed) {
             fragment.write(each.index(), emitter.composing(each));
@@ -371,8 +457,12 @@ public final class WasmCompiler {
                 }
             }
         }
-        if (lifted) {
-            liftable(fragment, calls, program, decodable);
+        switch (lifting) {
+            case NONE -> {
+            }
+            case JSON -> liftable(fragment, calls, program, decodable);
+            case TYPED -> typedLiftable(fragment, calls, emitter, shapes, program, decodable,
+                    recording, reached);
         }
         fragment.offers(Surface.of(program, decodable, reachOut));
         // Last of all, once nothing more is described: what each descriptor's reader, writer and
@@ -420,11 +510,229 @@ public final class WasmCompiler {
             fragment.export(Component.Lifted.reading(readAs(decodable.get(number))),
                     fragment.define(overStrings, body));
         }
+        exportPostReturn(fragment, calls);
+    }
+
+    /**
+     * The post-return every lifted function shares, JSON or typed: everything a call made is the
+     * arena, so what each owes back is the same thing, whichever way the call came out.
+     */
+    private static void exportPostReturn(WasmFragment fragment, Runtime calls) {
         byte[] rewind = new BodyWriter(1, 0)
                 .call(calls.of(RuntimeAbi.ARENA_REWIND))
                 .body();
         fragment.export(Component.Lifted.POST_RETURN, fragment.define(
                 fragment.functionType(List.of(Type.I32), List.of()), rewind));
+    }
+
+    /**
+     * The functions a typed component's lift calls: one per behavior and one per type a caller may
+     * read on its own, each of the core type the Canonical ABI lifts its typed one from, and the
+     * post-return they share.
+     *
+     * <p>Each says where its arguments lie and where its result goes by records placed beside it,
+     * worked out by {@link CanonicalAbi}; the runtime reads them and works out nothing itself.
+     */
+    private static void typedLiftable(WasmFragment fragment, Runtime calls, Emitter emitter,
+            Descriptors shapes, CheckedProgram program, List<TypeSymbol.AtModule> decodable,
+            TypedBuild.Recording recording, Map<ValueName, Integer> reached) {
+        TypedOffering offering = recording.offering();
+        CanonicalAbi abi = recording.abi();
+        int ended = fragment.endsCallsByThrowing();
+        int protocol = fragment.place(protocolOf(abi));
+        for (CheckedModule module : program.modules()) {
+            for (CheckedBehavior behavior : module.behaviors()) {
+                if (!publishes(module, behavior)) {
+                    continue;
+                }
+                TypedOffering.Function function =
+                        offering.behaviors().get(module.name()).get(behavior.name().name());
+                List<Integer> descriptors = new ArrayList<>();
+                for (souther.compiler.types.Type each : behavior.signature().takes()) {
+                    descriptors.add(shapes.toCross(shapes.toRead(shapes.of(each))));
+                }
+                Typed lifted = Typed.of(fragment, abi, function, descriptors, protocol);
+                int inner = fragment.define(lifted.type(), emitter.typedCrossing(
+                        behavior, reached.get(behavior.name()), lifted.signature(),
+                        lifted.arguments(), lifted.result()));
+                String export = Component.Lifted.typed(exportName(behavior.name()));
+                fragment.export(export,
+                        fragment.define(lifted.type(), typedOutcomeOf(calls, ended, lifted, inner)));
+                recording.lifted(module.name(), behavior.name().name(), export);
+            }
+        }
+        for (TypeSymbol.AtModule type : decodable) {
+            TypedOffering.Function function =
+                    offering.readable().get(type.module()).get(type.name());
+            int descriptor = shapes.toCross(shapes.toRead(shapes.ofDeclared(type)));
+            Typed lifted = Typed.of(fragment, abi, function, List.of(descriptor), protocol);
+            int inner = fragment.define(lifted.type(), emitter.typedReading(
+                    descriptor, lifted.signature(), lifted.arguments(), lifted.result()));
+            String export = Component.Lifted.typedReading(readAs(type));
+            fragment.export(export,
+                    fragment.define(lifted.type(), typedOutcomeOf(calls, ended, lifted, inner)));
+            recording.read(type.module(), type.name(), export);
+        }
+        exportPostReturn(fragment, calls);
+    }
+
+    /**
+     * One typed function a component lifts: the core function it is, and the records placed for it
+     * saying where its arguments lie and where its result goes.
+     *
+     * @param signature the core function, as the Canonical ABI flattens the typed one
+     * @param type that function's type in the module
+     * @param arguments where its arguments record is: how many, whether they lie in memory, and
+     *     each one's descriptor and where it lies
+     * @param result where its result record is: the result's size, alignment and where its case
+     *     lies, where the protocol layout is, and where the err of a call that ended is written
+     *     and how long it is
+     */
+    private record Typed(CanonicalAbi.CoreSignature signature, int type, int arguments,
+            int result) {
+
+        static Typed of(WasmFragment fragment, CanonicalAbi abi, TypedOffering.Function function,
+                List<Integer> descriptors, int protocol) {
+            List<WitType> parameters = function.parameters().stream()
+                    .map(WitType.Field::type).toList();
+            WitType answered = function.refusing();
+            CanonicalAbi.CoreSignature signature = abi.lifted(parameters, answered);
+            int arguments = argumentsRecord(fragment, abi, parameters, descriptors, signature);
+            // Where the err of a call that ended is written: static, and not the arena's, since the
+            // call may have ended for want of room. As much of the result as its err reaches, and
+            // placed for each function, so its size is the layout's and not a guess at the largest.
+            int ending = abi.payloadOffset(answered)
+                    + abi.size(new WitType.Named(null, TypedOffering.REFUSAL));
+            int ended = fragment.place(new byte[ending]);
+            ByteArrayOutputStream outcome = new ByteArrayOutputStream();
+            new WasmWriter(outcome)
+                    .writeLittleEndian4(abi.size(answered))
+                    .writeLittleEndian4(abi.alignment(answered))
+                    .writeLittleEndian4(abi.payloadOffset(answered))
+                    .writeLittleEndian4(protocol)
+                    .writeLittleEndian4(ended)
+                    .writeLittleEndian4(ending);
+            int result = fragment.place(outcome.toByteArray());
+            List<Type> takes = signature.params().stream()
+                    .map(flat -> flat == CanonicalAbi.Flat.I64 ? Type.I64 : Type.I32)
+                    .toList();
+            return new Typed(signature, fragment.functionType(takes, List.of(Type.I32)),
+                    arguments, result);
+        }
+    }
+
+    /**
+     * Places a typed function's arguments record ({@code runtime/src/typed.rs}): how many, whether
+     * they lie in memory as the record of them, and each one's descriptor and where it lies in
+     * that record. The one writing of it, for a function lifted and for a call out lowered alike.
+     */
+    private static int argumentsRecord(WasmFragment fragment, CanonicalAbi abi,
+            List<WitType> parameters, List<Integer> descriptors,
+            CanonicalAbi.CoreSignature signature) {
+        List<Integer> offsets = signature.argumentsInMemory()
+                ? abi.offsets(new WitType.TupleOf(parameters))
+                : java.util.Collections.nCopies(parameters.size(), 0);
+        ByteArrayOutputStream record = new ByteArrayOutputStream();
+        WasmWriter out = new WasmWriter(record)
+                .writeLittleEndian4(parameters.size())
+                .writeLittleEndian4(signature.argumentsInMemory() ? 1 : 0);
+        for (int i = 0; i < parameters.size(); i++) {
+            out.writeLittleEndian4(descriptors.get(i)).writeLittleEndian4(offsets.get(i));
+        }
+        return fragment.place(record.toByteArray());
+    }
+
+    /**
+     * What stands for a behavior the program reaches out for, typed: its arguments written as the
+     * function a component imports for it takes them, and what that answered read as the
+     * behavior's answer.
+     */
+    private static byte[] typedReachingOut(WasmFragment fragment, Emitter emitter,
+            Descriptors shapes, TypedBuild.Recording recording, Crossing crossing) {
+        CanonicalAbi abi = recording.abi();
+        CheckedBehavior behavior = crossing.behavior();
+        TypedOffering.Function function = recording.offering().reached()
+                .get(behavior.name().module()).get(behavior.name().name());
+        List<WitType> parameters = function.parameters().stream()
+                .map(WitType.Field::type).toList();
+        CanonicalAbi.CoreSignature signature = abi.lowered(parameters, function.answers());
+        recording.reached(crossing.ordinal(), behavior.name().module(), behavior.name().name(),
+                signature);
+        List<Integer> descriptors = new ArrayList<>();
+        for (souther.compiler.types.Type each : behavior.signature().takes()) {
+            descriptors.add(shapes.toCross(shapes.of(each)));
+        }
+        int arguments = argumentsRecord(fragment, abi, parameters, descriptors, signature);
+        ByteArrayOutputStream answered = new ByteArrayOutputStream();
+        new WasmWriter(answered)
+                .writeLittleEndian4(shapes.toCross(shapes.toRead(
+                        shapes.of(behavior.signature().answers()))))
+                .writeLittleEndian4(signature.answerInMemory() ? 1 : 0);
+        int answer = fragment.place(answered.toByteArray());
+        // As many slots as the lowering takes core values for its arguments, which is what the
+        // function filling the table loads out of them, or room for the record of them.
+        int argumentSlots = signature.argumentsInMemory()
+                ? (abi.size(new WitType.TupleOf(parameters)) + 7) / 8
+                : signature.argumentValues();
+        int answerSlots = signature.answerInMemory()
+                ? (abi.size(function.answers()) + 7) / 8 : 1;
+        return emitter.typedReachingOut(crossing, arguments, answer, argumentSlots, answerSlots);
+    }
+
+    /**
+     * Where the parts of a refusal lie, which are the same for every function a program offers,
+     * placed once for the runtime to write one by ({@code runtime/src/typed.rs}).
+     */
+    private static byte[] protocolOf(CanonicalAbi abi) {
+        WitType refusal = new WitType.Named(null, TypedOffering.REFUSAL);
+        WitType ended = new WitType.Named(null, TypedOffering.ENDED);
+        WitType invalid = new WitType.Named(null, TypedOffering.INVALID_ANSWER);
+        WitType issue = new WitType.Named(null, TypedOffering.ISSUE);
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        WasmWriter out = new WasmWriter(table)
+                .writeLittleEndian4(abi.payloadOffset(refusal))
+                .writeLittleEndian4(abi.offsets(ended).get(0))
+                .writeLittleEndian4(abi.offsets(ended).get(1))
+                .writeLittleEndian4(abi.payloadOffset(new WitType.OptionOf(invalid)))
+                .writeLittleEndian4(abi.offsets(invalid).get(0))
+                .writeLittleEndian4(abi.offsets(invalid).get(1))
+                .writeLittleEndian4(abi.size(issue))
+                .writeLittleEndian4(abi.alignment(issue));
+        abi.offsets(issue).forEach(out::writeLittleEndian4);
+        WitType option = new WitType.OptionOf(WitType.STRING);
+        // Any result: which case answers and which refuses is the Canonical ABI's, whatever the
+        // answer is, and so is how many bytes say it.
+        WitType result = new WitType.ResultOf(WitType.BOOL, refusal);
+        out.writeLittleEndian4(abi.payloadOffset(option))
+                .writeLittleEndian4(abi.discriminantSize(result))
+                .writeLittleEndian4(abi.caseNumber(result, "ok"))
+                .writeLittleEndian4(abi.caseNumber(result, "err"))
+                .writeLittleEndian4(abi.discriminantSize(refusal))
+                .writeLittleEndian4(abi.caseNumber(refusal, "issues"))
+                .writeLittleEndian4(abi.caseNumber(refusal, TypedOffering.ENDED))
+                .writeLittleEndian4(abi.discriminantSize(option))
+                .writeLittleEndian4(abi.caseNumber(option, "some"));
+        return table.toByteArray();
+    }
+
+    /**
+     * A typed lifted function's body: the call of {@code inner} with what it was handed, whose
+     * answer is where its result is; or, where the runtime ended the call, the reason written
+     * where the result's {@code err} is read from, as {@link #outcomeOf} writes a JSON one's.
+     */
+    private static byte[] typedOutcomeOf(Runtime calls, int ended, Typed lifted, int inner) {
+        int parameters = lifted.signature().params().size();
+        BodyWriter out = new BodyWriter(parameters, 0).block().catching(ended, 0);
+        for (int i = 0; i < parameters; i++) {
+            out.localGet(i);
+        }
+        return out.call(inner)
+                .returns()
+                .end()
+                .end()
+                .constant(lifted.result())
+                .call(calls.of(RuntimeAbi.TYPED_ENDED))
+                .body();
     }
 
     /**
@@ -884,6 +1192,54 @@ public final class WasmCompiler {
         }
 
         /**
+         * A behavior supplied from outside, typed: its arguments written as the function the
+         * component imports for it takes them, into room of their own, and what that answered,
+         * which the host puts in room of its own, read as the type the declaration answers.
+         *
+         * <p>The call out is the one a JSON one makes, the behavior's number and two places: here
+         * where the arguments are and where the answer goes, which the function filling the table
+         * hands the lowering it calls.
+         *
+         * @param arguments where the arguments record is, as the lowering takes them
+         * @param answer where the answer record is
+         * @param argumentSlots how many eight-byte slots the arguments take
+         * @param answerSlots how many the answer does
+         */
+        byte[] typedReachingOut(Crossing crossing, int arguments, int answer, int argumentSlots,
+                int answerSlots) {
+            var takes = crossing.behavior().signature().takes();
+            out = new BodyWriter(takes.size(), 1);
+            locals = new HashMap<>();
+            writing = crossing.behavior().name();
+            requirementsInScope = Set.copyOf(crossing.behavior().requirements());
+            int called = out.wide(0);
+            int values = out.narrow();
+            int at = out.narrow();
+            int answered = out.narrow();
+            out.constant(takes.size()).call(calls.of(RuntimeAbi.TUPLE)).localSet(values);
+            for (int i = 0; i < takes.size(); i++) {
+                out.localGet(values).constant(i).localGet(i).call(calls.of(RuntimeAbi.TUPLE_SET));
+            }
+            out.constant(argumentSlots).call(calls.of(RuntimeAbi.TYPED_SLOTS)).localSet(at)
+                    .constant(answerSlots).call(calls.of(RuntimeAbi.TYPED_SLOTS)).localSet(answered)
+                    .localGet(values)
+                    .constant(arguments)
+                    .localGet(at)
+                    .call(calls.of(RuntimeAbi.TYPED_LOWERED))
+                    .constant(crossing.ordinal())
+                    .localGet(at)
+                    .localGet(answered)
+                    .call(calls.of(RuntimeAbi.HOST_CALL))
+                    .localSet(called);
+            byte[] behavior = exportName(crossing.behavior().name()).getBytes(StandardCharsets.UTF_8);
+            return out.localGet(answered)
+                    .constant(answer)
+                    .constant((fragment.intern(behavior) & 0xffff_ffffL) | (long) behavior.length << 32)
+                    .call(calls.of(RuntimeAbi.TYPED_ANSWER))
+                    .body();
+        }
+
+        /**
          * What checks a type's invariants: the value, and which of them it breaks.
          *
          * <p>Answers the clause's place among the ones the type writes, or minus one where the
@@ -937,28 +1293,8 @@ public final class WasmCompiler {
                     .localGet(LOCAL_INPUT_POINTER)
                     .localGet(LOCAL_INPUT_LENGTH)
                     .call(calls.of(RuntimeAbi.JSON_PARSE))
-                    .localSet(document)
-                    .localGet(document)
-                    .constant(arity)
-                    .call(calls.of(RuntimeAbi.CHECK_ARGUMENTS));
-
-            // Only where the arguments are there at all: a place that is not in the document has
-            // nowhere to be read from, and reading it would be reading past what the caller wrote.
-            int[] read = new int[arity];
-            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifZero();
-            for (int i = 0; i < arity; i++) {
-                read[i] = out.narrow();
-                byte[] path = ("/" + i).getBytes(StandardCharsets.UTF_8);
-                out.localGet(document)
-                        .constant(i)
-                        .call(calls.of(RuntimeAbi.ARGUMENT))
-                        .constant(shapes.toRead(shapes.of(takes.get(i))))
-                        .constant(fragment.intern(path))
-                        .constant(path.length)
-                        .call(calls.of(RuntimeAbi.READ))
-                        .localSet(read[i]);
-            }
-            out.end();
+                    .localSet(document);
+            int[] read = argumentsRead(document, takes);
 
             // A body runs on what was read, and only where everything was. A refused place leaves
             // nothing behind, and nothing is not a value to run a behavior on.
@@ -981,6 +1317,143 @@ public final class WasmCompiler {
                     .shiftRight(32)
                     .wrap()
                     .body();
+        }
+
+        /**
+         * Reads a call's arguments out of the array of them, each as the type its parameter
+         * declares, at the place in the array it stands at, and answers the locals each is read
+         * into: nothing, where it could not be read.
+         */
+        private int[] argumentsRead(int document, List<souther.compiler.types.Type> takes) {
+            int arity = takes.size();
+            out.localGet(document)
+                    .constant(arity)
+                    .call(calls.of(RuntimeAbi.CHECK_ARGUMENTS));
+
+            // Only where the arguments are there at all: a place that is not in the document has
+            // nowhere to be read from, and reading it would be reading past what the caller wrote.
+            int[] read = new int[arity];
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifZero();
+            for (int i = 0; i < arity; i++) {
+                read[i] = out.narrow();
+                byte[] path = ("/" + i).getBytes(StandardCharsets.UTF_8);
+                out.localGet(document)
+                        .constant(i)
+                        .call(calls.of(RuntimeAbi.ARGUMENT))
+                        .constant(shapes.toRead(shapes.of(takes.get(i))))
+                        .constant(fragment.intern(path))
+                        .constant(path.length)
+                        .call(calls.of(RuntimeAbi.READ))
+                        .localSet(read[i]);
+            }
+            out.end();
+            return read;
+        }
+
+        /**
+         * The function a typed behavior is lifted from.
+         *
+         * <p>What it is handed is what the Canonical ABI hands a function of the behavior's type:
+         * core values, or where the record of its arguments is when there were too many. Those
+         * are made into the array of them a JSON call's arguments are read from, and read the
+         * same way, so a value is held to the same rules and an issue names the same place
+         * ({@code /0/applicant}) whichever way it crossed. What it answers is where the result is,
+         * as the ABI reads one: the behavior's answer as its {@code ok}, or the issues as a
+         * refusal.
+         *
+         * @param signature the core function the typed one is lifted from
+         * @param arguments where the function's arguments record is
+         * @param result where the function's result record is
+         */
+        byte[] typedCrossing(CheckedBehavior behavior, int declaration,
+                CanonicalAbi.CoreSignature signature, int arguments, int result) {
+            out = new BodyWriter(signature.params().size(), 0);
+            locals = new HashMap<>();
+            writing = behavior.name();
+            requirementsInScope = Set.copyOf(behavior.requirements());
+            out.call(calls.of(RuntimeAbi.ISSUES_BEGIN));
+            int document = typedArguments(signature, arguments);
+            int[] read = argumentsRead(document, behavior.signature().takes());
+            int answer = out.narrow();
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifNotZero()
+                    .constant(result)
+                    .call(calls.of(RuntimeAbi.TYPED_REFUSED))
+                    .localSet(answer)
+                    .otherwise();
+            for (int each : read) {
+                out.localGet(each);
+            }
+            out.call(declaration)
+                    .constant(shapes.toCross(shapes.of(behavior.signature().answers())))
+                    .constant(result)
+                    .call(calls.of(RuntimeAbi.TYPED_ANSWERED))
+                    .localSet(answer)
+                    .end();
+            return out.localGet(answer).body();
+        }
+
+        /**
+         * The function a value of one type a caller may read on its own is read through, typed:
+         * handed the value as the Canonical ABI hands it, and answering it read, which is it
+         * checked against the type's rules, or the issues.
+         */
+        byte[] typedReading(int descriptor, CanonicalAbi.CoreSignature signature, int arguments,
+                int result) {
+            out = new BodyWriter(signature.params().size(), 0);
+            locals = new HashMap<>();
+            out.call(calls.of(RuntimeAbi.ISSUES_BEGIN));
+            int document = typedArguments(signature, arguments);
+            int read = out.narrow();
+            int answer = out.narrow();
+            out.localGet(document)
+                    .constant(0)
+                    .call(calls.of(RuntimeAbi.ARGUMENT))
+                    .constant(descriptor)
+                    // The root, which a JSON pointer writes as nothing at all.
+                    .constant(0)
+                    .constant(0)
+                    .call(calls.of(RuntimeAbi.READ))
+                    .localSet(read);
+            out.call(calls.of(RuntimeAbi.ISSUES_COUNT)).ifNotZero()
+                    .constant(result)
+                    .call(calls.of(RuntimeAbi.TYPED_REFUSED))
+                    .localSet(answer)
+                    .otherwise()
+                    .localGet(read)
+                    .constant(descriptor)
+                    .constant(result)
+                    .call(calls.of(RuntimeAbi.TYPED_ANSWERED))
+                    .localSet(answer)
+                    .end();
+            return out.localGet(answer).body();
+        }
+
+        /**
+         * The array of a typed function's arguments, made from what it was handed: the core values
+         * spilled one to a slot, or the record of them it was handed where they lie.
+         */
+        private int typedArguments(CanonicalAbi.CoreSignature signature, int arguments) {
+            int at;
+            if (signature.argumentsInMemory()) {
+                at = 0;
+            } else {
+                at = out.narrow();
+                List<CanonicalAbi.Flat> flats = signature.params();
+                out.constant(flats.size()).call(calls.of(RuntimeAbi.TYPED_SLOTS)).localSet(at);
+                for (int i = 0; i < flats.size(); i++) {
+                    out.localGet(at).localGet(i);
+                    if (flats.get(i) == CanonicalAbi.Flat.I32) {
+                        out.extendToWideUnsigned();
+                    }
+                    out.storeWide(8 * i);
+                }
+            }
+            int document = out.narrow();
+            out.localGet(at)
+                    .constant(arguments)
+                    .call(calls.of(RuntimeAbi.TYPED_ARGUMENTS))
+                    .localSet(document);
+            return document;
         }
 
         /**

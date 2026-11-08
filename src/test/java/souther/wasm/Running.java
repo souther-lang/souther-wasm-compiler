@@ -3,6 +3,7 @@ package souther.wasm;
 import com.dylibso.chicory.runtime.HostFunction;
 import com.dylibso.chicory.runtime.ImportValues;
 import com.dylibso.chicory.runtime.Instance;
+import com.dylibso.chicory.runtime.WasmFunctionHandle;
 import com.dylibso.chicory.wasm.Parser;
 import com.dylibso.chicory.wasm.WasmModule;
 import com.dylibso.chicory.wasm.types.MemoryLimits;
@@ -85,6 +86,23 @@ public final class Running {
      */
     public static Running linked(byte[] module) {
         return new Running(instantiate(module), module);
+    }
+
+    /**
+     * A linked module whose crossing out of the program is answered by {@code host}: handed the
+     * instance and what the program's call out carries, its number and two places, and answering
+     * what the call out answers.
+     */
+    public static Running linkedAnswering(byte[] module, WasmFunctionHandle host) {
+        HostFunction hostCall = new HostFunction(
+                RuntimeAbi.IMPORT_MODULE,
+                RuntimeAbi.IMPORT_HOST_CALL,
+                List.of(ValType.I32, ValType.I32, ValType.I32),
+                List.of(ValType.I64),
+                host);
+        return new Running(Instance.builder(parsed(module))
+                .withImportValues(ImportValues.builder().addFunction(hostCall).build())
+                .build(), module);
     }
 
     /**

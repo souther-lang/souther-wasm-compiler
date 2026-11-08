@@ -35,7 +35,7 @@ unsafe fn write_u32(at: u32, word: u32) {
 pub unsafe fn cell_of(amount: &Amount) -> u32 {
     amount.with_parts(|negative, magnitude, scale| {
         let length = magnitude.len() as u32;
-        let cell = alloc(HEADER + length);
+        let cell = alloc(crate::together(HEADER, length));
         write_u32(cell, TAG_DECIMAL);
         write_u32(cell + OFF_SCALE, scale as u32);
         write_u32(
