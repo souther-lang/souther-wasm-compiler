@@ -517,7 +517,7 @@ pub unsafe fn keyed(node: u32) {
                     json::__souther_json_length(y),
                 )
             });
-            let entries = crate::alloc_words(2 * held as usize);
+            let entries = crate::alloc_words(crate::room(0, held, 2) as usize);
             for (to, &from) in order.iter().enumerate() {
                 let value = json::__souther_json_value(node, from);
                 keyed(value);

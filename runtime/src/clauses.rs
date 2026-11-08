@@ -356,8 +356,8 @@ unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bo
     // Where the elements are is asked once: the comparison below runs n log n times.
     let elements = value::__souther_list_elements(held);
     // The places, in order of value, and of place among equal values.
-    let places = crate::alloc(4 * n);
-    let spare = crate::alloc(4 * n);
+    let places = crate::alloc(crate::room(0, n, 4));
+    let spare = crate::alloc(crate::room(0, n, 4));
     for i in 0..n {
         put(places, i, i);
     }
@@ -369,7 +369,7 @@ unsafe fn duplicated(held: u32, element: u32, path: u32, path_length: u32) -> bo
     sorted(places, spare, n, &before);
     // Each run of equal values that is longer than one is a value written twice; where its second
     // writing stands is the run's second place.
-    let seconds = crate::alloc(4 * n);
+    let seconds = crate::alloc(crate::room(0, n, 4));
     let mut found = 0u32;
     let mut at = 0;
     while at < n {

@@ -509,7 +509,7 @@ public final class WasmCompiler {
                 for (souther.compiler.types.Type each : behavior.signature().takes()) {
                     descriptors.add(shapes.toCross(shapes.toRead(shapes.of(each))));
                 }
-                Typed lifted = Typed.of(fragment, abi, function, descriptors, protocol, false);
+                Typed lifted = Typed.of(fragment, abi, function, descriptors, protocol);
                 int inner = fragment.define(lifted.type(), emitter.typedCrossing(
                         behavior, reached.get(behavior.name()), lifted.signature(),
                         lifted.arguments(), lifted.result()));
@@ -521,7 +521,7 @@ public final class WasmCompiler {
             TypedOffering.Function function =
                     offering.readable().get(type.module()).get(type.name());
             int descriptor = shapes.toCross(shapes.toRead(shapes.ofDeclared(type)));
-            Typed lifted = Typed.of(fragment, abi, function, List.of(descriptor), protocol, true);
+            Typed lifted = Typed.of(fragment, abi, function, List.of(descriptor), protocol);
             int inner = fragment.define(lifted.type(), emitter.typedReading(
                     descriptor, lifted.signature(), lifted.arguments(), lifted.result()));
             fragment.export(Component.Lifted.typedReading(readAs(type)),
@@ -548,18 +548,8 @@ public final class WasmCompiler {
     private record Typed(CanonicalAbi.CoreSignature signature, int type, int arguments,
             int result) {
 
-        /** The flag of an arguments record saying they lie in memory as a record of them. */
-        static final int IN_MEMORY = 1;
-
-        /** The flag of an arguments record saying its one value stands at the root. */
-        static final int AT_ROOT = 2;
-
-        /**
-         * @param atRoot whether the one value it takes stands at the root of what an issue names,
-         *     as a value a caller reads on its own does, rather than at its place among arguments
-         */
         static Typed of(WasmFragment fragment, CanonicalAbi abi, TypedOffering.Function function,
-                List<Integer> descriptors, int protocol, boolean atRoot) {
+                List<Integer> descriptors, int protocol) {
             List<WitType> parameters = function.parameters().stream()
                     .map(WitType.Field::type).toList();
             WitType answered = function.refusing();
@@ -570,8 +560,7 @@ public final class WasmCompiler {
             ByteArrayOutputStream record = new ByteArrayOutputStream();
             WasmWriter out = new WasmWriter(record)
                     .writeLittleEndian4(parameters.size())
-                    .writeLittleEndian4((signature.argumentsInMemory() ? IN_MEMORY : 0)
-                            | (atRoot ? AT_ROOT : 0));
+                    .writeLittleEndian4(signature.argumentsInMemory() ? 1 : 0);
             for (int i = 0; i < parameters.size(); i++) {
                 out.writeLittleEndian4(descriptors.get(i)).writeLittleEndian4(offsets.get(i));
             }
@@ -611,7 +600,7 @@ public final class WasmCompiler {
         ByteArrayOutputStream record = new ByteArrayOutputStream();
         WasmWriter out = new WasmWriter(record)
                 .writeLittleEndian4(parameters.size())
-                .writeLittleEndian4(signature.argumentsInMemory() ? Typed.IN_MEMORY : 0);
+                .writeLittleEndian4(signature.argumentsInMemory() ? 1 : 0);
         List<souther.compiler.types.Type> takes = behavior.signature().takes();
         for (int i = 0; i < takes.size(); i++) {
             out.writeLittleEndian4(shapes.toCross(shapes.of(takes.get(i))))

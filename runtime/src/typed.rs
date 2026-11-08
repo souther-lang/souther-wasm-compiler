@@ -33,13 +33,15 @@ use crate::descriptor::{
     KIND_STRING, KIND_SUM, KIND_TIME, KIND_UNIT,
 };
 use crate::issues;
-use crate::json::{self, TAG_ARRAY, TAG_FALSE, TAG_NULL, TAG_NUMBER, TAG_OBJECT, TAG_STRING, TAG_TRUE};
+use crate::json::{
+    self, TAG_AMOUNT_TEXT, TAG_ARRAY, TAG_FALSE, TAG_NULL, TAG_NUMBER, TAG_OBJECT, TAG_STRING, TAG_TRUE,
+};
 use crate::value::{
     self, __souther_bool_value, __souther_int_value, __souther_list_get, __souther_list_length,
     __souther_map_key, __souther_map_length, __souther_map_value, __souther_record_get,
     __souther_string_bytes, __souther_string_length, TAG_NONE,
 };
-use crate::{abort, alloc_aligned, decimal, temporal, REASON_BACKEND_INVARIANT_BROKEN};
+use crate::{abort, alloc_aligned, decimal, temporal, text, REASON_BACKEND_INVARIANT_BROKEN};
 
 const L_SIZE: u32 = 0;
 const L_ALIGN: u32 = 4;
@@ -52,14 +54,11 @@ const L_OFFSETS: u32 = 20;
 ///
 /// ```text
 /// +0  u32 how many
-/// +4  u32 flags: 1, they lie in memory as a record of them rather than in slots; 2, the one
-///         value of a type read on its own, which stands at the root rather than at a place
+/// +4  u32 whether they lie in memory, as a record of them, rather than in slots
 /// +8  per argument: u32 its descriptor, u32 where it lies in that record
 /// ```
 const A_ARITY: u32 = 0;
-const A_FLAGS: u32 = 4;
-const A_IN_MEMORY: u32 = 1;
-const A_AT_ROOT: u32 = 2;
+const A_IN_MEMORY: u32 = 4;
 const A_ARGUMENTS: u32 = 8;
 
 /// What a function that can refuse answers, a `result` of its answer and a refusal, as the
@@ -189,59 +188,12 @@ unsafe fn text_cell(tag: u32, at: u32, length: u32) -> u32 {
     json::made_of_bytes(tag, at, length)
 }
 
-/// Where in what the caller handed over a value stands, which an issue names as a JSON pointer:
-/// the place the JSON boundary names, so that one mistake is reported at one place whichever way
-/// it crossed.
-///
-/// Held as the step from the place above it, on the stack, and written out as a pointer only where
-/// an issue is said. The readers the document is handed to work out every place again as they
-/// read it, so a pointer written here for every value would be written twice for nothing: an
-/// arena that held a list of a thousand records held a few thousand pointers no issue named.
-#[derive(Clone, Copy)]
-enum Place<'a> {
-    /// The root, which a JSON pointer writes as nothing at all.
-    Root,
-    /// A member of an object, by its name.
-    Named(&'a Place<'a>, (u32, u32)),
-    /// An element of an array, by its index.
-    Indexed(&'a Place<'a>, u32),
-}
-
-const ROOT: Place<'static> = Place::Root;
-
-/// The JSON pointer a place is written as, in the arena.
-unsafe fn pointer(place: &Place) -> (u32, u32) {
-    match place {
-        Place::Root => (0, 0),
-        Place::Named(above, step) => {
-            let (at, length) = pointer(above);
-            value::below(at, length, *step)
-        }
-        Place::Indexed(above, index) => {
-            let (at, length) = pointer(above);
-            let digits = json::__souther_json_write_int(*index as i64);
-            value::below(at, length, (digits as u32, (digits >> 32) as u32))
-        }
-    }
-}
-
-/// An amount, which a typed caller hands over as the text the JSON boundary writes one as, and
-/// which is read from the number that text is.
-///
-/// Text that is no number is the caller writing an amount wrong, which is said here, at its place,
-/// as text that is no date is: a JSON reader would call it a string where a number goes, which
-/// says nothing to a caller that was told to hand over a string. What is handed on then is a
-/// number that reads, so that the place is refused once; the call is refused whatever it reads as.
-unsafe fn amount_cell(at: u32, length: u32, path: &Place) -> u32 {
-    if json::is_number(at, length) {
-        return text_cell(TAG_NUMBER, at, length);
-    }
-    let (path, path_length) = pointer(path);
-    issues::said(issues::CODE_INVALID_FORMAT, issues::CODE_INVALID_FORMAT, path, path_length,
-        issues::meta::none(),
-        b"is not a Decimal written as digits, with a sign, a fraction and an exponent where it \
-            has them");
-    text_cell(TAG_NUMBER, b"0".as_ptr() as u32, 1)
+/// An amount, which a typed caller hands over as the text the JSON boundary writes one as. Whether
+/// the text is an amount is the reader's to say, as it says whether a date's is a date: the text is
+/// handed on as what it is, and not as a number it may not be nor as a string, which a reader of an
+/// amount would refuse as a string standing where a number goes.
+unsafe fn amount_cell(at: u32, length: u32) -> u32 {
+    text_cell(TAG_AMOUNT_TEXT, at, length)
 }
 
 unsafe fn integer_cell(held: i64) -> u32 {
@@ -251,8 +203,7 @@ unsafe fn integer_cell(held: i64) -> u32 {
 
 /// What a variant's case is read as: a unit's object holding the tag alone, a shape's fields beside
 /// the tag, and anything else under the key a case carried as itself stands under.
-unsafe fn tagged(descriptor: u32, case: u32, path: &Place,
-    carried: impl FnOnce(u32, &Place) -> u32) -> u32 {
+unsafe fn tagged(descriptor: u32, case: u32, carried: impl FnOnce(u32) -> u32) -> u32 {
     let member = descriptor::member(descriptor, case);
     let (tag_key, tag_key_length) = descriptor::tag_key(descriptor);
     let (tag, tag_length) = descriptor::name(descriptor, case);
@@ -265,7 +216,7 @@ unsafe fn tagged(descriptor: u32, case: u32, path: &Place,
             object
         }
         Carried::Fields => {
-            let fields = carried(member, path);
+            let fields = carried(member);
             let count = json::__souther_json_length(fields);
             let object = json::made_holding(TAG_OBJECT, count + 1);
             json::put_entry(object, 0, key, tag);
@@ -287,7 +238,7 @@ unsafe fn tagged(descriptor: u32, case: u32, path: &Place,
                 object,
                 1,
                 text_cell(TAG_STRING, contents.0, contents.1),
-                carried(member, &Place::Named(path, contents)),
+                carried(member),
             );
             object
         }
@@ -296,14 +247,13 @@ unsafe fn tagged(descriptor: u32, case: u32, path: &Place,
 
 /// A product's fields as an object, each read by `field` at its place and one an option holds
 /// nothing in left out, as the JSON boundary writes absence in a field.
-unsafe fn fields(descriptor: u32, path: &Place,
-    mut field: impl FnMut(u32, u32, &Place) -> u32) -> u32 {
+unsafe fn fields(descriptor: u32, mut field: impl FnMut(u32, u32) -> u32) -> u32 {
     let count = descriptor::arity(descriptor);
     let object = json::made_holding(TAG_OBJECT, count);
     let mut held = 0;
     for i in 0..count {
         let name = descriptor::name(descriptor, i);
-        let value = field(i, descriptor::member(descriptor, i), &Place::Named(path, name));
+        let value = field(i, descriptor::member(descriptor, i));
         if value == 0 {
             continue;
         }
@@ -315,31 +265,29 @@ unsafe fn fields(descriptor: u32, path: &Place,
 }
 
 /// The document a value laid out in memory at `at` would have been written as.
-unsafe fn loaded(at: u32, descriptor: u32, path: &Place) -> u32 {
+unsafe fn loaded(at: u32, descriptor: u32) -> u32 {
     match descriptor::kind(descriptor) {
         KIND_INT => integer_cell(core::ptr::read_unaligned(at as usize as *const i64)),
         KIND_BOOL => json::made(if core::ptr::read(at as usize as *const u8) != 0 { TAG_TRUE } else { TAG_FALSE }),
         KIND_STRING | KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
             text_cell(TAG_STRING, word(at), word(at + 4))
         }
-        KIND_DECIMAL => amount_cell(word(at), word(at + 4), path),
+        KIND_DECIMAL => amount_cell(word(at), word(at + 4)),
         KIND_UNIT => json::made_holding(TAG_OBJECT, 0),
-        KIND_NEWTYPE => loaded(at, descriptor::member(descriptor, 0), path),
-        KIND_PRODUCT => fields(descriptor, path, |i, member, place_path| {
+        KIND_NEWTYPE => loaded(at, descriptor::member(descriptor, 0)),
+        KIND_PRODUCT => fields(descriptor, |i, member| {
             let place = at + offset(descriptor, i);
             if descriptor::kind(member) == KIND_OPTION {
                 if case_at(place, member) == 0 {
                     return 0;
                 }
-                return loaded(place + payload(member), descriptor::member(member, 0), place_path);
+                return loaded(place + payload(member), descriptor::member(member, 0));
             }
-            loaded(place, member, place_path)
+            loaded(place, member)
         }),
         KIND_SUM => {
             let case = case_at(at, descriptor);
-            tagged(descriptor, case, path, |member, inside| {
-                loaded(at + payload(descriptor), member, inside)
-            })
+            tagged(descriptor, case, |member| loaded(at + payload(descriptor), member))
         }
         KIND_ENUMERATION => {
             let (name, name_length) = descriptor::name(descriptor, case_at(at, descriptor));
@@ -349,21 +297,21 @@ unsafe fn loaded(at: u32, descriptor: u32, path: &Place) -> u32 {
             if case_at(at, descriptor) == 0 {
                 json::made(TAG_NULL)
             } else {
-                loaded(at + payload(descriptor), descriptor::member(descriptor, 0), path)
+                loaded(at + payload(descriptor), descriptor::member(descriptor, 0))
             }
         }
-        KIND_LIST | KIND_SET => elements(word(at), word(at + 4), descriptor, path),
-        KIND_MAP => entries(word(at), word(at + 4), descriptor, path),
+        KIND_LIST | KIND_SET => elements(word(at), word(at + 4), descriptor),
+        KIND_MAP => entries(word(at), word(at + 4), descriptor),
         other => abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, other as u64, 0),
     }
 }
 
-unsafe fn elements(at: u32, count: u32, descriptor: u32, path: &Place) -> u32 {
+unsafe fn elements(at: u32, count: u32, descriptor: u32) -> u32 {
     let element = descriptor::member(descriptor, 0);
     let stride = size(element);
     let array = json::made_holding(TAG_ARRAY, count);
     for i in 0..count {
-        json::put_element(array, i, loaded(at + i * stride, element, &Place::Indexed(path, i)));
+        json::put_element(array, i, loaded(at + i * stride, element));
     }
     array
 }
@@ -372,23 +320,26 @@ unsafe fn elements(at: u32, count: u32, descriptor: u32, path: &Place) -> u32 {
 /// have been written as, which is what reads it as a key; and every entry as it was handed in, a
 /// key handed twice included, which the reading settles as it settles one written twice. A value
 /// stands at its key, as a member of the object does.
-unsafe fn entries(at: u32, count: u32, descriptor: u32, path: &Place) -> u32 {
+unsafe fn entries(at: u32, count: u32, descriptor: u32) -> u32 {
     let keys = descriptor::member(descriptor, 0);
     let values = descriptor::member(descriptor, 1);
     let stride = payload(descriptor);
     let object = json::made_holding(TAG_OBJECT, count);
     for i in 0..count {
         let entry = at + i * stride;
-        let key = loaded(entry + offset(descriptor, 0), keys, path);
-        let at_key = Place::Named(path, (json::__souther_json_bytes(key), json::__souther_json_length(key)));
-        json::put_entry(object, i, key, loaded(entry + offset(descriptor, 1), values, &at_key));
+        json::put_entry(
+            object,
+            i,
+            loaded(entry + offset(descriptor, 0), keys),
+            loaded(entry + offset(descriptor, 1), values),
+        );
     }
     object
 }
 
 /// The document a value flattened into slots from `*index` on would have been written as, moving
 /// `*index` past it.
-unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32, path: &Place) -> u32 {
+unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32) -> u32 {
     let first = *index;
     let read = match descriptor::kind(descriptor) {
         KIND_INT => integer_cell(slot(slots, first) as i64),
@@ -396,17 +347,15 @@ unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32, path: &Place) -> 
         KIND_STRING | KIND_DATE | KIND_TIME | KIND_DATE_TIME | KIND_INSTANT => {
             text_cell(TAG_STRING, slot(slots, first) as u32, slot(slots, first + 1) as u32)
         }
-        KIND_DECIMAL => {
-            amount_cell(slot(slots, first) as u32, slot(slots, first + 1) as u32, path)
-        }
+        KIND_DECIMAL => amount_cell(slot(slots, first) as u32, slot(slots, first + 1) as u32),
         KIND_UNIT => json::made_holding(TAG_OBJECT, 0),
         KIND_NEWTYPE => {
             *index = first;
-            return lifted(slots, index, descriptor::member(descriptor, 0), path);
+            return lifted(slots, index, descriptor::member(descriptor, 0));
         }
         KIND_PRODUCT => {
             let mut at = first;
-            fields(descriptor, path, |_, member, place_path| {
+            fields(descriptor, |_, member| {
                 if descriptor::kind(member) == KIND_OPTION {
                     let past = at + flats(member);
                     let held = slot(slots, at) as u32;
@@ -414,19 +363,19 @@ unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32, path: &Place) -> 
                         0
                     } else {
                         let mut inside = at + 1;
-                        lifted(slots, &mut inside, descriptor::member(member, 0), place_path)
+                        lifted(slots, &mut inside, descriptor::member(member, 0))
                     };
                     at = past;
                     return value;
                 }
-                lifted(slots, &mut at, member, place_path)
+                lifted(slots, &mut at, member)
             })
         }
         KIND_SUM => {
             let case = within(slot(slots, first) as u32, descriptor);
-            tagged(descriptor, case, path, |member, inside_path| {
+            tagged(descriptor, case, |member| {
                 let mut inside = first + 1;
-                lifted(slots, &mut inside, member, inside_path)
+                lifted(slots, &mut inside, member)
             })
         }
         KIND_ENUMERATION => {
@@ -439,14 +388,14 @@ unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32, path: &Place) -> 
                 json::made(TAG_NULL)
             } else {
                 let mut inside = first + 1;
-                lifted(slots, &mut inside, descriptor::member(descriptor, 0), path)
+                lifted(slots, &mut inside, descriptor::member(descriptor, 0))
             }
         }
         KIND_LIST | KIND_SET => {
-            elements(slot(slots, first) as u32, slot(slots, first + 1) as u32, descriptor, path)
+            elements(slot(slots, first) as u32, slot(slots, first + 1) as u32, descriptor)
         }
         KIND_MAP => {
-            entries(slot(slots, first) as u32, slot(slots, first + 1) as u32, descriptor, path)
+            entries(slot(slots, first) as u32, slot(slots, first + 1) as u32, descriptor)
         }
         other => abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, other as u64, 0),
     };
@@ -458,30 +407,25 @@ unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32, path: &Place) -> 
 /// in it: a variant's case that flattens to fewer than the variant leaves the rest as nothing.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_typed_slots(count: u32) -> u32 {
-    let at = alloc_aligned(8 * count, 8);
-    core::ptr::write_bytes(at as usize as *mut u8, 0, 8 * count as usize);
-    at
+    // What the arena hands out is nothing already.
+    alloc_aligned(crate::room(0, count, 8), 8)
 }
 
 /// A function's arguments, as the array of them the JSON boundary reads a call's arguments from:
 /// read from the slots they were spilled into, or from the record of them in memory where they
-/// were too many to flatten. Each stands at its place in the array, as a JSON call's does, except
-/// the one value a type is read from on its own, which stands at the root.
+/// were too many to flatten.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_typed_arguments(at: u32, arguments: u32) -> u32 {
     let arity = word(arguments + A_ARITY);
-    let flags = word(arguments + A_FLAGS);
-    let in_memory = flags & A_IN_MEMORY != 0;
-    let at_root = flags & A_AT_ROOT != 0;
+    let in_memory = word(arguments + A_IN_MEMORY) != 0;
     let array = json::made_holding(TAG_ARRAY, arity);
     let mut index = 0;
     for i in 0..arity {
         let descriptor = word(arguments + A_ARGUMENTS + 8 * i);
-        let place = if at_root { ROOT } else { Place::Indexed(&ROOT, i) };
         let read = if in_memory {
-            loaded(at + word(arguments + A_ARGUMENTS + 8 * i + 4), descriptor, &place)
+            loaded(at + word(arguments + A_ARGUMENTS + 8 * i + 4), descriptor)
         } else {
-            lifted(at, &mut index, descriptor, &place)
+            lifted(at, &mut index, descriptor)
         };
         json::put_element(array, i, read);
     }
@@ -540,8 +484,9 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
             let element = descriptor::member(descriptor, 0);
             let count = __souther_list_length(cell);
             let room = room_for(count, element);
-            let order = value::written_order(cell, element);
-            for (k, &i) in order.iter().enumerate() {
+            text::begin();
+            let members = value::in_written_order(cell, element);
+            for (k, &i) in members.order.iter().enumerate() {
                 stored(__souther_list_get(cell, i), element, room + k as u32 * size(element));
             }
             put_word(at, room);
@@ -552,7 +497,7 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
             let values = descriptor::member(descriptor, 1);
             let count = __souther_map_length(cell);
             let stride = payload(descriptor);
-            let room = alloc_aligned(count * stride, alignment(descriptor));
+            let room = alloc_aligned(crate::room(0, count, stride), alignment(descriptor));
             for i in 0..count {
                 let entry = room + i * stride;
                 stored(__souther_map_key(cell, i), keys, entry + offset(descriptor, 0));
@@ -568,7 +513,7 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
 /// Room for a list's elements, at the alignment its element is laid out at, which a caller reading
 /// the list checks it begins at.
 unsafe fn room_for(count: u32, element: u32) -> u32 {
-    alloc_aligned(count * size(element), alignment(element))
+    alloc_aligned(crate::room(0, count, size(element)), alignment(element))
 }
 
 /// Text a value is written as, copied out of wherever it was written into memory of its own: the
@@ -632,7 +577,7 @@ unsafe fn flattened(cell: u32, descriptor: u32, slots: u32, index: &mut u32) {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_typed_lowered(values: u32, arguments: u32, at: u32) {
     let arity = word(arguments + A_ARITY);
-    let in_memory = word(arguments + A_FLAGS) & A_IN_MEMORY != 0;
+    let in_memory = word(arguments + A_IN_MEMORY) != 0;
     let mut index = 0;
     for i in 0..arity {
         let descriptor = word(arguments + A_ARGUMENTS + 8 * i);
@@ -663,9 +608,9 @@ pub unsafe extern "C" fn __souther_typed_answer(at: u32, answer: u32, behavior: 
     issues::forget();
     let descriptor = word(answer + H_DESCRIPTOR);
     let document = if word(answer + H_IN_MEMORY) != 0 {
-        loaded(at, descriptor, &ROOT)
+        loaded(at, descriptor)
     } else {
-        lifted(at, &mut 0, descriptor, &ROOT)
+        lifted(at, &mut 0, descriptor)
     };
     let read = value::__souther_read(document, descriptor, 0, 0);
     if issues::__souther_issues_count() != 0 {
@@ -677,9 +622,7 @@ pub unsafe extern "C" fn __souther_typed_answer(at: u32, answer: u32, behavior: 
 /// Where a call's typed answer is written, which the canonical ABI reads it out of before the
 /// post-return gives the arena back.
 unsafe fn area(result: u32) -> u32 {
-    let at = alloc_aligned(word(result + R_SIZE), word(result + R_ALIGN));
-    core::ptr::write_bytes(at as usize as *mut u8, 0, word(result + R_SIZE) as usize);
-    at
+    alloc_aligned(word(result + R_SIZE), word(result + R_ALIGN))
 }
 
 /// The `ok` of a call's result: what the behavior answered.
@@ -711,8 +654,7 @@ unsafe fn laid_out_issues(protocol: u32) -> (u32, u32) {
     let mut count = 0;
     issues::each(|_, _| count += 1);
     let size = word(protocol + P_ISSUE_SIZE);
-    let room = alloc_aligned(count * size, word(protocol + P_ISSUE_ALIGN));
-    core::ptr::write_bytes(room as usize as *mut u8, 0, (count * size) as usize);
+    let room = alloc_aligned(crate::room(0, count, size), word(protocol + P_ISSUE_ALIGN));
     issues::each(|i, found| {
         let at = room + i * size;
         let put = |offset: u32, (text, length): (u32, u32)| {

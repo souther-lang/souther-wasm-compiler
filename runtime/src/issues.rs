@@ -317,7 +317,7 @@ pub mod meta {
 
     unsafe fn push(from: u32, length: u32) {
         if WRITTEN + length > ROOM {
-            let wanted = (WRITTEN + length) * 2;
+            let wanted = crate::room(0, crate::together(WRITTEN, length), 2);
             let wider = alloc(wanted);
             if WRITTEN > 0 {
                 core::ptr::copy_nonoverlapping(AT as *const u8, wider as *mut u8, WRITTEN as usize);

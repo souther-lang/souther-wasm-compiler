@@ -40,6 +40,10 @@ pub const TAG_STRING: u32 = 4;
 pub const TAG_ARRAY: u32 = 5;
 /// An object, whose payload is a key pointer and a value pointer per entry.
 pub const TAG_OBJECT: u32 = 6;
+/// An amount a typed caller handed over as text, whose payload is the text. Never parsed: it is
+/// what a document a typed value is made into holds where an amount is, so that the reader of an
+/// amount says whether the text is one, as the reader of a date says whether text is a date.
+pub const TAG_AMOUNT_TEXT: u32 = 7;
 
 const HEADER: usize = 8;
 
@@ -337,42 +341,18 @@ impl Reader {
 
     unsafe fn number(&mut self) -> u32 {
         let start = self.at;
-        if self.peek() == b'-' {
-            self.at += 1;
-        }
-        // A leading zero is not a way of writing a longer number, so `01` is two tokens rather
-        // than one and the document is not one value.
-        if self.peek() == b'0' {
-            self.at += 1;
-        } else {
-            self.digits();
-        }
-        if self.at < self.end && read_u8(self.at) == b'.' {
-            self.at += 1;
-            self.digits();
-        }
-        if self.at < self.end && (read_u8(self.at) | 0x20) == b'e' {
-            self.at += 1;
-            if self.at < self.end && (read_u8(self.at) == b'+' || read_u8(self.at) == b'-') {
-                self.at += 1;
+        match number_end(start, self.end) {
+            Ok(past) => self.at = past,
+            Err(stopped) => {
+                self.at = stopped;
+                self.malformed();
             }
-            self.digits();
         }
         let length = self.at - start;
         let out = cell(TAG_NUMBER, length as u32);
         let _ = alloc(length as u32);
         core::ptr::copy_nonoverlapping(start as *const u8, (out as usize + HEADER) as *mut u8, length);
         out
-    }
-
-    unsafe fn digits(&mut self) {
-        let start = self.at;
-        while self.at < self.end && read_u8(self.at).is_ascii_digit() {
-            self.at += 1;
-        }
-        if self.at == start {
-            self.malformed();
-        }
     }
 
     unsafe fn string(&mut self) -> u32 {
@@ -521,7 +501,7 @@ impl Reader {
         }
         self.expect(b']');
         let out = cell(TAG_ARRAY, count);
-        let _ = alloc(4 * count);
+        let _ = alloc(crate::room(0, count, 4));
         let mut node = first;
         for i in 0..count as usize {
             write_u32(out as usize + HEADER + 4 * i, read_u32(node as usize));
@@ -563,7 +543,7 @@ impl Reader {
         }
         self.expect(b'}');
         let out = cell(TAG_OBJECT, count);
-        let _ = alloc(8 * count);
+        let _ = alloc(crate::room(0, count, 8));
         let mut node = first;
         for i in 0..2 * count as usize {
             write_u32(out as usize + HEADER + 4 * i, read_u32(node as usize));
@@ -644,7 +624,7 @@ pub(crate) unsafe fn made_of_bytes(tag: u32, at: u32, length: u32) -> u32 {
 /// entries, each put in afterwards ([`put_element`], [`put_entry`]).
 pub(crate) unsafe fn made_holding(tag: u32, count: u32) -> u32 {
     let out = cell(tag, count);
-    let _ = alloc(if tag == TAG_OBJECT { 8 * count } else { 4 * count });
+    let _ = alloc(crate::room(0, count, if tag == TAG_OBJECT { 8 } else { 4 }));
     out
 }
 
@@ -665,48 +645,45 @@ pub(crate) unsafe fn holds(object: u32, count: u32) {
 }
 
 /// Whether text is a number as JSON writes one, which is what a number cell holds and all that
-/// what reads one is ready for.
+/// what reads one is ready for: the grammar the parser reads a number by, and no other.
 pub(crate) unsafe fn is_number(at: u32, length: u32) -> bool {
-    let byte = |i: u32| read_u8((at + i) as usize);
-    let digits = |from: u32| {
+    let end = (at + length) as usize;
+    number_end(at as usize, end) == Ok(end)
+}
+
+/// Where a number written from `at` on ends, as JSON writes one, or where it stopped being one.
+///
+/// The one account of the grammar. A leading zero is not a way of writing a longer number, so
+/// `01` ends after the `0`: as a document it is two tokens rather than one value, and as an amount
+/// it is text that is no amount.
+unsafe fn number_end(at: usize, end: usize) -> Result<usize, usize> {
+    let digits = |from: usize| -> Result<usize, usize> {
         let mut i = from;
-        while i < length && byte(i).is_ascii_digit() {
+        while i < end && read_u8(i).is_ascii_digit() {
             i += 1;
         }
-        i
+        if i == from { Err(from) } else { Ok(i) }
     };
-    let mut i = 0;
-    if i < length && byte(i) == b'-' {
+    let mut i = at;
+    if i < end && read_u8(i) == b'-' {
         i += 1;
     }
-    if i < length && byte(i) == b'0' {
+    if i < end && read_u8(i) == b'0' {
         i += 1;
     } else {
-        let past = digits(i);
-        if past == i {
-            return false;
-        }
-        i = past;
+        i = digits(i)?;
     }
-    if i < length && byte(i) == b'.' {
-        let past = digits(i + 1);
-        if past == i + 1 {
-            return false;
-        }
-        i = past;
+    if i < end && read_u8(i) == b'.' {
+        i = digits(i + 1)?;
     }
-    if i < length && (byte(i) | 0x20) == b'e' {
+    if i < end && (read_u8(i) | 0x20) == b'e' {
         i += 1;
-        if i < length && (byte(i) == b'+' || byte(i) == b'-') {
+        if i < end && (read_u8(i) == b'+' || read_u8(i) == b'-') {
             i += 1;
         }
-        let past = digits(i);
-        if past == i {
-            return false;
-        }
-        i = past;
+        i = digits(i)?;
     }
-    i == length
+    Ok(i)
 }
 
 /// A header with room for nothing after it. Whoever wants a payload allocates it next, which the

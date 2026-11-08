@@ -71,7 +71,7 @@ unsafe fn cell_of(ratio: &Ratio) -> u32 {
     numerator.with_le_bytes(|numerator| {
         denominator.with_le_bytes(|denominator| {
             let (above, below) = (numerator.len() as u32, denominator.len() as u32);
-            let cell = alloc(HEADER + above + below);
+            let cell = alloc(crate::room(HEADER, crate::together(above, below), 1));
             write_u32(cell, TAG_RATIONAL);
             write_i64(cell + OFF_TWOS, twos);
             write_i64(cell + OFF_FIVES, fives);

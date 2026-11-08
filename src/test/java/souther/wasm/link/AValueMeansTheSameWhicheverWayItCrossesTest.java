@@ -160,14 +160,16 @@ class AValueMeansTheSameWhicheverWayItCrossesTest {
     }
 
     /**
-     * What a typed call takes of the arena, beside what the JSON call of the same list takes: it
-     * makes the document the readers read, as the JSON one parses it, and no text to parse it
-     * from. So it takes less, and a typed call that came to take more would be one doing work the
-     * readers do again. It did twice: writing the place of every value it read in case an issue
-     * named it, and starting a run of text for each member of a set it ordered.
+     * What a typed call answering a set takes of the arena, beside what the JSON call answering it
+     * takes. Both order the members by writing each as JSON and reading it back, by one function,
+     * and then the JSON call writes the answer as text where the typed one lays it out; so the two
+     * take about as much, and a typed call taking much more is doing what the JSON one does not.
+     * It did: it started a run of text for each member it ordered, and took two and a half times
+     * as much. Held loosely, at a tenth more, because the two are not the same work and either may
+     * come to take a little more or less for reasons of its own.
      */
     @Test
-    void takesLessOfTheArenaThanTheJsonCallOfTheSameList() {
+    void takesAboutAsMuchOfTheArenaAsTheJsonCallAnsweringTheSameSet() {
         Running module = module();
         List<String> texts = new ArrayList<>();
         StringBuilder json = new StringBuilder("[[");
@@ -187,7 +189,27 @@ class AValueMeansTheSameWhicheverWayItCrossesTest {
         typed(module, "same.distinct", list);
         int typed = module.call(RuntimeAbi.ALLOC_MARK) - mark;
 
-        assertThat(typed).isLessThan(asJson);
+        assertThat(typed).isLessThan(asJson + asJson / 10);
+    }
+
+    /**
+     * A list handed over that is longer than any room can be said for. The Canonical ABI checks a
+     * list it lowers lies in memory, so a host cannot hand one; the core function is called
+     * directly here, which is the only way to reach the size. What the document of it would take
+     * was worked out in thirty-two bits and wrapped round to nothing, and the reading went on past
+     * the room it had; it ends now as a call that ran out of room, and the next call answers.
+     */
+    @Test
+    void endsACallHandedMoreThanRoomCanBeSaidForAsOneThatRanOutOfRoom() {
+        Running module = module();
+
+        int area = typed(module, "same.distinct", new int[] {0, 1 << 30});
+        assertThat(byteAt(module, area)).describedAs("err").isEqualTo(1);
+        assertThat(byteAt(module, area + 4)).describedAs("ended").isEqualTo(1);
+        assertThat(wordAt(module, area + 8)).describedAs("out of memory").isEqualTo(1);
+
+        area = typed(module, "same.distinct", list(module, List.of("a")));
+        assertThat(byteAt(module, area)).describedAs("ok").isZero();
     }
 
     private static Running module() {
