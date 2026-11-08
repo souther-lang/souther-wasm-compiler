@@ -547,7 +547,8 @@ public final class WasmCompiler {
      * @param arguments where its arguments record is: how many, whether they lie in memory, and
      *     each one's descriptor and where it lies
      * @param result where its result record is: the result's size, alignment and where its case
-     *     lies, and where the protocol layout is
+     *     lies, where the protocol layout is, and where the err of a call that ended is written
+     *     and how long it is
      */
     private record Typed(CanonicalAbi.CoreSignature signature, int type, int arguments,
             int result) {
@@ -569,12 +570,20 @@ public final class WasmCompiler {
                 out.writeLittleEndian4(descriptors.get(i)).writeLittleEndian4(offsets.get(i));
             }
             int arguments = fragment.place(record.toByteArray());
+            // Where the err of a call that ended is written: static, and not the arena's, since the
+            // call may have ended for want of room. As much of the result as its err reaches, and
+            // placed for each function, so its size is the layout's and not a guess at the largest.
+            int ending = abi.payloadOffset(answered)
+                    + abi.size(new WitType.Named(null, TypedOffering.REFUSAL));
+            int ended = fragment.place(new byte[ending]);
             ByteArrayOutputStream outcome = new ByteArrayOutputStream();
             new WasmWriter(outcome)
                     .writeLittleEndian4(abi.size(answered))
                     .writeLittleEndian4(abi.alignment(answered))
                     .writeLittleEndian4(abi.payloadOffset(answered))
-                    .writeLittleEndian4(protocol);
+                    .writeLittleEndian4(protocol)
+                    .writeLittleEndian4(ended)
+                    .writeLittleEndian4(ending);
             int result = fragment.place(outcome.toByteArray());
             List<Type> takes = signature.params().stream()
                     .map(flat -> flat == CanonicalAbi.Flat.I64 ? Type.I64 : Type.I32)

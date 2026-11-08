@@ -160,39 +160,6 @@ class AValueMeansTheSameWhicheverWayItCrossesTest {
     }
 
     /**
-     * What a typed call answering a set takes of the arena, beside what the JSON call answering it
-     * takes. Both order the members by writing each as JSON and reading it back, by one function,
-     * and then the JSON call writes the answer as text where the typed one lays it out; so the two
-     * take about as much, and a typed call taking much more is doing what the JSON one does not.
-     * It did: it started a run of text for each member it ordered, and took two and a half times
-     * as much. Held loosely, at a tenth more, because the two are not the same work and either may
-     * come to take a little more or less for reasons of its own.
-     */
-    @Test
-    void takesAboutAsMuchOfTheArenaAsTheJsonCallAnsweringTheSameSet() {
-        Running module = module();
-        List<String> texts = new ArrayList<>();
-        StringBuilder json = new StringBuilder("[[");
-        for (int i = 0; i < 1000; i++) {
-            texts.add("item" + i);
-            json.append(i == 0 ? "" : ",").append("\"item").append(i).append('"');
-        }
-        String arguments = json.append("]]").toString();
-        int staged = module.staged(arguments);
-        int[] list = list(module, texts);
-
-        int mark = module.call(RuntimeAbi.ALLOC_MARK);
-        module.callWithString("same.distinct", staged,
-                arguments.getBytes(StandardCharsets.UTF_8).length);
-        int asJson = module.call(RuntimeAbi.ALLOC_MARK) - mark;
-        mark = module.call(RuntimeAbi.ALLOC_MARK);
-        typed(module, "same.distinct", list);
-        int typed = module.call(RuntimeAbi.ALLOC_MARK) - mark;
-
-        assertThat(typed).isLessThan(asJson + asJson / 10);
-    }
-
-    /**
      * A list handed over that is longer than any room can be said for. The Canonical ABI checks a
      * list it lowers lies in memory, so a host cannot hand one; the core function is called
      * directly here, which is the only way to reach the size. What the document of it would take

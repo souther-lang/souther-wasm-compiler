@@ -10,15 +10,12 @@ import java.util.Map;
 import org.jspecify.annotations.Nullable;
 import souther.compiler.program.CheckedAlternativesForm;
 import souther.compiler.program.CheckedBehavior;
-import souther.compiler.program.CheckedBoundaryInput;
 import souther.compiler.program.CheckedBoundaryOutput;
-import souther.compiler.program.CheckedCodecShape;
 import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedSignature;
 import souther.compiler.types.LeafScalar;
-import souther.compiler.types.MapKeyRepresentation;
 import souther.compiler.types.Type;
 import souther.compiler.types.TypeSymbol;
 import souther.wasm.link.Component;
@@ -87,32 +84,31 @@ final class WitTypes {
     }
 
     /**
-     * What a value of a type crosses as, for a type the offering names: what a descriptor of it is
-     * laid out by where it crosses typed.
+     * What a value of a type crosses as: the one account of it, which the typed interfaces are
+     * written from and a descriptor is laid out by where it crosses typed. A type a model declares
+     * is named, and declared in its module's interface as it is first met.
+     *
+     * <p>Once the offering is made, nothing more is declared: a type met then that the offering
+     * does not name is one the interfaces say nothing of, and laying it out would be laying out a
+     * type no caller was told of.
      */
     WitType typeOf(Type type) {
         return switch (type) {
             case Type.Prim primitive -> {
                 LeafScalar scalar = LeafScalar.of(primitive);
                 if (scalar == null) {
-                    throw new IllegalStateException(primitive + " crosses no typed boundary");
+                    throw new NotLowered("a " + primitive + " at a boundary, which no value"
+                            + " crosses as");
                 }
                 yield scalar(scalar);
             }
-            case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule declared -> {
-                WitType.Named name = named.get(declared);
-                if (name == null) {
-                    throw new IllegalStateException(declared + " crosses typed, and the typed"
-                            + " interfaces declare nothing for it");
-                }
-                yield name;
-            }
+            case Type.Ref reference -> symbol(reference.name());
             case Type.ListOf list -> new WitType.ListOf(typeOf(list.element()));
             case Type.SetOf set -> new WitType.ListOf(typeOf(set.element()));
             case Type.OptionOf option -> new WitType.OptionOf(typeOf(option.element()));
-            // A key that is a primitive is a string or a temporal, written as text.
-            case Type.MapOf map -> mapOf(map.key() instanceof Type.Prim ? WitType.STRING
-                    : typeOf(map.key()), typeOf(map.value()));
+            // A key is written as text: a primitive key is a string or a temporal, and a named
+            // one is what its type is written as.
+            case Type.MapOf map -> mapOf(typeOf(map.key()), typeOf(map.value()));
             case Type.Union union -> {
                 WitType.Named name = unions.get(union);
                 if (name == null) {
@@ -168,7 +164,7 @@ final class WitTypes {
 
     private TypedOffering.Function function(CheckedBehavior behavior) {
         CheckedSignature signature = behavior.signature();
-        List<CheckedBoundaryInput> inputs = signature.inputs();
+        List<Type> inputs = signature.takes();
         // A composition declares no names for what it takes, so each is named for its place.
         List<String> names = signature.declaredParameters()
                 .map(declared -> declared.stream()
@@ -178,37 +174,33 @@ final class WitTypes {
         List<WitType.Field> parameters = new ArrayList<>();
         for (int i = 0; i < inputs.size(); i++) {
             parameters.add(new WitType.Field(
-                    names == null ? "argument" + i : names.get(i), input(inputs.get(i))));
+                    names == null ? "argument" + i : names.get(i), typeOf(inputs.get(i))));
         }
         String crossing = Component.interfaceName(behavior.name().name());
         return new TypedOffering.Function(crossing, parameters,
                 output(signature.output(), behavior.name().module(), crossing));
     }
 
-    private WitType input(CheckedBoundaryInput input) {
-        return switch (input) {
-            case CheckedBoundaryInput.Scalar scalar -> scalar(scalar.scalar());
-            case CheckedBoundaryInput.Nominal nominal -> symbol(nominal.name());
-            case CheckedBoundaryInput.ListOf list -> new WitType.ListOf(input(list.element()));
-            case CheckedBoundaryInput.SetOf set -> new WitType.ListOf(input(set.element()));
-            case CheckedBoundaryInput.MapOf map -> mapOf(key(map.key()), input(map.value()));
-        };
-    }
-
     /**
      * What a behavior answers. A union nobody named is declared under the behavior's name in its
-     * module's types interface, as its cases cross: the leaves its members descend to.
+     * module's types interface, as its cases cross: the leaves its members descend to. Then it is
+     * what any type is, which {@link #typeOf} says.
      */
     private WitType output(CheckedBoundaryOutput output, String module, String behavior) {
-        return switch (output) {
-            case CheckedBoundaryOutput.Scalar scalar -> scalar(scalar.scalar());
-            case CheckedBoundaryOutput.Nominal nominal -> symbol(nominal.name());
-            case CheckedBoundaryOutput.ListOf list ->
-                    new WitType.ListOf(output(list.element(), module, behavior));
-            case CheckedBoundaryOutput.SetOf set ->
-                    new WitType.ListOf(output(set.element(), module, behavior));
-            case CheckedBoundaryOutput.MapOf map ->
-                    mapOf(key(map.key()), output(map.value(), module, behavior));
+        unionsIn(output, module, behavior);
+        return typeOf(output.type());
+    }
+
+    /** Declares each union an answer holds that nobody named, wherever in it it stands. */
+    private void unionsIn(CheckedBoundaryOutput output, String module, String behavior) {
+        switch (output) {
+            case CheckedBoundaryOutput.Scalar ignored -> {
+            }
+            case CheckedBoundaryOutput.Nominal ignored -> {
+            }
+            case CheckedBoundaryOutput.ListOf list -> unionsIn(list.element(), module, behavior);
+            case CheckedBoundaryOutput.SetOf set -> unionsIn(set.element(), module, behavior);
+            case CheckedBoundaryOutput.MapOf map -> unionsIn(map.value(), module, behavior);
             case CheckedBoundaryOutput.Cases cases -> {
                 WitType.Named name = new WitType.Named(module, behavior + "-result");
                 unions.putIfAbsent(cases.type(), name);
@@ -219,28 +211,8 @@ final class WitTypes {
                     declare(module, alternatives(
                             name.name(), cases.cases(), cases.representation()));
                 }
-                yield name;
             }
-        };
-    }
-
-    private WitType codec(CheckedCodecShape shape) {
-        return switch (shape) {
-            case CheckedCodecShape.Scalar scalar -> scalar(scalar.kind());
-            case CheckedCodecShape.Named name -> symbol(name.name());
-            case CheckedCodecShape.ListOf list -> new WitType.ListOf(codec(list.element()));
-            case CheckedCodecShape.SetOf set -> new WitType.ListOf(codec(set.element()));
-            case CheckedCodecShape.MapOf map -> mapOf(key(map.key()), codec(map.value()));
-            case CheckedCodecShape.OptionOf option -> new WitType.OptionOf(codec(option.present()));
-        };
-    }
-
-    /** A key as its text where it is a primitive, which is a string or a temporal written as one. */
-    private WitType key(MapKeyRepresentation key) {
-        return switch (key) {
-            case MapKeyRepresentation.Lexical lexical -> scalar(lexical.leaf());
-            case MapKeyRepresentation.NamedKey name -> symbol(name.name());
-        };
+        }
     }
 
     private static WitType mapOf(WitType key, WitType value) {
@@ -255,12 +227,11 @@ final class WitTypes {
                 for (int i = 0; i < product.fields().size(); i++) {
                     fields.add(new WitType.Field(
                             Component.interfaceName(product.fields().get(i).name()),
-                            codec(product.codecShapes().get(i))));
+                            typeOf(product.fields().get(i).type())));
                 }
                 yield new WitType.Record(called, fields);
             }
-            case CheckedData.Newtype newtype ->
-                    new WitType.Alias(called, codec(newtype.codecShapes().getFirst()));
+            case CheckedData.Newtype newtype -> new WitType.Alias(called, typeOf(newtype.wrapped()));
             // A unit standing as a value is the one value of its type, which an enum of one case
             // is; as a case of a variant it is nothing, and is not declared for that.
             case CheckedData.Unit ignored -> new WitType.Enumeration(called, List.of(called));
@@ -304,6 +275,10 @@ final class WitTypes {
             case TypeSymbol.AtModule declared -> {
                 WitType.Named name = named.get(declared);
                 if (name == null) {
+                    if (offering != null) {
+                        throw new IllegalStateException(declared + " crosses typed, and the"
+                                + " typed interfaces declare nothing for it");
+                    }
                     name = new WitType.Named(declared.module(),
                             Component.interfaceName(declared.name()));
                     claim(name, declared.module() + "." + declared.name());

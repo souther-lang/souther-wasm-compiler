@@ -2015,11 +2015,11 @@ unsafe fn members_written(cell: u32, element: u32) {
         return;
     }
     let members = in_written_order(cell, element);
-    for (k, &i) in members.order.iter().enumerate() {
+    for k in 0..held {
         if k > 0 {
             write(b",");
         }
-        let (at, length) = members.text(i);
+        let (at, length) = members.text(members.place(k));
         text::push(at, length);
     }
 }
@@ -2035,10 +2035,6 @@ unsafe fn members_written(cell: u32, element: u32) {
 /// took two and a half times what the JSON call answering it took.
 pub(crate) unsafe fn in_written_order(cell: u32, element: u32) -> WrittenMembers {
     let held = __souther_list_length(cell);
-    let order = crate::alloc_words(held as usize);
-    for (i, each) in order.iter_mut().enumerate() {
-        *each = i as u32;
-    }
     let first = text::so_far();
     let ends = crate::alloc_words(held as usize);
     for i in 0..held {
@@ -2053,7 +2049,7 @@ pub(crate) unsafe fn in_written_order(cell: u32, element: u32) -> WrittenMembers
     core::ptr::copy_nonoverlapping((run + first) as usize as *const u8, copied as usize as *mut u8,
         length as usize);
     text::back_to(first);
-    let members = WrittenMembers { copied, ends, order };
+    let mut members = WrittenMembers { copied, ends, order: None };
     if held < 2 {
         return members;
     }
@@ -2065,23 +2061,35 @@ pub(crate) unsafe fn in_written_order(cell: u32, element: u32) -> WrittenMembers
         read[i as usize] = node;
     }
     // A set of numbers, of text or of names stands in the order it is written in already, which is
-    // asked of each neighbour once before anything is moved.
+    // asked of each neighbour once before anything is moved, or room taken to move it in.
     if !(1..held).all(|i| order::as_written(read[i as usize - 1], read[i as usize]) < 0) {
-        order::sort_places(members.order, &|a, b| order::as_written(read[a as usize], read[b as usize]));
+        let order = crate::alloc_words(held as usize);
+        for (i, each) in order.iter_mut().enumerate() {
+            *each = i as u32;
+        }
+        order::sort_places(order, &|a, b| order::as_written(read[a as usize], read[b as usize]));
+        members.order = Some(order);
     }
     members
 }
 
 /// A set's members as [`in_written_order`] wrote them: the text of each, where it ends, and the
-/// order of their places.
+/// order of their places, where it is not the order they were written in.
 pub(crate) struct WrittenMembers {
     copied: u32,
     ends: &'static mut [u32],
-    /// The places of the members, in the order they stand in.
-    pub order: &'static mut [u32],
+    order: Option<&'static mut [u32]>,
 }
 
 impl WrittenMembers {
+    /// The place of the member that stands `k`th.
+    pub(crate) fn place(&self, k: u32) -> u32 {
+        match &self.order {
+            Some(order) => order[k as usize],
+            None => k,
+        }
+    }
+
     /// Where the text of the member at a place is, and how long.
     unsafe fn text(&self, place: u32) -> (u32, u32) {
         let start = if place == 0 { 0 } else { self.ends[place as usize - 1] };

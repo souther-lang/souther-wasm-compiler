@@ -67,11 +67,14 @@ const A_ARGUMENTS: u32 = 8;
 /// ```text
 /// +0  u32 size  +4 u32 alignment  +8 u32 where the ok or the err lies
 /// +12 u32 where the program's protocol layout is, which is the same for every function
+/// +16 u32 where the err of a call that ended is written, in static memory, and +20 how long
 /// ```
 const R_SIZE: u32 = 0;
 const R_ALIGN: u32 = 4;
 const R_PAYLOAD: u32 = 8;
 const R_PROTOCOL: u32 = 12;
+const R_ENDED: u32 = 16;
+const R_ENDED_LENGTH: u32 = 20;
 
 /// Where the parts of a refusal lie, the same for every function a program offers:
 ///
@@ -486,8 +489,8 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
             let room = room_for(count, element);
             text::begin();
             let members = value::in_written_order(cell, element);
-            for (k, &i) in members.order.iter().enumerate() {
-                stored(__souther_list_get(cell, i), element, room + k as u32 * size(element));
+            for k in 0..count {
+                stored(__souther_list_get(cell, members.place(k)), element, room + k * size(element));
             }
             put_word(at, room);
             put_word(at + 4, count);
@@ -675,12 +678,6 @@ unsafe fn laid_out_issues(protocol: u32) -> (u32, u32) {
     (room, count)
 }
 
-/// Where the `err` of a call that ended is written: static, and not the arena's, because writing
-/// why a call ended must not be able to fail, and it may have ended because nothing more could be
-/// handed out. Enough for the err of any function's result: the case, padding to at most eight,
-/// and a refusal.
-static mut ENDED_AREA: [u64; 8] = [0; 8];
-
 /// The `err` of a call's result that the runtime ended: its reason, as the record holds it, and
 /// for an answer a function given to the program answered outside its type, which behavior and
 /// what is wrong with it.
@@ -689,8 +686,12 @@ static mut ENDED_AREA: [u64; 8] = [0; 8];
 /// its issues were found reading an answer, and are laid out as a refused call's are.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_typed_ended(result: u32) -> u32 {
-    let at = core::ptr::addr_of_mut!(ENDED_AREA) as u32;
-    core::ptr::write_bytes(at as usize as *mut u8, 0, 64);
+    // Static, and not the arena's: writing why a call ended must not be able to fail, and it may
+    // have ended because nothing more could be handed out. The compiler placed it for the
+    // function, as long as its err reaches; one is enough, since a caller reads the result before
+    // the post-return and no call begins before that.
+    let at = word(result + R_ENDED);
+    core::ptr::write_bytes(at as usize as *mut u8, 0, word(result + R_ENDED_LENGTH) as usize);
     let protocol = word(result + R_PROTOCOL);
     let refusal = at + word(result + R_PAYLOAD);
     put_byte(at, ERR);
