@@ -317,7 +317,10 @@ is not.
 WIT says the shape of a value and nothing of its rules. What a typed function is handed is made
 into the document the JSON boundary would have parsed and read by the same readers, so a newtype's
 rules, a set's distinct members and the text of an amount or a date are held to as they are there,
-and an issue names the same place, `/0/applicant`. What goes back out is written straight into the
+and an issue names the same place, `/0/applicant`. The one thing only a typed caller can get
+wrong is the text of an amount, which it hands over as a string: text that is no amount is refused
+as `invalid_format` at its place, as text that is no date is, rather than as a string standing
+where a number goes. What goes back out is written straight into the
 Canonical ABI's layout, a set's members and a map's entries in the order JSON writes them. A call
 the boundary refused answers `err(issues(...))`, and one the runtime ended `err(ended(...))` with
 the reason a core module's abort record holds; a function the program reaches out to that answers

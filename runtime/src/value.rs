@@ -1766,7 +1766,7 @@ unsafe fn entry(object: u32, name: u32, name_length: u32) -> u32 {
 }
 
 /// The JSON pointer of a place inside another, written into the arena.
-unsafe fn below(path: u32, path_length: u32, step: (u32, u32)) -> (u32, u32) {
+pub(crate) unsafe fn below(path: u32, path_length: u32, step: (u32, u32)) -> (u32, u32) {
     let (step, step_length) = step;
     let total = path_length + 1 + step_length;
     let at = alloc(total);

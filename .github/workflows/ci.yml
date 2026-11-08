@@ -309,6 +309,8 @@ jobs:
           answers /tmp/asked/typed.wasm 'fee(4999)' 'ok(500)'
           answers /tmp/asked/typed.wasm 'fee(5000)' 'ok(0)'
           answers /tmp/asked/typed.wasm 'check-parcel({weight: 2})' 'ok({weight: 2})'
+          # /tmp/worded is held to being a component and to its interfaces, and is not called:
+          # wasmtime's --invoke reads `func` as WIT's word and not as a name, and takes no escape.
 
       # A typed component that reaches out, composed with what answers it in the text format: a
       # string in and a string out, the answer laid out at an address the lowering is told, as
@@ -353,7 +355,7 @@ jobs:
           fi
           got=$(wasmtime run --invoke 'priced("5x")' composed.wasm)
           case "$got" in
-            'err(issues([{path: "/0", code: "type_mismatch"'*) ;;
+            'err(issues([{path: "/0", code: "invalid_format", message-key: "invalid_format"'*) ;;
             *) echo "priced, handed text that is no amount, answered $got"; exit 1 ;;
           esac
           answering x

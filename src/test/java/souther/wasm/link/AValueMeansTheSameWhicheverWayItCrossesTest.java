@@ -26,7 +26,7 @@ import tools.jackson.databind.ObjectMapper;
 class AValueMeansTheSameWhicheverWayItCrossesTest {
 
     private static final String SAME = """
-            module same exposing ( Code, distinct, counted, amount, day, coded )
+            module same exposing ( Code, Line, distinct, counted, amount, day, coded, priced )
 
             data Code = String
                 invariant short = String.length(value) < 4
@@ -51,6 +51,12 @@ class AValueMeansTheSameWhicheverWayItCrossesTest {
             behavior coded : (codes: List<Code>) -> Int
 
             let coded (codes) = List.length(codes)
+
+            data Line = { price: Decimal }
+
+            behavior priced : (line: Line) -> Decimal
+
+            let priced (line) = line.price
             """;
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -123,6 +129,34 @@ class AValueMeansTheSameWhicheverWayItCrossesTest {
                     + textAt(module, issue + 16) + " " + JSON.readTree(textAt(module, issue + 24)));
         }
         assertThat(laid).isEqualTo(said);
+    }
+
+    /**
+     * What only a typed caller can get wrong: an amount is handed over as text, and text that is
+     * no amount is refused as text is that is no date, at the place it stands, rather than as a
+     * string where a number goes, which is what JSON says of the same text and what a caller
+     * told to hand over a string cannot act on.
+     */
+    @Test
+    void refusesAnAmountWrittenWrongAsTextThatIsNoAmountAtItsPlace() {
+        Running module = module();
+
+        int area = typed(module, "same.amount", text(module, "1.5x"));
+        assertThat(byteAt(module, area)).describedAs("err").isEqualTo(1);
+        int issues = wordAt(module, area + 8);
+        assertThat(wordAt(module, area + 12)).describedAs("how many").isEqualTo(1);
+        assertThat(textAt(module, issues)).isEqualTo("/0");
+        assertThat(textAt(module, issues + 8)).isEqualTo("invalid_format");
+        assertThat(byteAt(module, issues + 32)).describedAs("a message").isEqualTo(1);
+        assertThat(textAt(module, issues + 36)).startsWith("is not a Decimal");
+
+        area = typed(module, "same.priced", text(module, "12,50"));
+        assertThat(textAt(module, wordAt(module, area + 8))).isEqualTo("/0/price");
+
+        area = (int) module.callWith(Component.Lifted.typedReading("same.Line"),
+                text(module, "")[0], 0)[0];
+        assertThat(textAt(module, wordAt(module, area + 8)))
+                .describedAs("a value read on its own, at its root").isEqualTo("/price");
     }
 
     private static Running module() {
