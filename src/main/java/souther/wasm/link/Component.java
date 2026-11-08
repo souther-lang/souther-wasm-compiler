@@ -554,6 +554,20 @@ public final class Component {
         public static String reading(String type) {
             return "decode:" + type + "#lifted";
         }
+
+        /** The name the function a typed behavior is lifted from is exported under. */
+        public static String typed(String export) {
+            return export + "#typed";
+        }
+
+        /**
+         * The name the function a value of one type is read through, typed, is exported under.
+         *
+         * @param type the type, as its module and its name
+         */
+        public static String typedReading(String type) {
+            return "decode:" + type + "#typed";
+        }
     }
 
     /** The aliases a component takes out of the core instance, in the order it takes them. */

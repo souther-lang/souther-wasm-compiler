@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.ToIntFunction;
+import org.jspecify.annotations.Nullable;
 import souther.compiler.core.Core;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.CheckedAlternativesForm;
@@ -24,7 +25,9 @@ import souther.compiler.types.TypeKey;
 import souther.compiler.types.TypeSymbol;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.emit.WasmWriter;
+import souther.wasm.link.CanonicalAbi;
 import souther.wasm.link.WasmFragment;
+import souther.wasm.link.WitType;
 
 /**
  * Every declared type, written once in static memory for the runtime to walk.
@@ -92,6 +95,22 @@ final class Descriptors {
     /** Every descriptor placed, by its address: its kind, where its operations go, its members. */
     private final Map<Integer, Described> described = new LinkedHashMap<>();
 
+    /** What each descriptor was placed for, which says where a value of it lies typed. */
+    private final Map<Integer, Type> origins = new HashMap<>();
+
+    /** The descriptors whose values cross a typed boundary, which carry where they lie. */
+    private final Set<Integer> crosses = new HashSet<>();
+
+    /**
+     * What a type crosses a typed boundary as, and where a value of that lies; nothing for a
+     * program nothing typed is built from.
+     */
+    private final @Nullable Typed typed;
+
+    /** What a type crosses a typed boundary as, and the layout of that. */
+    record Typed(java.util.function.Function<Type, WitType> types, CanonicalAbi abi) {
+    }
+
     /** The descriptors whose values the program reads from a document. */
     private final Set<Integer> reads = new HashSet<>();
     /** The descriptors whose values the program writes into a document. */
@@ -119,6 +138,12 @@ final class Descriptors {
 
     Descriptors(CheckedProgram program, WasmFragment fragment,
             ToIntFunction<TypeSymbol.AtModule> checks) {
+        this(program, fragment, checks, null);
+    }
+
+    Descriptors(CheckedProgram program, WasmFragment fragment,
+            ToIntFunction<TypeSymbol.AtModule> checks, @Nullable Typed typed) {
+        this.typed = typed;
         this.program = program;
         this.fragment = fragment;
         this.checks = checks;
@@ -211,6 +236,7 @@ final class Descriptors {
                     + ", which this backend does not write yet — it writes a scalar, a shape and a sum");
         };
         placed.put(type, descriptor);
+        origins.putIfAbsent(descriptor, type);
         return descriptor;
     }
 
@@ -311,6 +337,12 @@ final class Descriptors {
         if (already != null) {
             return already;
         }
+        int descriptor = describedAsDeclared(name);
+        origins.putIfAbsent(descriptor, Type.ref(name));
+        return descriptor;
+    }
+
+    private int describedAsDeclared(TypeSymbol.AtModule name) {
         CheckedData data = declared(name);
         return switch (data) {
             case CheckedData.Unit ignored -> {
@@ -574,6 +606,18 @@ final class Descriptors {
         return descriptor;
     }
 
+    /**
+     * Says values of {@code descriptor}'s type cross a typed boundary, so that its descriptor
+     * carries where one lies.
+     */
+    int toCross(int descriptor) {
+        if (typed == null) {
+            throw new IllegalStateException("nothing typed is built from this program");
+        }
+        crosses.add(descriptor);
+        return descriptor;
+    }
+
     /** Says the program places values of {@code descriptor}'s type among others. */
     int toOrder(int descriptor) {
         orders.add(descriptor);
@@ -608,6 +652,21 @@ final class Descriptors {
                     int element = described.get(unique.get(at)).members[0];
                     changed |= orders.add(element) | writes.add(element);
                 }
+                // What crosses typed is laid out member by member, a case carrying nothing aside: it
+                // lies nowhere. A set's members are handed over in the order they are written in,
+                // which is asked by writing them.
+                if (crosses.contains(at)) {
+                    boolean alternatives = held.kind == KIND_SUM || held.kind == KIND_ENUMERATION;
+                    for (int member : held.members) {
+                        int kind = described.get(member).kind;
+                        if (!(alternatives && kind == KIND_UNIT)) {
+                            changed |= crosses.add(member);
+                        }
+                    }
+                    if (held.kind == KIND_SET) {
+                        changed |= writes.add(held.members[0]);
+                    }
+                }
                 for (Set<Integer> asked : List.of(reads, writes, orders)) {
                     if (asked.contains(at)) {
                         for (int member : held.members) {
@@ -634,10 +693,56 @@ final class Descriptors {
                     .writeLittleEndian4(reads.contains(at) ? slotOf(readerOf(kind)) : 0)
                     .writeLittleEndian4(writes.contains(at) ? slotOf(writerOf(kind)) : 0)
                     .writeLittleEndian4(orders.contains(at) ? slotOf(ordererOf(kind)) : 0)
-                    .writeLittleEndian4(0);
+                    .writeLittleEndian4(crosses.contains(at) ? layoutOf(at, kind) : 0);
             fragment.fill(each.getValue().operations, operations.toByteArray());
         }
         primitives();
+    }
+
+    /**
+     * Places where a value of a descriptor's type lies when it crosses typed, as the Canonical ABI
+     * lays out what the type crosses as ({@code runtime/src/typed.rs}): its size, alignment and
+     * how many core values it flattens to; for a variant, how wide its case is and where what the
+     * case carries lies; for a product, where each field lies; for a map, how wide an entry is
+     * and where its key and its value lie.
+     *
+     * <p>Worked out by {@link CanonicalAbi} and nowhere here, from the WIT type the program's
+     * typed interfaces say the type crosses as.
+     */
+    private int layoutOf(int descriptor, int kind) {
+        Type origin = origins.get(descriptor);
+        if (origin == null) {
+            throw new IllegalStateException("a descriptor at " + descriptor
+                    + " crosses typed, and nothing says what it was placed for");
+        }
+        CanonicalAbi abi = typed.abi();
+        WitType type = typed.types().apply(origin);
+        int discriminant = 0;
+        int payload = 0;
+        List<Integer> offsets = List.of();
+        switch (kind) {
+            case KIND_PRODUCT -> offsets = abi.offsets(type);
+            case KIND_SUM, KIND_ENUMERATION, KIND_OPTION, KIND_UNIT -> {
+                discriminant = CanonicalAbi.discriminantSize(abi.caseCount(type));
+                payload = abi.payloadOffset(type);
+            }
+            case KIND_MAP -> {
+                WitType entry = ((WitType.ListOf) type).element();
+                payload = abi.size(entry);
+                offsets = abi.offsets(entry);
+            }
+            default -> {
+            }
+        }
+        ByteArrayOutputStream table = new ByteArrayOutputStream();
+        WasmWriter out = new WasmWriter(table)
+                .writeLittleEndian4(abi.size(type))
+                .writeLittleEndian4(abi.alignment(type))
+                .writeLittleEndian4(abi.flatten(type).size())
+                .writeLittleEndian4(discriminant)
+                .writeLittleEndian4(payload);
+        offsets.forEach(out::writeLittleEndian4);
+        return fragment.place(table.toByteArray());
     }
 
     /** Whether a kind is of a value a model declared, which is ordered as what it was made as. */

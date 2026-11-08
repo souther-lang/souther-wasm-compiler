@@ -39,6 +39,7 @@ public final class Compiled {
     private static final Recent<CheckedProgram, byte[]> MODULES = new Recent<>(KEPT);
     private static final Recent<CheckedProgram, byte[]> COMPONENTS = new Recent<>(KEPT);
     private static final Recent<CheckedProgram, byte[]> UNSHAKEN = new Recent<>(KEPT);
+    private static final Recent<CheckedProgram, byte[]> TYPED_CORES = new Recent<>(KEPT);
 
     private Compiled() {
     }
@@ -73,6 +74,11 @@ public final class Compiled {
     /** {@code WasmCompiler.compileAsComponent(program)}, written once for each program. */
     public static byte[] component(CheckedProgram program) {
         return COMPONENTS.of(program, kept -> kept, WasmCompiler::compileAsComponent).clone();
+    }
+
+    /** {@code WasmCompiler.typedCore(program)}, written once for each program. */
+    public static byte[] typedCore(CheckedProgram program) {
+        return TYPED_CORES.of(program, kept -> kept, WasmCompiler::typedCore).clone();
     }
 
     /** Classes the JVM wrote, defined as they are asked for. */

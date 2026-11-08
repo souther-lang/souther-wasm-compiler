@@ -623,6 +623,92 @@ unsafe fn push(first: &mut u32, last: &mut u32, value: u32) {
     *last = node;
 }
 
+/// A cell of a document nobody wrote as text: a typed value, made into the document the JSON
+/// boundary would have parsed, so that what reads a document reads it.
+///
+/// A keyword — `null`, `false`, `true` — carries nothing.
+pub(crate) unsafe fn made(tag: u32) -> u32 {
+    cell(tag, 0)
+}
+
+/// A string or a number of a document nobody wrote as text, its bytes copied after its header as a
+/// parsed one's are.
+pub(crate) unsafe fn made_of_bytes(tag: u32, at: u32, length: u32) -> u32 {
+    let out = cell(tag, length);
+    let bytes = alloc(length);
+    core::ptr::copy_nonoverlapping(at as usize as *const u8, bytes as usize as *mut u8, length as usize);
+    out
+}
+
+/// An array or an object of a document nobody wrote as text, with room for `count` elements or
+/// entries, each put in afterwards ([`put_element`], [`put_entry`]).
+pub(crate) unsafe fn made_holding(tag: u32, count: u32) -> u32 {
+    let out = cell(tag, count);
+    let _ = alloc(if tag == TAG_OBJECT { 8 * count } else { 4 * count });
+    out
+}
+
+/// Puts an element into an array [`made_holding`] made.
+pub(crate) unsafe fn put_element(array: u32, index: u32, value: u32) {
+    write_u32(array as usize + HEADER + 4 * index as usize, value);
+}
+
+/// Puts an entry into an object [`made_holding`] made.
+pub(crate) unsafe fn put_entry(object: u32, index: u32, key: u32, value: u32) {
+    write_u32(object as usize + HEADER + 8 * index as usize, key);
+    write_u32(object as usize + HEADER + 8 * index as usize + 4, value);
+}
+
+/// Says an object [`made_holding`] made holds fewer entries than it had room for.
+pub(crate) unsafe fn holds(object: u32, count: u32) {
+    write_u32(object as usize + 4, count);
+}
+
+/// Whether text is a number as JSON writes one, which is what a number cell holds and all that
+/// what reads one is ready for.
+pub(crate) unsafe fn is_number(at: u32, length: u32) -> bool {
+    let byte = |i: u32| read_u8((at + i) as usize);
+    let digits = |from: u32| {
+        let mut i = from;
+        while i < length && byte(i).is_ascii_digit() {
+            i += 1;
+        }
+        i
+    };
+    let mut i = 0;
+    if i < length && byte(i) == b'-' {
+        i += 1;
+    }
+    if i < length && byte(i) == b'0' {
+        i += 1;
+    } else {
+        let past = digits(i);
+        if past == i {
+            return false;
+        }
+        i = past;
+    }
+    if i < length && byte(i) == b'.' {
+        let past = digits(i + 1);
+        if past == i + 1 {
+            return false;
+        }
+        i = past;
+    }
+    if i < length && (byte(i) | 0x20) == b'e' {
+        i += 1;
+        if i < length && (byte(i) == b'+' || byte(i) == b'-') {
+            i += 1;
+        }
+        let past = digits(i);
+        if past == i {
+            return false;
+        }
+        i = past;
+    }
+    i == length
+}
+
 /// A header with room for nothing after it. Whoever wants a payload allocates it next, which the
 /// arena puts immediately after — that is the whole of why a bump allocator is what holds these.
 unsafe fn cell(tag: u32, length: u32) -> u32 {

@@ -43,6 +43,7 @@ mod rational;
 mod temporal;
 mod text;
 mod tree;
+mod typed;
 mod value;
 
 use core::panic::PanicInfo;
@@ -108,7 +109,12 @@ const PAGE: usize = 65536;
 /// (issue #63), whose record points at the behavior's name and at the issues, raised by
 /// `__souther_read_answer`, which an injected behavior's answer came to be read through, and a
 /// component's `ended` came to carry the two as its `invalid-answer` beside the reason.
-const ABI_VERSION: u32 = 15;
+///
+/// Raised to 16 when the word before a descriptor's operations came to say where a value of its
+/// type lies when it crosses typed (`typed`), and a typed component's lifted functions came to be
+/// handed core values and to answer through `__souther_typed_answered`, `__souther_typed_refused`
+/// and `__souther_typed_ended` (issue #73).
+const ABI_VERSION: u32 = 16;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.

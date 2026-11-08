@@ -52,7 +52,7 @@ package souther:typed-program@0.1.0 {
   interface %every {
     use souther:typed-types/%every@0.1.0.{%wide, %code, %pick-result, %point};
     use souther:typed-types/%lib-rates@0.1.0.{%rate};
-    record %issue { %path: string, %code: string, %message-key: string, %meta: string }
+    record %issue { %path: string, %code: string, %message-key: string, %meta: string, %message: option<string> }
     record %invalid-answer { %behavior: string, %issues: list<%issue> }
     record %ended { %reason: u32, %invalid-answer: option<%invalid-answer> }
     variant %refusal { %issues(list<%issue>), %ended(%ended) }
@@ -68,7 +68,7 @@ package souther:typed-program@0.1.0 {
 package souther:typed-decode@0.1.0 {
   interface %every {
     use souther:typed-types/%every@0.1.0.{%code, %point, %line, %nothing, %shape, %colour, %missing, %wide};
-    record %issue { %path: string, %code: string, %message-key: string, %meta: string }
+    record %issue { %path: string, %code: string, %message-key: string, %meta: string, %message: option<string> }
     record %invalid-answer { %behavior: string, %issues: list<%issue> }
     record %ended { %reason: u32, %invalid-answer: option<%invalid-answer> }
     variant %refusal { %issues(list<%issue>), %ended(%ended) }

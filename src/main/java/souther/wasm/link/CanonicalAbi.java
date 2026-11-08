@@ -223,6 +223,11 @@ public final class CanonicalAbi {
         return alignTo(discriminantSize(cases.size()), maxCaseAlignment(cases));
     }
 
+    /** How many cases a variant, an enum, an option or a result has. */
+    public int caseCount(WitType type) {
+        return casesOf(resolved(type)).size();
+    }
+
     /** How many bytes say which case of a variant of this many cases a value is. */
     public static int discriminantSize(int cases) {
         if (cases <= 1 << 8) {

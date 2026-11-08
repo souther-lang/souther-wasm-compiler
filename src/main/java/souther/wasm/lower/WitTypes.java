@@ -19,6 +19,7 @@ import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedSignature;
 import souther.compiler.types.LeafScalar;
 import souther.compiler.types.MapKeyRepresentation;
+import souther.compiler.types.Type;
 import souther.compiler.types.TypeSymbol;
 import souther.wasm.link.Component;
 import souther.wasm.link.TypedOffering;
@@ -60,6 +61,9 @@ final class WitTypes {
     private final Deque<TypeSymbol.AtModule> pending = new ArrayDeque<>();
     private final Map<String, Map<String, WitType.Declaration>> declared = new LinkedHashMap<>();
     private final Map<WitType.Named, String> owners = new LinkedHashMap<>();
+    /** Each union a behavior answers that nobody named, by the name it is declared under. */
+    private final Map<Type.Union, WitType.Named> unions = new LinkedHashMap<>();
+    private @Nullable TypedOffering offering;
 
     private WitTypes(CheckedProgram program) {
         this.program = program;
@@ -67,10 +71,61 @@ final class WitTypes {
 
     /** The typed offering of {@code program}. */
     static TypedOffering of(CheckedProgram program) {
-        return new WitTypes(program).offering();
+        return read(program).offering();
     }
 
-    private TypedOffering offering() {
+    /** The typed offering of {@code program}, and what each type it holds crosses as. */
+    static WitTypes read(CheckedProgram program) {
+        WitTypes read = new WitTypes(program);
+        read.offering = read.offered();
+        return read;
+    }
+
+    /** What the program offers, typed. */
+    TypedOffering offering() {
+        return java.util.Objects.requireNonNull(offering);
+    }
+
+    /**
+     * What a value of a type crosses as, for a type the offering names: what a descriptor of it is
+     * laid out by where it crosses typed.
+     */
+    WitType typeOf(Type type) {
+        return switch (type) {
+            case Type.Prim primitive -> {
+                LeafScalar scalar = LeafScalar.of(primitive);
+                if (scalar == null) {
+                    throw new IllegalStateException(primitive + " crosses no typed boundary");
+                }
+                yield scalar(scalar);
+            }
+            case Type.Ref reference when reference.name() instanceof TypeSymbol.AtModule declared -> {
+                WitType.Named name = named.get(declared);
+                if (name == null) {
+                    throw new IllegalStateException(declared + " crosses typed, and the typed"
+                            + " interfaces declare nothing for it");
+                }
+                yield name;
+            }
+            case Type.ListOf list -> new WitType.ListOf(typeOf(list.element()));
+            case Type.SetOf set -> new WitType.ListOf(typeOf(set.element()));
+            case Type.OptionOf option -> new WitType.OptionOf(typeOf(option.element()));
+            // A key that is a primitive is a string or a temporal, written as text.
+            case Type.MapOf map -> mapOf(map.key() instanceof Type.Prim ? WitType.STRING
+                    : typeOf(map.key()), typeOf(map.value()));
+            case Type.Union union -> {
+                WitType.Named name = unions.get(union);
+                if (name == null) {
+                    throw new IllegalStateException(union + " crosses typed, and no behavior"
+                            + " answers it");
+                }
+                yield name;
+            }
+            default -> throw new IllegalStateException(type + " crosses no typed boundary");
+        };
+    }
+
+    private TypedOffering offered() {
         Map<String, Map<String, TypedOffering.Function>> behaviors = new LinkedHashMap<>();
         for (CheckedModule module : program.modules()) {
             Map<String, TypedOffering.Function> functions = new LinkedHashMap<>();
@@ -156,6 +211,7 @@ final class WitTypes {
                     mapOf(key(map.key()), output(map.value(), module, behavior));
             case CheckedBoundaryOutput.Cases cases -> {
                 WitType.Named name = new WitType.Named(module, behavior + "-result");
+                unions.putIfAbsent(cases.type(), name);
                 // A behavior offered and reached out for is one behavior, and declares its answer
                 // once.
                 if (!owners.containsKey(name)) {

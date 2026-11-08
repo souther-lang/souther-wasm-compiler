@@ -42,6 +42,8 @@ final class BodyWriter {
     private static final int OPCODE_I32_ADD = 0x6a;
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
     private static final int OPCODE_I64_EXTEND_I32_S = 0xac;
+    private static final int OPCODE_I64_EXTEND_I32_U = 0xad;
+    private static final int OPCODE_I64_STORE = 0x37;
     private static final int OPCODE_I64_SHR_U = 0x88;
     private static final int OPCODE_I64_SUB = 0x7d;
     private static final int OPCODE_I64_EQ = 0x51;
@@ -124,6 +126,20 @@ final class BodyWriter {
     /** Widens the number on the stack to sixty-four bits, keeping its sign. */
     BodyWriter extendToWide() {
         writer.write((byte) OPCODE_I64_EXTEND_I32_S);
+        return this;
+    }
+
+    /** Widens the number on the stack to sixty-four bits, as the bits it is rather than a sign. */
+    BodyWriter extendToWideUnsigned() {
+        writer.write((byte) OPCODE_I64_EXTEND_I32_U);
+        return this;
+    }
+
+    /**
+     * Writes the sixty-four bit number on the stack that many bytes past the address under it.
+     */
+    BodyWriter storeWide(int offset) {
+        writer.write((byte) OPCODE_I64_STORE).writeUnsignedLeb128(0).writeUnsignedLeb128(offset);
         return this;
     }
 

@@ -157,6 +157,34 @@ pub unsafe extern "C" fn __souther_issues_written() -> u64 {
     packed(at, length)
 }
 
+/// One issue found, as its parts, for a boundary that lays them out itself: a typed one hands a
+/// caller a list of records where the JSON boundary hands it a document.
+pub(crate) struct Found {
+    pub path: (u32, u32),
+    pub code: (u32, u32),
+    pub key: (u32, u32),
+    pub meta: (u32, u32),
+    /// Empty where the decoder said nothing in its own words.
+    pub message: (u32, u32),
+}
+
+/// Every issue this call found, in the order it found them.
+pub(crate) unsafe fn each(mut found: impl FnMut(u32, Found)) {
+    let mut record = FIRST;
+    let mut index = 0;
+    while record != 0 {
+        found(index, Found {
+            path: (get(record, OFF_PATH), get(record, OFF_PATH_LENGTH)),
+            code: (get(record, OFF_CODE), get(record, OFF_CODE_LENGTH)),
+            key: (get(record, OFF_KEY), get(record, OFF_KEY_LENGTH)),
+            meta: (get(record, OFF_META), get(record, OFF_META_LENGTH)),
+            message: (get(record, OFF_MESSAGE), get(record, OFF_MESSAGE_LENGTH)),
+        });
+        index += 1;
+        record = get(record, OFF_NEXT);
+    }
+}
+
 /// Appends bytes to the run being written at the arena's top.
 unsafe fn write(bytes: &[u8]) {
     text::put(bytes);

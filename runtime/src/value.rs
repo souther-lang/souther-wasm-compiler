@@ -1977,7 +1977,7 @@ pub(crate) unsafe fn member_of(cell: u32, descriptor: u32) -> Option<u32> {
 
 /// The same, where the value has to be one: a place whose type the checker settled holds a value
 /// of one of its members.
-unsafe fn case_among(cell: u32, descriptor: u32) -> u32 {
+pub(crate) unsafe fn case_among(cell: u32, descriptor: u32) -> u32 {
     match member_of(cell, descriptor) {
         Some(i) => i,
         None => abort(REASON_NOT_A_VALUE, descriptor, cell as u64, 0),
@@ -2050,6 +2050,34 @@ unsafe fn members_written(cell: u32, element: u32) {
         }
         text::push(copied_at + start(i) - first, end(i) - start(i));
     }
+}
+
+/// The places of a set's members in the order [`members_written`] writes them in, for a boundary
+/// that writes them otherwise: a typed caller is handed a set's members in the order a JSON caller
+/// reads them in, so that one set is one list whichever way it crosses.
+///
+/// Asked the way that order is asked, of each member as it is written and read back, by the same
+/// comparison.
+pub(crate) unsafe fn written_order(cell: u32, element: u32) -> &'static [u32] {
+    let held = __souther_list_length(cell);
+    let order = crate::alloc_words(held as usize);
+    for (i, each) in order.iter_mut().enumerate() {
+        *each = i as u32;
+    }
+    if held < 2 {
+        return order;
+    }
+    let read = crate::alloc_words(held as usize);
+    for i in 0..held {
+        text::begin();
+        written(__souther_list_get(cell, i), element);
+        let (at, length) = text::ended();
+        let node = json::parse_own(at, length);
+        order::keyed(node);
+        read[i as usize] = node;
+    }
+    order::sort_places(order, &|a, b| order::as_written(read[a as usize], read[b as usize]));
+    order
 }
 
 /// A record's fields, either as the whole object or as the rest of one already opened by a tag.

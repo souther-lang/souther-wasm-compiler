@@ -81,9 +81,12 @@ public final class RuntimeAbi {
      * reason it could not before, {@link WasmFault#INVALID_HOST_ANSWER} (issue #63), whose record
      * points at the behavior's name and at the issues, raised by {@link #READ_ANSWER}, which an
      * injected behavior's answer came to be read through, and {@link #LIFT_ENDED} came to write the
-     * two as the {@code invalid-answer} of a component's {@code ended}, beside the reason.
+     * two as the {@code invalid-answer} of a component's {@code ended}, beside the reason. Raised to
+     * 16 when the last of the sixteen bytes before a descriptor came to say where a value of its
+     * type lies when it crosses typed, and a typed component's lifted functions came to answer
+     * through {@link #TYPED_ANSWERED}, {@link #TYPED_REFUSED} and {@link #TYPED_ENDED} (issue #73).
      */
-    public static final int VERSION = 15;
+    public static final int VERSION = 16;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
@@ -224,6 +227,45 @@ public final class RuntimeAbi {
      * at. Writes the same static area, so it cannot itself run out of memory.
      */
     public static final String LIFT_ENDED = "__souther_lift_ended";
+
+    /**
+     * {@code (i32 count) -> i32}: room for that many core values a typed function was handed, one
+     * to an eight-byte slot, each nothing until it is put there.
+     */
+    public static final String TYPED_SLOTS = "__souther_typed_slots";
+
+    /**
+     * {@code (i32 at, i32 arguments) -> i32}: the arguments a typed function was handed, in the
+     * slots or the record at {@code at}, as the array of them a JSON call's arguments are read
+     * from. {@code arguments} is where the function's arguments record is ({@code runtime/src/typed.rs}).
+     */
+    public static final String TYPED_ARGUMENTS = "__souther_typed_arguments";
+
+    /**
+     * {@code (i32 values, i32 arguments, i32 at)}: writes the values at {@code values}, one cell to
+     * a word, as the arguments of a call to a typed function, flattened into the slots at
+     * {@code at} or laid out as the record of them there.
+     */
+    public static final String TYPED_LOWERED = "__souther_typed_lowered";
+
+    /**
+     * {@code (i32 cell, i32 descriptor, i32 result) -> i32}: writes what a typed function answers,
+     * the {@code ok} of its result, and answers where. {@code result} is where the function's
+     * result record is.
+     */
+    public static final String TYPED_ANSWERED = "__souther_typed_answered";
+
+    /**
+     * {@code (i32 result) -> i32}: writes the {@code err} of a typed function's result that the
+     * boundary refused, the issues found as records, and answers where.
+     */
+    public static final String TYPED_REFUSED = "__souther_typed_refused";
+
+    /**
+     * {@code (i32 result) -> i32}: writes the {@code err} of a typed function's result that the
+     * runtime ended, as {@link #LIFT_ENDED} writes a JSON one's, into a static area.
+     */
+    public static final String TYPED_ENDED = "__souther_typed_ended";
 
     /**
      * {@code () -> !}: leaves a call whose reason the failure record holds, carrying nothing. A
