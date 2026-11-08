@@ -161,6 +161,6 @@ public final class TypedWitText {
     }
 
     private static String named(String name) {
-        return "%" + name;
+        return WitText.named(name);
     }
 }

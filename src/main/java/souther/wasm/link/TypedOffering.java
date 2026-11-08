@@ -123,10 +123,10 @@ public record TypedOffering(Map<String, List<WitType.Declaration>> types,
         readable = inOrder(readable, TypedOffering::functionsInOrder);
         reached = inOrder(reached, TypedOffering::functionsInOrder);
 
-        apart(types.keySet(), Component::writable);
-        apart(behaviors.keySet(), Component::writable);
-        apart(readable.keySet(), Component::writable);
-        apart(reached.keySet(), Component::writable);
+        Offering.apart(types.keySet(), Component::writable);
+        Offering.apart(behaviors.keySet(), Component::writable);
+        Offering.apart(readable.keySet(), Component::writable);
+        Offering.apart(reached.keySet(), Component::writable);
 
         Map<String, Map<String, WitType.Declaration>> declared = new LinkedHashMap<>();
         for (Map.Entry<String, List<WitType.Declaration>> module : types.entrySet()) {
@@ -375,18 +375,6 @@ public record TypedOffering(Map<String, List<WitType.Declaration>> types,
     }
 
     private static final Pattern WRITABLE = Pattern.compile("[a-z][a-z0-9]*(-[a-z0-9]+)*");
-
-    private static void apart(Collection<String> modules, UnaryOperator<String> named) {
-        Map<String, String> already = new LinkedHashMap<>();
-        for (String module : modules) {
-            String interfaceName = named.apply(module);
-            String taken = already.put(interfaceName, module);
-            if (taken != null) {
-                throw new IllegalArgumentException("the modules " + taken + " and " + module
-                        + " would both be the interface " + interfaceName);
-            }
-        }
-    }
 
     private static Map<String, Function> functionsInOrder(Map<String, Function> functions) {
         return Collections.unmodifiableMap(new LinkedHashMap<>(functions));

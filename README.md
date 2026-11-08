@@ -22,6 +22,14 @@ Compatibility is kept at the boundaries this compiler offers the ones who use wh
 Each of these that has a version moves it when it changes, and its tests fail where it changes
 without moving.
 
+A version says what a reader of it can rely on, and the ABI's says it of the runtime a module
+carries, not of the JSON a behavior takes and answers. Raising it keeps what goes in and comes out
+of a call as it was; what it changes is which glue reads the module. `@souther-lang/wasm` reads
+modules of the one ABI it was released with and refuses any other when it loads one, rather than
+reading it as this one: a module written by an earlier compiler is read by the glue released with
+that compiler. The ABI went from 15 to 16 when a descriptor came to say where a value lies when it
+crosses typed; a JSON call answers what it answered under 15.
+
 The Java classes here are how this compiler is written, and none of them is offered to a caller. A
 `public` declaration is one another package of this compiler uses; it is not a Java API, and
 changing or removing it breaks nothing anyone was offered.

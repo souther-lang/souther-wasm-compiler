@@ -478,6 +478,14 @@ public final class WasmCompiler {
             fragment.export(Component.Lifted.reading(readAs(decodable.get(number))),
                     fragment.define(overStrings, body));
         }
+        exportPostReturn(fragment, calls);
+    }
+
+    /**
+     * The post-return every lifted function shares, JSON or typed: everything a call made is the
+     * arena, so what each owes back is the same thing, whichever way the call came out.
+     */
+    private static void exportPostReturn(WasmFragment fragment, Runtime calls) {
         byte[] rewind = new BodyWriter(1, 0)
                 .call(calls.of(RuntimeAbi.ARENA_REWIND))
                 .body();
@@ -527,11 +535,7 @@ public final class WasmCompiler {
             fragment.export(Component.Lifted.typedReading(readAs(type)),
                     fragment.define(lifted.type(), typedOutcomeOf(calls, ended, lifted, inner)));
         }
-        byte[] rewind = new BodyWriter(1, 0)
-                .call(calls.of(RuntimeAbi.ARENA_REWIND))
-                .body();
-        fragment.export(Component.Lifted.POST_RETURN, fragment.define(
-                fragment.functionType(List.of(Type.I32), List.of()), rewind));
+        exportPostReturn(fragment, calls);
     }
 
     /**

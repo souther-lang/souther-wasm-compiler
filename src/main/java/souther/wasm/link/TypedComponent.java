@@ -27,17 +27,10 @@ import souther.wasm.emit.ComponentWriter;
 public final class TypedComponent {
 
     /** Which core instance answers what the program reaches out for. */
-    private static final int HOST = 0;
+    private static final int HOST = Component.HOST;
 
     /** Which core instance the program is. */
-    private static final int PROGRAM = 1;
-
-    /** Which core instance holds what the module filling the table is handed. */
-    private static final int FILLING_ARGS = 2;
-
-    private static final int SORT_FUNC = 0x00;
-    private static final int SORT_TABLE = 0x01;
-    private static final int SORT_MEMORY = 0x02;
+    private static final int PROGRAM = Component.PROGRAM;
 
     private TypedComponent() {
     }
@@ -83,18 +76,8 @@ public final class TypedComponent {
                     lowered.add(abi.lowered(parameters(each), each.answers()))));
             int reaches = lowered.size();
 
-            out.rawSection(ComponentWriter.SEC_CORE_MODULE, core);
-            out.rawSection(ComponentWriter.SEC_CORE_MODULE, reaches == 0
-                    ? Component.unreachedHost()
-                    : ReachingOut.answeringThroughATable(reaches));
-            if (reaches > 0) {
-                out.rawSection(ComponentWriter.SEC_CORE_MODULE,
-                        ReachingOut.fillingTheTableTyped(lowered));
-            }
-            out.rawSection(ComponentWriter.SEC_CORE_INSTANCE, ComponentWriter.vec(List.of(
-                    ComponentWriter.coreInstanceInstantiate(1, List.of(), List.of()),
-                    ComponentWriter.coreInstanceInstantiate(
-                            0, List.of(RuntimeAbi.IMPORT_MODULE), List.of(HOST)))));
+            Component.instantiated(out, core, reaches,
+                    reaches == 0 ? null : ReachingOut.fillingTheTableTyped(lowered));
 
             List<byte[]> taken = new ArrayList<>();
             taken.add(ComponentWriter.aliasCoreMemory(PROGRAM, RuntimeAbi.MEMORY));
@@ -290,20 +273,7 @@ public final class TypedComponent {
                 lowered.add(coreFuncs++);
             }
             out.rawSection(ComponentWriter.SEC_CANON, ComponentWriter.vec(lowers));
-
-            List<String> names = new ArrayList<>(List.of(
-                    RuntimeAbi.MEMORY, ReachingOut.TABLE, RuntimeAbi.CANONICAL_REALLOC));
-            List<Integer> sorts = new ArrayList<>(List.of(SORT_MEMORY, SORT_TABLE, SORT_FUNC));
-            List<Integer> held = new ArrayList<>(List.of(memory, 0, realloc));
-            for (int i = 0; i < lowered.size(); i++) {
-                names.add(ReachingOut.lowered(i));
-                sorts.add(SORT_FUNC);
-                held.add(lowered.get(i));
-            }
-            out.rawSection(ComponentWriter.SEC_CORE_INSTANCE, ComponentWriter.vec(List.of(
-                    ComponentWriter.coreInstanceFromExports(names, sorts, held),
-                    ComponentWriter.coreInstanceInstantiate(
-                            2, List.of(RuntimeAbi.IMPORT_MODULE), List.of(FILLING_ARGS)))));
+            Component.fillTheTable(out, memory, realloc, lowered);
         }
 
         /** Puts into an instance type each type of another interface what it names uses. */

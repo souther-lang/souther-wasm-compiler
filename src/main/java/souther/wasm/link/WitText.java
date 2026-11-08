@@ -92,7 +92,7 @@ public final class WitText {
      * {@code func} — and WIT reads an escaped name as a name, a word of its own included. Every one
      * is escaped and not only those that are words today, since which are is WIT's to add to.
      */
-    private static String named(String name) {
+    static String named(String name) {
         return "%" + name;
     }
 
