@@ -91,11 +91,16 @@ jobs:
       # sections hold what they were meant to hold and nothing about whether the index in one
       # section names the thing in another — and a component that reaches out is almost entirely
       # indices between sections.
+      # Each tool is fetched whole into a file before it is unpacked, and the fetch is tried again
+      # where it fails: a release download is a server elsewhere, and one that answered 504 three
+      # runs running failed builds that had nothing wrong with them. Piped into tar, a fetch tried
+      # again would hand tar the start of the file twice.
       - name: Install wasm-tools
         run: |
           version=1.258.0
-          curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v$version/wasm-tools-$version-x86_64-linux.tar.gz" \
-            | tar xz -C /tmp
+          curl -sSfL --retry 8 --retry-delay 15 --retry-all-errors -o /tmp/wasm-tools.tar.gz \
+            "https://github.com/bytecodealliance/wasm-tools/releases/download/v$version/wasm-tools-$version-x86_64-linux.tar.gz"
+          tar xzf /tmp/wasm-tools.tar.gz -C /tmp
           echo "/tmp/wasm-tools-$version-x86_64-linux" >> "$GITHUB_PATH"
       - name: Require every component this writes to be one
         run: |
@@ -162,8 +167,9 @@ jobs:
       - name: Install wasmtime
         run: |
           version=47.0.4
-          curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v$version/wasmtime-v$version-x86_64-linux.tar.xz" \
-            | tar xJ -C /tmp
+          curl -sSfL --retry 8 --retry-delay 15 --retry-all-errors -o /tmp/wasmtime.tar.xz \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/v$version/wasmtime-v$version-x86_64-linux.tar.xz"
+          tar xJf /tmp/wasmtime.tar.xz -C /tmp
           echo "/tmp/wasmtime-v$version-x86_64-linux" >> "$GITHUB_PATH"
       - name: Call each function a component this writes offers
         run: |
@@ -322,7 +328,7 @@ jobs:
         run: |
           version=0.12.0
           mkdir -p "/tmp/wac-$version"
-          curl -sSfL -o "/tmp/wac-$version/wac" \
+          curl -sSfL --retry 8 --retry-delay 15 --retry-all-errors -o "/tmp/wac-$version/wac" \
             "https://github.com/bytecodealliance/wac/releases/download/v$version/wac-cli-x86_64-unknown-linux-musl"
           chmod +x "/tmp/wac-$version/wac"
           echo "/tmp/wac-$version" >> "$GITHUB_PATH"
