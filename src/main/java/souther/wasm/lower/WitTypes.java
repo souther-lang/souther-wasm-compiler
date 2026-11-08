@@ -93,6 +93,15 @@ final class WitTypes {
      * type no caller was told of.
      */
     WitType typeOf(Type type) {
+        return typeOf(type, this::laidOutAs);
+    }
+
+    /**
+     * What a value of a type crosses as, a union nobody named being what {@code unionNamed} names
+     * it: the behavior answering it, where an answer is written, and any of the behaviors that
+     * answer it, where a value of it is laid out, since each declares it as the same variant.
+     */
+    private WitType typeOf(Type type, java.util.function.Function<Type.Union, WitType.Named> unionNamed) {
         return switch (type) {
             case Type.Prim primitive -> {
                 LeafScalar scalar = LeafScalar.of(primitive);
@@ -103,20 +112,15 @@ final class WitTypes {
                 yield scalar(scalar);
             }
             case Type.Ref reference -> symbol(reference.name());
-            case Type.ListOf list -> new WitType.ListOf(typeOf(list.element()));
-            case Type.SetOf set -> new WitType.ListOf(typeOf(set.element()));
-            case Type.OptionOf option -> new WitType.OptionOf(typeOf(option.element()));
+            case Type.ListOf list -> new WitType.ListOf(typeOf(list.element(), unionNamed));
+            case Type.SetOf set -> new WitType.ListOf(typeOf(set.element(), unionNamed));
+            case Type.OptionOf option ->
+                    new WitType.OptionOf(typeOf(option.element(), unionNamed));
             // A key is written as text: a primitive key is a string or a temporal, and a named
             // one is what its type is written as.
-            case Type.MapOf map -> mapOf(typeOf(map.key()), typeOf(map.value()));
-            case Type.Union union -> {
-                WitType.Named name = unions.get(union);
-                if (name == null) {
-                    throw new IllegalStateException(union + " crosses typed, and no behavior"
-                            + " answers it");
-                }
-                yield name;
-            }
+            case Type.MapOf map ->
+                    mapOf(typeOf(map.key(), unionNamed), typeOf(map.value(), unionNamed));
+            case Type.Union union -> unionNamed.apply(union);
             default -> throw new IllegalStateException(type + " crosses no typed boundary");
         };
     }
@@ -188,7 +192,21 @@ final class WitTypes {
      */
     private WitType output(CheckedBoundaryOutput output, String module, String behavior) {
         unionsIn(output, module, behavior);
-        return typeOf(output.type());
+        WitType.Named own = new WitType.Named(module, behavior + "-result");
+        return typeOf(output.type(), union -> own);
+    }
+
+    /**
+     * The name a union nobody named is laid out by: the first behavior's that answers it. Any
+     * would do, each declaring it as the same variant; what a behavior's signature names it is
+     * its own, and does not change when another behavior comes to answer it too.
+     */
+    private WitType.Named laidOutAs(Type.Union union) {
+        WitType.Named name = unions.get(union);
+        if (name == null) {
+            throw new IllegalStateException(union + " crosses typed, and no behavior answers it");
+        }
+        return name;
     }
 
     /** Declares each union an answer holds that nobody named, wherever in it it stands. */

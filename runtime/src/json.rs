@@ -149,31 +149,39 @@ pub unsafe fn put_entries(cell: u32, entries: *const u32, held: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_write_int(value: i64) -> u64 {
     let mut digits = [0u8; 20];
-    let mut written = 0;
-    let negative = value < 0;
+    let written = int_digits(value, &mut digits);
+    let out = alloc(written.len() as u32);
+    core::ptr::copy_nonoverlapping(written.as_ptr(), out as usize as *mut u8, written.len());
+    packed(out, written.len() as u32)
+}
+
+/// A number cell of a whole number, its digits written straight into the cell as a parsed one's
+/// are: for a document made of a typed value, which is read as the number it holds.
+pub(crate) unsafe fn made_of_int(value: i64) -> u32 {
+    let mut digits = [0u8; 20];
+    let written = int_digits(value, &mut digits);
+    made_of_bytes(TAG_NUMBER, written.as_ptr() as u32, written.len() as u32)
+}
+
+/// A whole number's digits as JSON writes them, in the room handed over, answering the part of it
+/// they fill. The one account of how one is written.
+fn int_digits(value: i64, room: &mut [u8; 20]) -> &[u8] {
     // Negated as an i128 so that the most negative i64 has somewhere to go.
-    let mut rest = if negative { -(value as i128) } else { value as i128 };
-    if rest == 0 {
-        digits[written] = b'0';
-        written += 1;
-    }
-    while rest > 0 {
-        digits[written] = b'0' + (rest % 10) as u8;
-        written += 1;
+    let mut rest = (value as i128).unsigned_abs();
+    let mut at = room.len();
+    loop {
+        at -= 1;
+        room[at] = b'0' + (rest % 10) as u8;
         rest /= 10;
+        if rest == 0 {
+            break;
+        }
     }
-    let total = written + usize::from(negative);
-    let out = alloc(total as u32) as usize;
-    let mut at = out;
-    if negative {
-        core::ptr::write(at as *mut u8, b'-');
-        at += 1;
+    if value < 0 {
+        at -= 1;
+        room[at] = b'-';
     }
-    for i in (0..written).rev() {
-        core::ptr::write(at as *mut u8, digits[i]);
-        at += 1;
-    }
-    packed(out as u32, total as u32)
+    &room[at..]
 }
 
 /// `true` or `false`.

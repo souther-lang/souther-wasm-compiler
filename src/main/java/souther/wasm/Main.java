@@ -17,6 +17,8 @@ import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.link.TypedComponent;
+import souther.wasm.link.TypedOffering;
 import souther.wasm.link.TypedWitText;
 import souther.wasm.link.WitText;
 import souther.wasm.lower.NotLowered;
@@ -170,17 +172,25 @@ public final class Main {
         String offers = null;
         try {
             CheckedProgram program = CheckedProgram.of(read, ModulePath.EMPTY);
+            // A typed component and the interfaces written of it come of one compile, so that
+            // what the file says the component offers is what the component was built to.
+            TypedOffering typedOffering = null;
             if (!component) {
                 written = WasmCompiler.compile(program);
             } else if (typed) {
-                written = WasmCompiler.compileAsTypedComponent(program);
+                WasmCompiler.TypedCompiled compiled = WasmCompiler.compiledTyped(program);
+                written = TypedComponent.around(compiled.core(), compiled.build());
+                typedOffering = compiled.build().offering();
             } else {
                 written = WasmCompiler.compileAsComponent(program);
             }
             if (offering != null) {
-                offers = typed
-                        ? TypedWitText.written(WasmCompiler.typedOffering(program))
-                        : WitText.written(WasmCompiler.offering(program));
+                if (typed) {
+                    offers = TypedWitText.written(typedOffering != null
+                            ? typedOffering : WasmCompiler.typedOffering(program));
+                } else {
+                    offers = WitText.written(WasmCompiler.offering(program));
+                }
             }
         } catch (CompileException e) {
             Refusal.lines(e, read).forEach(problems::println);

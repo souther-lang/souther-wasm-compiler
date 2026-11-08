@@ -49,13 +49,20 @@ public final class CanonicalAbi {
      *     laid out as a record of them, rather than being its parameters
      * @param answerInMemory whether its answer lies in memory: at the pointer a lifted function
      *     answers, or at the one a lowered function is handed as its last parameter
+     * @param argumentValues how many of its core parameters are the arguments, which is all of them
+     *     but where a lowered function is handed where its answer goes after them
      */
     public record CoreSignature(List<Flat> params, List<Flat> results, boolean argumentsInMemory,
-            boolean answerInMemory) {
+            boolean answerInMemory, int argumentValues) {
 
         public CoreSignature {
             params = List.copyOf(params);
             results = List.copyOf(results);
+        }
+
+        /** The core parameters that are the arguments, in order. */
+        public List<Flat> arguments() {
+            return params.subList(0, argumentValues);
         }
 
         @Override
@@ -109,6 +116,7 @@ public final class CanonicalAbi {
             params.clear();
             params.add(Flat.I32);
         }
+        int argumentValues = params.size();
         boolean answerInMemory = results.size() > MAX_FLAT_RESULTS;
         if (answerInMemory) {
             results.clear();
@@ -118,7 +126,8 @@ public final class CanonicalAbi {
                 params.add(Flat.I32);
             }
         }
-        return new CoreSignature(params, results, argumentsInMemory, answerInMemory);
+        return new CoreSignature(params, results, argumentsInMemory, answerInMemory,
+                argumentValues);
     }
 
     /** How many bytes a value of the type takes in memory. */

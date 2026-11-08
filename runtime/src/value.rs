@@ -2032,9 +2032,15 @@ unsafe fn members_written(cell: u32, element: u32) {
 /// nothing of them is left in it: the writing a set's members are ordered by is not yet the
 /// writing of the set. Every member goes into the one run; a run started for each took the room a
 /// run starts with for each, and a set of a thousand short strings, ordered so for a typed caller,
-/// took two and a half times what the JSON call answering it took.
+/// took two and a half times what the JSON call answering it took. Nor is a run started for each
+/// set: a typed answer has no run of its own, and its sets are ordered in the one the call has,
+/// taken back each time, which is room taken once and not once a set.
 pub(crate) unsafe fn in_written_order(cell: u32, element: u32) -> WrittenMembers {
     let held = __souther_list_length(cell);
+    // Fewer than two members stand in the one order there is, and nothing is written to say so.
+    if held < 2 {
+        return WrittenMembers { copied: 0, ends: crate::alloc_words(0), order: None };
+    }
     let first = text::so_far();
     let ends = crate::alloc_words(held as usize);
     for i in 0..held {
@@ -2050,9 +2056,6 @@ pub(crate) unsafe fn in_written_order(cell: u32, element: u32) -> WrittenMembers
         length as usize);
     text::back_to(first);
     let mut members = WrittenMembers { copied, ends, order: None };
-    if held < 2 {
-        return members;
-    }
     let read = crate::alloc_words(held as usize);
     for i in 0..held {
         let (at, length) = members.text(i);

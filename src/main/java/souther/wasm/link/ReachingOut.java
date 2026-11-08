@@ -221,14 +221,14 @@ final class ReachingOut {
             if (answersOne) {
                 b.write(LOCAL_GET).writeUnsignedLeb128(2);
             }
-            int arguments = signature.params().size() - (signature.answerInMemory() ? 1 : 0);
             if (signature.argumentsInMemory()) {
                 b.write(LOCAL_GET).writeUnsignedLeb128(1);
             } else {
-                for (int k = 0; k < arguments; k++) {
+                List<CanonicalAbi.Flat> arguments = signature.arguments();
+                for (int k = 0; k < arguments.size(); k++) {
                     b.write(LOCAL_GET).writeUnsignedLeb128(1)
                             .write(I64_LOAD).writeUnsignedLeb128(3).writeUnsignedLeb128(8 * k);
-                    if (signature.params().get(k) == CanonicalAbi.Flat.I32) {
+                    if (arguments.get(k) == CanonicalAbi.Flat.I32) {
                         b.write(I32_WRAP_I64);
                     }
                 }

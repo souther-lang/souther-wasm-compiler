@@ -56,8 +56,11 @@ const OFF_META: usize = 24;
 const OFF_META_LENGTH: usize = 28;
 const OFF_MESSAGE: usize = 32;
 const OFF_MESSAGE_LENGTH: usize = 36;
-const OFF_NEXT: usize = 40;
-const RECORD: usize = 44;
+/// Whether the decoder said the issue in its own words: a word of its own, and not a message of
+/// no length, which is words that say nothing and not no words.
+const OFF_SAID: usize = 40;
+const OFF_NEXT: usize = 44;
+const RECORD: usize = 48;
 
 /// Forgets what an earlier call found.
 ///
@@ -90,7 +93,7 @@ pub unsafe fn issue(code: &[u8], path: u32, path_length: u32, meta: (u32, u32)) 
 /// Records one issue under a message key of its own, which says which of its code's constraints it
 /// was.
 pub unsafe fn keyed(code: &[u8], key: &[u8], path: u32, path_length: u32, meta: (u32, u32)) {
-    said(code, key, path, path_length, meta, b"");
+    record(code, key, path, path_length, meta, None);
 }
 
 /// Records one issue the decoder says in its own words: a sentence the catalog's template for its
@@ -104,6 +107,17 @@ pub unsafe fn said(
     meta: (u32, u32),
     message: &[u8],
 ) {
+    record(code, key, path, path_length, meta, Some(message));
+}
+
+unsafe fn record(
+    code: &[u8],
+    key: &[u8],
+    path: u32,
+    path_length: u32,
+    meta: (u32, u32),
+    message: Option<&[u8]>,
+) {
     let record = alloc(RECORD as u32);
     put(record, OFF_CODE, code.as_ptr() as u32);
     put(record, OFF_CODE_LENGTH, code.len() as u32);
@@ -113,8 +127,11 @@ pub unsafe fn said(
     put(record, OFF_PATH_LENGTH, path_length);
     put(record, OFF_META, meta.0);
     put(record, OFF_META_LENGTH, meta.1);
-    put(record, OFF_MESSAGE, message.as_ptr() as u32);
-    put(record, OFF_MESSAGE_LENGTH, message.len() as u32);
+    if let Some(words) = message {
+        put(record, OFF_SAID, 1);
+        put(record, OFF_MESSAGE, words.as_ptr() as u32);
+        put(record, OFF_MESSAGE_LENGTH, words.len() as u32);
+    }
     put(record, OFF_NEXT, 0);
     if FIRST == 0 {
         FIRST = record;
@@ -145,7 +162,7 @@ pub unsafe extern "C" fn __souther_issues_written() -> u64 {
         quoted(get(record, OFF_KEY), get(record, OFF_KEY_LENGTH));
         write(b",\"meta\":");
         text::push(get(record, OFF_META), get(record, OFF_META_LENGTH));
-        if get(record, OFF_MESSAGE_LENGTH) > 0 {
+        if get(record, OFF_SAID) != 0 {
             write(b",\"message\":");
             quoted(get(record, OFF_MESSAGE), get(record, OFF_MESSAGE_LENGTH));
         }
@@ -164,8 +181,8 @@ pub(crate) struct Found {
     pub code: (u32, u32),
     pub key: (u32, u32),
     pub meta: (u32, u32),
-    /// Empty where the decoder said nothing in its own words.
-    pub message: (u32, u32),
+    /// Nothing where the decoder said nothing in its own words.
+    pub message: Option<(u32, u32)>,
 }
 
 /// Every issue this call found, in the order it found them.
@@ -178,7 +195,11 @@ pub(crate) unsafe fn each(mut found: impl FnMut(u32, Found)) {
             code: (get(record, OFF_CODE), get(record, OFF_CODE_LENGTH)),
             key: (get(record, OFF_KEY), get(record, OFF_KEY_LENGTH)),
             meta: (get(record, OFF_META), get(record, OFF_META_LENGTH)),
-            message: (get(record, OFF_MESSAGE), get(record, OFF_MESSAGE_LENGTH)),
+            message: if get(record, OFF_SAID) != 0 {
+                Some((get(record, OFF_MESSAGE), get(record, OFF_MESSAGE_LENGTH)))
+            } else {
+                None
+            },
         });
         index += 1;
         record = get(record, OFF_NEXT);

@@ -50,14 +50,14 @@ use crate::descriptor::{
 };
 use crate::issues;
 use crate::json::{
-    self, TAG_AMOUNT_TEXT, TAG_ARRAY, TAG_FALSE, TAG_NULL, TAG_NUMBER, TAG_OBJECT, TAG_STRING, TAG_TRUE,
+    self, TAG_AMOUNT_TEXT, TAG_ARRAY, TAG_FALSE, TAG_NULL, TAG_OBJECT, TAG_STRING, TAG_TRUE,
 };
 use crate::value::{
     self, __souther_bool_value, __souther_int_value, __souther_list_get, __souther_list_length,
     __souther_map_key, __souther_map_length, __souther_map_value, __souther_record_get,
     __souther_string_bytes, __souther_string_length, TAG_NONE,
 };
-use crate::{abort, alloc_aligned, decimal, temporal, text, REASON_BACKEND_INVARIANT_BROKEN};
+use crate::{abort, alloc_aligned, decimal, temporal, REASON_BACKEND_INVARIANT_BROKEN};
 
 const L_SIZE: u32 = 0;
 const L_ALIGN: u32 = 4;
@@ -275,8 +275,7 @@ unsafe fn amount_cell(at: u32, length: u32) -> u32 {
 }
 
 unsafe fn integer_cell(held: i64) -> u32 {
-    let packed = json::__souther_json_write_int(held);
-    text_cell(TAG_NUMBER, packed as u32, (packed >> 32) as u32)
+    json::made_of_int(held)
 }
 
 /// What a variant's case is read as: a unit's object holding the tag alone, a shape's fields beside
@@ -515,15 +514,6 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
     match descriptor::kind(descriptor) {
         KIND_INT => core::ptr::write_unaligned(at as usize as *mut i64, __souther_int_value(cell)),
         KIND_BOOL => put_byte(at, (__souther_bool_value(cell) != 0) as u8),
-        KIND_STRING => {
-            put_word(at, __souther_string_bytes(cell));
-            put_word(at + 4, __souther_string_length(cell));
-        }
-        KIND_DECIMAL => put_text(at, decimal::external(cell)),
-        KIND_DATE => put_text(at, temporal::written_day(cell)),
-        KIND_TIME => put_text(at, temporal::written_time(cell)),
-        KIND_DATE_TIME => put_text(at, temporal::written_both(cell)),
-        KIND_INSTANT => put_text(at, temporal::written_moment(cell)),
         KIND_UNIT => put_case(at, descriptor, only(descriptor)),
         KIND_NEWTYPE => stored(__souther_record_get(cell, 0), descriptor::member(descriptor, 0), at),
         KIND_PRODUCT => {
@@ -548,6 +538,27 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
                 stored(value::__souther_held(cell), descriptor::member(descriptor, 0), at + payload(descriptor));
             }
         }
+        _ => {
+            let (pointer, length) = pointed(cell, descriptor);
+            put_word(at, pointer);
+            put_word(at + 4, length);
+        }
+    }
+}
+
+/// What a value laid out as a pointer and a length is: text, a list, a set or a map, the pointer
+/// to its bytes or to the room its elements are laid out in, and how many.
+///
+/// The one account of it, which a value laid out in memory and a value flattened into slots both
+/// take: the two differ only in where the pair is put.
+unsafe fn pointed(cell: u32, descriptor: u32) -> (u32, u32) {
+    match descriptor::kind(descriptor) {
+        KIND_STRING => (__souther_string_bytes(cell), __souther_string_length(cell)),
+        KIND_DECIMAL => copied(decimal::external(cell)),
+        KIND_DATE => copied(temporal::written_day(cell)),
+        KIND_TIME => copied(temporal::written_time(cell)),
+        KIND_DATE_TIME => copied(temporal::written_both(cell)),
+        KIND_INSTANT => copied(temporal::written_moment(cell)),
         KIND_LIST => {
             let element = descriptor::member(descriptor, 0);
             let count = __souther_list_length(cell);
@@ -555,20 +566,17 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
             for i in 0..count {
                 stored(__souther_list_get(cell, i), element, room + i * size(element));
             }
-            put_word(at, room);
-            put_word(at + 4, count);
+            (room, count)
         }
         KIND_SET => {
             let element = descriptor::member(descriptor, 0);
             let count = __souther_list_length(cell);
             let room = room_for(count, element);
-            text::begin();
             let members = value::in_written_order(cell, element);
             for k in 0..count {
                 stored(__souther_list_get(cell, members.place(k)), element, room + k * size(element));
             }
-            put_word(at, room);
-            put_word(at + 4, count);
+            (room, count)
         }
         KIND_MAP => {
             let keys = descriptor::member(descriptor, 0);
@@ -581,8 +589,7 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
                 stored(__souther_map_key(cell, i), keys, entry + key_at(descriptor));
                 stored(__souther_map_value(cell, i), values, entry + value_at(descriptor));
             }
-            put_word(at, room);
-            put_word(at + 4, count);
+            (room, count)
         }
         other => abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, other as u64, cell as u64),
     }
@@ -596,11 +603,10 @@ unsafe fn room_for(count: u32, element: u32) -> u32 {
 
 /// Text a value is written as, copied out of wherever it was written into memory of its own: the
 /// run text is written into is written over by the next one.
-unsafe fn put_text(at: u32, (text, length): (u32, u32)) {
+unsafe fn copied((text, length): (u32, u32)) -> (u32, u32) {
     let room = alloc_aligned(length, 1);
     core::ptr::copy_nonoverlapping(text as usize as *const u8, room as usize as *mut u8, length as usize);
-    put_word(at, room);
-    put_word(at + 4, length);
+    (room, length)
 }
 
 /// Writes a value flattened, into slots from `*index` on, moving `*index` past it.
@@ -641,10 +647,9 @@ unsafe fn flattened(cell: u32, descriptor: u32, slots: u32, index: &mut u32) {
         }
         // Everything else flattens to a pointer and a length, which is what it is laid out as.
         _ => {
-            let room = alloc_aligned(8, 4);
-            stored(cell, descriptor, room);
-            put_slot(slots, first, word(room) as u64);
-            put_slot(slots, first + 1, word(room + 4) as u64);
+            let (pointer, length) = pointed(cell, descriptor);
+            put_slot(slots, first, pointer as u64);
+            put_slot(slots, first + 1, length as u64);
         }
     }
     *index = first + flats(descriptor);
@@ -729,8 +734,7 @@ pub unsafe extern "C" fn __souther_typed_refused(result: u32) -> u32 {
 
 /// The issues this call found, as a list of the records a typed caller reads.
 unsafe fn laid_out_issues(protocol: u32) -> (u32, u32) {
-    let mut count = 0;
-    issues::each(|_, _| count += 1);
+    let count = issues::__souther_issues_count();
     let size = word(protocol + P_ISSUE_SIZE);
     let room = alloc_aligned(crate::room(0, count, size), word(protocol + P_ISSUE_ALIGN));
     issues::each(|i, found| {
@@ -744,10 +748,10 @@ unsafe fn laid_out_issues(protocol: u32) -> (u32, u32) {
         put(P_ISSUE_KEY, found.key);
         put(P_ISSUE_META, found.meta);
         let message = at + word(protocol + P_ISSUE_MESSAGE);
-        if found.message.1 > 0 {
+        if let Some((said, said_length)) = found.message {
             put_protocol_case(message, protocol, P_OPTION_WIDTH, P_SOME);
-            put_word(message + word(protocol + P_MESSAGE_PAYLOAD), found.message.0);
-            put_word(message + word(protocol + P_MESSAGE_PAYLOAD) + 4, found.message.1);
+            put_word(message + word(protocol + P_MESSAGE_PAYLOAD), said);
+            put_word(message + word(protocol + P_MESSAGE_PAYLOAD) + 4, said_length);
         }
     });
     (room, count)

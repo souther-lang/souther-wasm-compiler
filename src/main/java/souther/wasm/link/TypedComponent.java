@@ -42,8 +42,8 @@ public final class TypedComponent {
      * @param offering what the program offers and has to be given, typed
      * @return the component
      */
-    public static byte[] around(byte[] core, TypedOffering offering) {
-        return new TypedComponent.Writing(offering).written(core);
+    public static byte[] around(byte[] core, TypedBuild build) {
+        return new TypedComponent.Writing(build).written(core);
     }
 
     /** The interface a package holds for one module, versioned. */
@@ -54,6 +54,7 @@ public final class TypedComponent {
     /** One component being written, and what each of its index spaces holds so far. */
     private static final class Writing {
 
+        private final TypedBuild build;
         private final TypedOffering offering;
         private final CanonicalAbi abi;
         private final ComponentWriter out = new ComponentWriter();
@@ -65,15 +66,15 @@ public final class TypedComponent {
         private int components;
         private int coreFuncs;
 
-        Writing(TypedOffering offering) {
-            this.offering = offering;
-            this.abi = CanonicalAbi.of(offering);
+        Writing(TypedBuild build) {
+            this.build = build;
+            this.offering = build.offering();
+            this.abi = build.abi();
         }
 
         byte[] written(byte[] core) {
-            List<CanonicalAbi.CoreSignature> lowered = new ArrayList<>();
-            offering.reached().values().forEach(functions -> functions.values().forEach(each ->
-                    lowered.add(abi.lowered(parameters(each), each.answers()))));
+            List<CanonicalAbi.CoreSignature> lowered = build.reaches().stream()
+                    .map(TypedBuild.Reach::lowered).toList();
             int reaches = lowered.size();
 
             Component.instantiated(out, core, reaches,
@@ -85,14 +86,11 @@ public final class TypedComponent {
             int realloc = coreFunc(taken, RuntimeAbi.CANONICAL_REALLOC);
             int afterwards = coreFunc(taken, Component.Lifted.POST_RETURN);
             Map<String, Integer> lifted = new LinkedHashMap<>();
-            offering.behaviors().forEach((module, functions) -> functions.keySet().forEach(name -> {
-                String export = Component.Lifted.typed(module + "." + name);
-                lifted.put(export, coreFunc(taken, export));
-            }));
-            offering.readable().forEach((module, functions) -> functions.keySet().forEach(name -> {
-                String export = Component.Lifted.typedReading(module + "." + name);
-                lifted.put(export, coreFunc(taken, export));
-            }));
+            // Each by the name the core module exported it under, which the build says.
+            build.lifted().values().forEach(names -> names.values().forEach(export ->
+                    lifted.put(export, coreFunc(taken, export))));
+            build.readings().values().forEach(names -> names.values().forEach(export ->
+                    lifted.put(export, coreFunc(taken, export))));
             if (reaches > 0) {
                 taken.add(ComponentWriter.aliasCoreTable(HOST, ReachingOut.TABLE));
             }
@@ -105,12 +103,12 @@ public final class TypedComponent {
                 reachOut(memory, realloc);
             }
             offering.behaviors().forEach((module, functions) -> offer(
-                    TypedOffering.PROGRAM, module, functions, name -> lifted.get(
-                            Component.Lifted.typed(module + "." + name)),
+                    TypedOffering.PROGRAM, module, functions,
+                    name -> lifted.get(build.lifted().get(module).get(name)),
                     memory, realloc, afterwards));
             offering.readable().forEach((module, functions) -> offer(
-                    TypedOffering.DECODE, module, functions, name -> lifted.get(
-                            Component.Lifted.typedReading(module + "." + name)),
+                    TypedOffering.DECODE, module, functions,
+                    name -> lifted.get(build.readings().get(module).get(name)),
                     memory, realloc, afterwards));
             out.rawSection(ComponentWriter.SEC_EXPORT, ComponentWriter.vec(exports));
             return out.toByteArray();
@@ -205,7 +203,7 @@ public final class TypedComponent {
          * the lowerings.
          */
         private void reachOut(int memory, int realloc) {
-            List<Integer> asked = new ArrayList<>();
+            Map<String, Integer> asked = new LinkedHashMap<>();
             for (Map.Entry<String, Map<String, TypedOffering.Function>> module
                     : offering.reached().entrySet()) {
                 Space.Inside inside = new Space.Inside();
@@ -224,15 +222,19 @@ public final class TypedComponent {
                                 interfaceOf(TypedOffering.REACHED, module.getKey()), type))));
                 int instance = instances++;
                 List<byte[]> aliases = new ArrayList<>();
-                for (TypedOffering.Function function : module.getValue().values()) {
-                    aliases.add(ComponentWriter.aliasInstanceFunc(instance, function.name()));
-                    asked.add(funcs++);
+                for (Map.Entry<String, TypedOffering.Function> function
+                        : module.getValue().entrySet()) {
+                    aliases.add(ComponentWriter.aliasInstanceFunc(
+                            instance, function.getValue().name()));
+                    asked.put(module.getKey() + "\0" + function.getKey(), funcs++);
                 }
                 out.rawSection(ComponentWriter.SEC_ALIAS, ComponentWriter.vec(aliases));
             }
+            // Lowered by the number a call out carries for each, which is the table's order.
             List<byte[]> lowers = new ArrayList<>();
             List<Integer> lowered = new ArrayList<>();
-            for (int func : asked) {
+            for (TypedBuild.Reach reach : build.reaches()) {
+                int func = asked.get(reach.module() + "\0" + reach.behavior());
                 lowers.add(ComponentWriter.canonLowerMemoryReallocUtf8(func, memory, realloc));
                 lowered.add(coreFuncs++);
             }

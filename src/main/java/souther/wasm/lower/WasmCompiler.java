@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import org.jspecify.annotations.Nullable;
 import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.core.BlockReaches;
@@ -47,6 +48,7 @@ import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
 import souther.wasm.link.Offering;
+import souther.wasm.link.TypedBuild;
 import souther.wasm.link.TypedComponent;
 import souther.wasm.link.TypedOffering;
 import souther.wasm.link.TypedWitText;
@@ -94,7 +96,7 @@ public final class WasmCompiler {
      * @return the linked module
      */
     public static byte[] compile(CheckedProgram program, byte[] runtime) {
-        return Linker.link(written(program, runtime, Lifting.NONE));
+        return Linker.link(written(program, runtime, Lifting.NONE, null, null));
     }
 
     /**
@@ -105,7 +107,7 @@ public final class WasmCompiler {
      * @return the linked module, with all of the runtime in it
      */
     public static byte[] unshaken(CheckedProgram program) {
-        return Linker.unshaken(written(program, runtimeModule(), Lifting.NONE));
+        return Linker.unshaken(written(program, runtimeModule(), Lifting.NONE, null, null));
     }
 
     /**
@@ -131,7 +133,7 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(Linker.link(written(program, runtime, Lifting.JSON)),
+        return Component.around(Linker.link(written(program, runtime, Lifting.JSON, null, null)),
                 offering(program));
     }
 
@@ -144,7 +146,32 @@ public final class WasmCompiler {
      * @return the linked core module
      */
     public static byte[] typedCore(CheckedProgram program) {
-        return Linker.link(written(program, runtimeModule(), Lifting.TYPED));
+        return compiledTyped(program).core();
+    }
+
+    /**
+     * A typed compile: the core module, and what it settled that what wraps it reads.
+     *
+     * @param core the linked core module
+     * @param build the offering, its layout, and the name and core type of each function the
+     *     module was written with
+     */
+    public record TypedCompiled(byte[] core, TypedBuild build) {
+    }
+
+    /**
+     * Compiles a checked program typed, once, for its core module and for the component and the
+     * interfaces written around it.
+     *
+     * @param program what a Souther compile checked
+     * @return the core module and what it settled
+     */
+    public static TypedCompiled compiledTyped(CheckedProgram program) {
+        WitTypes typed = WitTypes.read(program);
+        TypedBuild.Recording recording = new TypedBuild.Recording(typed.offering());
+        byte[] core = Linker.link(written(program, runtimeModule(), Lifting.TYPED, typed,
+                recording));
+        return new TypedCompiled(core, recording.build());
     }
 
     /**
@@ -155,7 +182,8 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsTypedComponent(CheckedProgram program) {
-        return TypedComponent.around(typedCore(program), typedOffering(program));
+        TypedCompiled compiled = compiledTyped(program);
+        return TypedComponent.around(compiled.core(), compiled.build());
     }
 
     /**
@@ -287,9 +315,13 @@ public final class WasmCompiler {
         TYPED
     }
 
-    private static WasmFragment written(CheckedProgram program, byte[] runtime, Lifting lifting) {
-        WitTypes typed = lifting == Lifting.TYPED ? WitTypes.read(program) : null;
-        CanonicalAbi abi = typed == null ? null : CanonicalAbi.of(typed.offering());
+    /**
+     * @param typed what each type crosses typed as, for a typed compile, and nothing otherwise
+     * @param recording where what the typed compile settles is written down, beside {@code typed}
+     */
+    private static WasmFragment written(CheckedProgram program, byte[] runtime, Lifting lifting,
+            @Nullable WitTypes typed, TypedBuild.@Nullable Recording recording) {
+        CanonicalAbi abi = recording == null ? null : recording.abi();
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
         Runtime calls = new Runtime(plan);
@@ -383,7 +415,7 @@ public final class WasmCompiler {
         for (Crossing each : injected) {
             fragment.write(each.index(), typed == null
                     ? emitter.reachingOut(each)
-                    : typedReachingOut(fragment, emitter, shapes, abi, typed.offering(), each));
+                    : typedReachingOut(fragment, emitter, shapes, recording, each));
         }
         for (Composed each : composed) {
             fragment.write(each.index(), emitter.composing(each));
@@ -430,7 +462,7 @@ public final class WasmCompiler {
             }
             case JSON -> liftable(fragment, calls, program, decodable);
             case TYPED -> typedLiftable(fragment, calls, emitter, shapes, program, decodable,
-                    typed.offering(), abi, reached);
+                    recording, reached);
         }
         fragment.offers(Surface.of(program, decodable, reachOut));
         // Last of all, once nothing more is described: what each descriptor's reader, writer and
@@ -503,7 +535,9 @@ public final class WasmCompiler {
      */
     private static void typedLiftable(WasmFragment fragment, Runtime calls, Emitter emitter,
             Descriptors shapes, CheckedProgram program, List<TypeSymbol.AtModule> decodable,
-            TypedOffering offering, CanonicalAbi abi, Map<ValueName, Integer> reached) {
+            TypedBuild.Recording recording, Map<ValueName, Integer> reached) {
+        TypedOffering offering = recording.offering();
+        CanonicalAbi abi = recording.abi();
         int ended = fragment.endsCallsByThrowing();
         int protocol = fragment.place(protocolOf(abi));
         for (CheckedModule module : program.modules()) {
@@ -521,8 +555,10 @@ public final class WasmCompiler {
                 int inner = fragment.define(lifted.type(), emitter.typedCrossing(
                         behavior, reached.get(behavior.name()), lifted.signature(),
                         lifted.arguments(), lifted.result()));
-                fragment.export(Component.Lifted.typed(exportName(behavior.name())),
+                String export = Component.Lifted.typed(exportName(behavior.name()));
+                fragment.export(export,
                         fragment.define(lifted.type(), typedOutcomeOf(calls, ended, lifted, inner)));
+                recording.lifted(module.name(), behavior.name().name(), export);
             }
         }
         for (TypeSymbol.AtModule type : decodable) {
@@ -532,8 +568,10 @@ public final class WasmCompiler {
             Typed lifted = Typed.of(fragment, abi, function, List.of(descriptor), protocol);
             int inner = fragment.define(lifted.type(), emitter.typedReading(
                     descriptor, lifted.signature(), lifted.arguments(), lifted.result()));
-            fragment.export(Component.Lifted.typedReading(readAs(type)),
+            String export = Component.Lifted.typedReading(readAs(type));
+            fragment.export(export,
                     fragment.define(lifted.type(), typedOutcomeOf(calls, ended, lifted, inner)));
+            recording.read(type.module(), type.name(), export);
         }
         exportPostReturn(fragment, calls);
     }
@@ -559,17 +597,7 @@ public final class WasmCompiler {
                     .map(WitType.Field::type).toList();
             WitType answered = function.refusing();
             CanonicalAbi.CoreSignature signature = abi.lifted(parameters, answered);
-            List<Integer> offsets = signature.argumentsInMemory()
-                    ? abi.offsets(new WitType.TupleOf(parameters))
-                    : java.util.Collections.nCopies(parameters.size(), 0);
-            ByteArrayOutputStream record = new ByteArrayOutputStream();
-            WasmWriter out = new WasmWriter(record)
-                    .writeLittleEndian4(parameters.size())
-                    .writeLittleEndian4(signature.argumentsInMemory() ? 1 : 0);
-            for (int i = 0; i < parameters.size(); i++) {
-                out.writeLittleEndian4(descriptors.get(i)).writeLittleEndian4(offsets.get(i));
-            }
-            int arguments = fragment.place(record.toByteArray());
+            int arguments = argumentsRecord(fragment, abi, parameters, descriptors, signature);
             // Where the err of a call that ended is written: static, and not the arena's, since the
             // call may have ended for want of room. As much of the result as its err reaches, and
             // placed for each function, so its size is the layout's and not a guess at the largest.
@@ -594,44 +622,58 @@ public final class WasmCompiler {
     }
 
     /**
-     * What stands for a behavior the program reaches out for, typed: its arguments written as the
-     * function a component imports for it takes them, and what that answered read as the
-     * behavior's answer.
+     * Places a typed function's arguments record ({@code runtime/src/typed.rs}): how many, whether
+     * they lie in memory as the record of them, and each one's descriptor and where it lies in
+     * that record. The one writing of it, for a function lifted and for a call out lowered alike.
      */
-    private static byte[] typedReachingOut(WasmFragment fragment, Emitter emitter,
-            Descriptors shapes, CanonicalAbi abi, TypedOffering offering, Crossing crossing) {
-        CheckedBehavior behavior = crossing.behavior();
-        TypedOffering.Function function =
-                offering.reached().get(behavior.name().module()).get(behavior.name().name());
-        List<WitType> parameters = function.parameters().stream()
-                .map(WitType.Field::type).toList();
-        CanonicalAbi.CoreSignature signature = abi.lowered(parameters, function.answers());
-        WitType together = new WitType.TupleOf(parameters);
+    private static int argumentsRecord(WasmFragment fragment, CanonicalAbi abi,
+            List<WitType> parameters, List<Integer> descriptors,
+            CanonicalAbi.CoreSignature signature) {
         List<Integer> offsets = signature.argumentsInMemory()
-                ? abi.offsets(together)
+                ? abi.offsets(new WitType.TupleOf(parameters))
                 : java.util.Collections.nCopies(parameters.size(), 0);
         ByteArrayOutputStream record = new ByteArrayOutputStream();
         WasmWriter out = new WasmWriter(record)
                 .writeLittleEndian4(parameters.size())
                 .writeLittleEndian4(signature.argumentsInMemory() ? 1 : 0);
-        List<souther.compiler.types.Type> takes = behavior.signature().takes();
-        for (int i = 0; i < takes.size(); i++) {
-            out.writeLittleEndian4(shapes.toCross(shapes.of(takes.get(i))))
-                    .writeLittleEndian4(offsets.get(i));
+        for (int i = 0; i < parameters.size(); i++) {
+            out.writeLittleEndian4(descriptors.get(i)).writeLittleEndian4(offsets.get(i));
         }
-        int arguments = fragment.place(record.toByteArray());
+        return fragment.place(record.toByteArray());
+    }
+
+    /**
+     * What stands for a behavior the program reaches out for, typed: its arguments written as the
+     * function a component imports for it takes them, and what that answered read as the
+     * behavior's answer.
+     */
+    private static byte[] typedReachingOut(WasmFragment fragment, Emitter emitter,
+            Descriptors shapes, TypedBuild.Recording recording, Crossing crossing) {
+        CanonicalAbi abi = recording.abi();
+        CheckedBehavior behavior = crossing.behavior();
+        TypedOffering.Function function = recording.offering().reached()
+                .get(behavior.name().module()).get(behavior.name().name());
+        List<WitType> parameters = function.parameters().stream()
+                .map(WitType.Field::type).toList();
+        CanonicalAbi.CoreSignature signature = abi.lowered(parameters, function.answers());
+        recording.reached(crossing.ordinal(), behavior.name().module(), behavior.name().name(),
+                signature);
+        List<Integer> descriptors = new ArrayList<>();
+        for (souther.compiler.types.Type each : behavior.signature().takes()) {
+            descriptors.add(shapes.toCross(shapes.of(each)));
+        }
+        int arguments = argumentsRecord(fragment, abi, parameters, descriptors, signature);
         ByteArrayOutputStream answered = new ByteArrayOutputStream();
         new WasmWriter(answered)
                 .writeLittleEndian4(shapes.toCross(shapes.toRead(
                         shapes.of(behavior.signature().answers()))))
                 .writeLittleEndian4(signature.answerInMemory() ? 1 : 0);
         int answer = fragment.place(answered.toByteArray());
-        int flats = 0;
-        for (WitType each : parameters) {
-            flats += abi.flatten(each).size();
-        }
+        // As many slots as the lowering takes core values for its arguments, which is what the
+        // function filling the table loads out of them, or room for the record of them.
         int argumentSlots = signature.argumentsInMemory()
-                ? (abi.size(together) + 7) / 8 : flats;
+                ? (abi.size(new WitType.TupleOf(parameters)) + 7) / 8
+                : signature.argumentValues();
         int answerSlots = signature.answerInMemory()
                 ? (abi.size(function.answers()) + 7) / 8 : 1;
         return emitter.typedReachingOut(crossing, arguments, answer, argumentSlots, answerSlots);
