@@ -322,6 +322,17 @@ boundary writes them as, since WIT has no exact decimal and no local date. A typ
 is refused where it would cross, because WIT declares no recursive type; one that no boundary names
 is not.
 
+Two things a Souther type says WIT does not. A newtype is a `type` naming what it wraps, and a WIT
+`type` is another name for the same type rather than a type of its own: `employee-id` and
+`product-id` over `string` are one type to WIT and to `wac`, and a caller handing one where the
+other goes is told nothing by either. Souther holds each to its own rules when it reads it, and
+does not know which of the two the caller meant where both rules hold. And an interface is named
+after its module, `souther:typed-types/customer@0.1.0`, which says nothing of which program the
+module is from: two programs built apart that each declare a `customer` module with types of its
+own offer interfaces of one name that are not one interface. What the typed interfaces are for is
+composing components built from one model; naming a model in them is a question of its own, and
+not one the version answers, which is how a value crosses and not whose it is.
+
 WIT says the shape of a value and nothing of its rules. What a typed function is handed is made
 into the document the JSON boundary would have parsed and read by the same readers, so a newtype's
 rules, a set's distinct members and the text of an amount or a date are held to as they are there,

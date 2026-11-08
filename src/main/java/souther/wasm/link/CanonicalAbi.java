@@ -76,24 +76,18 @@ public final class CanonicalAbi {
         }
     }
 
-    private final Map<String, Map<String, WitType.Declaration>> declared;
+    private final TypedOffering offering;
     private final Map<WitType, Integer> sizes = new HashMap<>();
     private final Map<WitType, Integer> alignments = new HashMap<>();
     private final Map<WitType, List<Flat>> flats = new HashMap<>();
 
-    private CanonicalAbi(Map<String, Map<String, WitType.Declaration>> declared) {
-        this.declared = declared;
+    private CanonicalAbi(TypedOffering offering) {
+        this.offering = offering;
     }
 
     /** The layout of everything an offering's functions name. */
     public static CanonicalAbi of(TypedOffering offering) {
-        Map<String, Map<String, WitType.Declaration>> declared = new HashMap<>();
-        offering.types().forEach((module, declarations) -> {
-            Map<String, WitType.Declaration> byName = new HashMap<>();
-            declarations.forEach(each -> byName.put(each.name(), each));
-            declared.put(module, byName);
-        });
-        return new CanonicalAbi(declared);
+        return new CanonicalAbi(offering);
     }
 
     /** The core function a typed one a component exports is lifted from. */
@@ -228,6 +222,32 @@ public final class CanonicalAbi {
         return casesOf(resolved(type)).size();
     }
 
+    /**
+     * Which number a case of a variant, an enum, an option or a result is: its place among the
+     * cases, an option's {@code none} and {@code some} and a result's {@code ok} and {@code err}
+     * being the cases they despecialize to.
+     */
+    public int caseNumber(WitType type, String name) {
+        Object resolved = resolved(type);
+        List<String> names = switch (resolved) {
+            case WitType.Variant variant -> variant.cases().stream().map(WitType.Case::name).toList();
+            case WitType.Enumeration enumeration -> enumeration.cases();
+            case WitType.OptionOf ignored -> List.of("none", "some");
+            case WitType.ResultOf ignored -> List.of("ok", "err");
+            default -> throw new IllegalArgumentException(type + " is not a variant");
+        };
+        int number = names.indexOf(name);
+        if (number < 0) {
+            throw new IllegalArgumentException(type + " has no case " + name);
+        }
+        return number;
+    }
+
+    /** How many bytes say which case a value of a variant, an enum, an option or a result is. */
+    public int discriminantSize(WitType type) {
+        return discriminantSize(caseCount(type));
+    }
+
     /** How many bytes say which case of a variant of this many cases a value is. */
     public static int discriminantSize(int cases) {
         if (cases <= 1 << 8) {
@@ -349,7 +369,7 @@ public final class CanonicalAbi {
     private Object resolved(WitType type) {
         WitType at = type;
         while (at instanceof WitType.Named name) {
-            WitType.Declaration declaration = declaration(name);
+            WitType.Declaration declaration = offering.declarationOf(name);
             if (declaration instanceof WitType.Alias alias) {
                 at = alias.of();
             } else {
@@ -357,23 +377,6 @@ public final class CanonicalAbi {
             }
         }
         return at;
-    }
-
-    private WitType.Declaration declaration(WitType.Named name) {
-        if (name.module() == null) {
-            for (WitType.Declaration each : TypedOffering.PROTOCOL) {
-                if (each.name().equals(name.name())) {
-                    return each;
-                }
-            }
-        } else {
-            WitType.Declaration found = declared.getOrDefault(name.module(), Map.of())
-                    .get(name.name());
-            if (found != null) {
-                return found;
-            }
-        }
-        throw new IllegalArgumentException(name + " names nothing declared");
     }
 
     private static int alignTo(int at, int alignment) {

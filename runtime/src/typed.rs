@@ -20,8 +20,13 @@
 //! +8  u32 flats             how many core values it flattens to
 //! +12 u32 discriminant      how many bytes say which case a variant is
 //! +16 u32 payload           where a variant's case lies; a map's entry's size
-//! +20 u32 per member, where it lies: a product's fields; a map's entry's key and value
+//! +20 u32 cases             how many cases a variant has
+//! +24 u32 per member, where it lies: a product's fields; a map's entry's key and value; and
+//!         which number a case is: an option's none and some, a unit's one case
 //! ```
+//!
+//! A sum's case and an enumeration's are numbered as the descriptor lists them, which is the order
+//! the checker lists them in and the typed interfaces declare them in: both read the one list.
 //!
 //! A flattened value comes in as core values spilled into eight-byte slots, one each, whatever
 //! core type each is. A variant's cases share the slots after the one saying which case it is, so
@@ -48,7 +53,8 @@ const L_ALIGN: u32 = 4;
 const L_FLATS: u32 = 8;
 const L_DISCRIMINANT: u32 = 12;
 const L_PAYLOAD: u32 = 16;
-const L_OFFSETS: u32 = 20;
+const L_CASES: u32 = 20;
+const L_OFFSETS: u32 = 24;
 
 /// What a function's arguments are, as the compiler wrote it for one function:
 ///
@@ -86,7 +92,13 @@ const R_ENDED_LENGTH: u32 = 20;
 /// +24 an issue's size  +28 its alignment
 /// +32 where its path, code, message key, meta and message lie, five words
 /// +52 where the message option's text lies
+/// +56 a result: how many bytes say its case, the case that answers, the case that refuses
+/// +68 a refusal: how many bytes say its case, the case of issues, the case of a call that ended
+/// +80 an option: how many bytes say its case, the case that holds something
 /// ```
+///
+/// Which case is which number, and in how many bytes, is the layout's as much as where a field
+/// lies, so it is here with the rest and not written down a second time below.
 const P_REFUSAL_PAYLOAD: u32 = 0;
 const P_ENDED_REASON: u32 = 4;
 const P_ENDED_INVALID: u32 = 8;
@@ -101,15 +113,20 @@ const P_ISSUE_KEY: u32 = 40;
 const P_ISSUE_META: u32 = 44;
 const P_ISSUE_MESSAGE: u32 = 48;
 const P_MESSAGE_PAYLOAD: u32 = 52;
+const P_RESULT_WIDTH: u32 = 56;
+const P_OK: u32 = 60;
+const P_ERR: u32 = 64;
+const P_REFUSAL_WIDTH: u32 = 68;
+const P_ISSUES: u32 = 72;
+const P_ENDED: u32 = 76;
+const P_OPTION_WIDTH: u32 = 80;
+const P_SOME: u32 = 84;
 
-/// The case of a `result` that answers.
-const OK: u8 = 0;
-/// The case of a `result` that refuses.
-const ERR: u8 = 1;
-/// The case of a refusal that is issues.
-const REFUSED: u8 = 0;
-/// The case of a refusal that is a call that ended.
-const ENDED: u8 = 1;
+/// Writes which case a variant laid out at `at` is, as the protocol layout says of that variant:
+/// in `width` bytes, the case at `case`.
+unsafe fn put_protocol_case(at: u32, protocol: u32, width: u32, case: u32) {
+    put_case_in(at, word(protocol + width), word(protocol + case));
+}
 
 unsafe fn word(at: u32) -> u32 {
     core::ptr::read_unaligned(at as usize as *const u32)
@@ -159,6 +176,16 @@ unsafe fn offset(descriptor: u32, index: u32) -> u32 {
     word(layout(descriptor) + L_OFFSETS + 4 * index)
 }
 
+/// The case of an option that holds nothing.
+unsafe fn none(descriptor: u32) -> u32 {
+    offset(descriptor, 0)
+}
+
+/// The case of an option that holds something.
+unsafe fn some(descriptor: u32) -> u32 {
+    offset(descriptor, 1)
+}
+
 /// Which case a variant laid out at `at` is, in as many bytes as its layout says.
 unsafe fn case_at(at: u32, descriptor: u32) -> u32 {
     let case = match word(layout(descriptor) + L_DISCRIMINANT) {
@@ -170,7 +197,12 @@ unsafe fn case_at(at: u32, descriptor: u32) -> u32 {
 }
 
 unsafe fn put_case(at: u32, descriptor: u32, case: u32) {
-    match word(layout(descriptor) + L_DISCRIMINANT) {
+    put_case_in(at, word(layout(descriptor) + L_DISCRIMINANT), case);
+}
+
+/// Writes a case in as many bytes as say which case a variant is.
+unsafe fn put_case_in(at: u32, width: u32, case: u32) {
+    match width {
         1 => put_byte(at, case as u8),
         2 => core::ptr::write_unaligned(at as usize as *mut u16, case as u16),
         _ => put_word(at, case),
@@ -180,8 +212,7 @@ unsafe fn put_case(at: u32, descriptor: u32, case: u32) {
 /// A case the Canonical ABI lifted is one of the variant's, which it checks; one past them is
 /// this runtime and the compiler disagreeing about how many there are.
 unsafe fn within(case: u32, descriptor: u32) -> u32 {
-    let cases = if descriptor::kind(descriptor) == KIND_OPTION { 2 } else { descriptor::arity(descriptor) };
-    if case >= cases {
+    if case >= word(layout(descriptor) + L_CASES) {
         abort(REASON_BACKEND_INVARIANT_BROKEN, descriptor, case as u64, 0);
     }
     case
@@ -281,7 +312,7 @@ unsafe fn loaded(at: u32, descriptor: u32) -> u32 {
         KIND_PRODUCT => fields(descriptor, |i, member| {
             let place = at + offset(descriptor, i);
             if descriptor::kind(member) == KIND_OPTION {
-                if case_at(place, member) == 0 {
+                if case_at(place, member) == none(member) {
                     return 0;
                 }
                 return loaded(place + payload(member), descriptor::member(member, 0));
@@ -297,7 +328,7 @@ unsafe fn loaded(at: u32, descriptor: u32) -> u32 {
             text_cell(TAG_STRING, name, name_length)
         }
         KIND_OPTION => {
-            if case_at(at, descriptor) == 0 {
+            if case_at(at, descriptor) == none(descriptor) {
                 json::made(TAG_NULL)
             } else {
                 loaded(at + payload(descriptor), descriptor::member(descriptor, 0))
@@ -362,7 +393,7 @@ unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32) -> u32 {
                 if descriptor::kind(member) == KIND_OPTION {
                     let past = at + flats(member);
                     let held = slot(slots, at) as u32;
-                    let value = if within(held, member) == 0 {
+                    let value = if within(held, member) == none(member) {
                         0
                     } else {
                         let mut inside = at + 1;
@@ -387,7 +418,7 @@ unsafe fn lifted(slots: u32, index: &mut u32, descriptor: u32) -> u32 {
             text_cell(TAG_STRING, name, name_length)
         }
         KIND_OPTION => {
-            if within(slot(slots, first) as u32, descriptor) == 0 {
+            if within(slot(slots, first) as u32, descriptor) == none(descriptor) {
                 json::made(TAG_NULL)
             } else {
                 let mut inside = first + 1;
@@ -449,7 +480,7 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
         KIND_TIME => put_text(at, temporal::written_time(cell)),
         KIND_DATE_TIME => put_text(at, temporal::written_both(cell)),
         KIND_INSTANT => put_text(at, temporal::written_moment(cell)),
-        KIND_UNIT => put_byte(at, 0),
+        KIND_UNIT => put_case(at, descriptor, offset(descriptor, 0)),
         KIND_NEWTYPE => stored(__souther_record_get(cell, 0), descriptor::member(descriptor, 0), at),
         KIND_PRODUCT => {
             for i in 0..descriptor::arity(descriptor) {
@@ -467,9 +498,9 @@ unsafe fn stored(cell: u32, descriptor: u32, at: u32) {
         KIND_ENUMERATION => put_case(at, descriptor, value::case_among(cell, descriptor)),
         KIND_OPTION => {
             if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
-                put_case(at, descriptor, 0);
+                put_case(at, descriptor, none(descriptor));
             } else {
-                put_case(at, descriptor, 1);
+                put_case(at, descriptor, some(descriptor));
                 stored(value::__souther_held(cell), descriptor::member(descriptor, 0), at + payload(descriptor));
             }
         }
@@ -554,12 +585,12 @@ unsafe fn flattened(cell: u32, descriptor: u32, slots: u32, index: &mut u32) {
             }
         }
         KIND_ENUMERATION => put_slot(slots, first, value::case_among(cell, descriptor) as u64),
-        KIND_UNIT => put_slot(slots, first, 0),
+        KIND_UNIT => put_slot(slots, first, offset(descriptor, 0) as u64),
         KIND_OPTION => {
             if core::ptr::read_unaligned(cell as usize as *const u32) == TAG_NONE {
-                put_slot(slots, first, 0);
+                put_slot(slots, first, none(descriptor) as u64);
             } else {
-                put_slot(slots, first, 1);
+                put_slot(slots, first, some(descriptor) as u64);
                 let mut inside = first + 1;
                 flattened(value::__souther_held(cell), descriptor::member(descriptor, 0), slots, &mut inside);
             }
@@ -632,7 +663,7 @@ unsafe fn area(result: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_typed_answered(cell: u32, descriptor: u32, result: u32) -> u32 {
     let at = area(result);
-    put_byte(at, OK);
+    put_protocol_case(at, word(result + R_PROTOCOL), P_RESULT_WIDTH, P_OK);
     stored(cell, descriptor, at + word(result + R_PAYLOAD));
     at
 }
@@ -643,8 +674,8 @@ pub unsafe extern "C" fn __souther_typed_refused(result: u32) -> u32 {
     let at = area(result);
     let protocol = word(result + R_PROTOCOL);
     let refusal = at + word(result + R_PAYLOAD);
-    put_byte(at, ERR);
-    put_byte(refusal, REFUSED);
+    put_protocol_case(at, protocol, P_RESULT_WIDTH, P_ERR);
+    put_protocol_case(refusal, protocol, P_REFUSAL_WIDTH, P_ISSUES);
     let (issues, count) = laid_out_issues(protocol);
     let place = refusal + word(protocol + P_REFUSAL_PAYLOAD);
     put_word(place, issues);
@@ -670,7 +701,7 @@ unsafe fn laid_out_issues(protocol: u32) -> (u32, u32) {
         put(P_ISSUE_META, found.meta);
         let message = at + word(protocol + P_ISSUE_MESSAGE);
         if found.message.1 > 0 {
-            put_byte(message, 1);
+            put_protocol_case(message, protocol, P_OPTION_WIDTH, P_SOME);
             put_word(message + word(protocol + P_MESSAGE_PAYLOAD), found.message.0);
             put_word(message + word(protocol + P_MESSAGE_PAYLOAD) + 4, found.message.1);
         }
@@ -694,14 +725,14 @@ pub unsafe extern "C" fn __souther_typed_ended(result: u32) -> u32 {
     core::ptr::write_bytes(at as usize as *mut u8, 0, word(result + R_ENDED_LENGTH) as usize);
     let protocol = word(result + R_PROTOCOL);
     let refusal = at + word(result + R_PAYLOAD);
-    put_byte(at, ERR);
-    put_byte(refusal, ENDED);
+    put_protocol_case(at, protocol, P_RESULT_WIDTH, P_ERR);
+    put_protocol_case(refusal, protocol, P_REFUSAL_WIDTH, P_ENDED);
     let ended = refusal + word(protocol + P_REFUSAL_PAYLOAD);
     let reason = core::ptr::read((crate::FAILURE + crate::OFF_REASON) as *const u32);
     put_word(ended + word(protocol + P_ENDED_REASON), reason);
     if reason == crate::REASON_INVALID_HOST_ANSWER {
         let option = ended + word(protocol + P_ENDED_INVALID);
-        put_byte(option, 1);
+        put_protocol_case(option, protocol, P_OPTION_WIDTH, P_SOME);
         let invalid = option + word(protocol + P_OPTION_PAYLOAD);
         let behavior = core::ptr::read_unaligned((crate::FAILURE + crate::OFF_AUX0) as *const u64);
         put_word(invalid + word(protocol + P_INVALID_BEHAVIOR), behavior as u32);

@@ -146,7 +146,10 @@ public record TypedOffering(Map<String, List<WitType.Declaration>> types,
             inner(PROGRAM, declaration);
         }
         everyNamed(declared, types, behaviors, readable, reached);
-        unrecursive(declared);
+        List<WitType> everyDeclaration = new ArrayList<>();
+        types.forEach((module, declarations) -> declarations.forEach(each ->
+                everyDeclaration.add(new WitType.Named(module, each.name()))));
+        closure(types, everyDeclaration);
 
         interfaces(PROGRAM, behaviors, true);
         interfaces(DECODE, readable, true);
@@ -156,6 +159,89 @@ public record TypedOffering(Map<String, List<WitType.Declaration>> types,
     /** The declarations of one module's types interface, or none. */
     public List<WitType.Declaration> declaredIn(String module) {
         return types.getOrDefault(module, List.of());
+    }
+
+    /**
+     * What a name names: a declaration of a module's types interface, or one of {@link #PROTOCOL}
+     * for a name the interface naming it declares itself. The one place a name is looked up, by
+     * what lays a value out and by what writes a component alike.
+     */
+    public WitType.Declaration declarationOf(WitType.Named name) {
+        return declarationIn(types, name);
+    }
+
+    private static WitType.Declaration declarationIn(Map<String, List<WitType.Declaration>> types,
+            WitType.Named name) {
+        List<WitType.Declaration> among = name.module() == null
+                ? PROTOCOL : types.getOrDefault(name.module(), List.of());
+        for (WitType.Declaration each : among) {
+            if (each.name().equals(name.name())) {
+                return each;
+            }
+        }
+        throw new IllegalArgumentException(name + " names nothing declared");
+    }
+
+    /**
+     * Every type of a module's interface what the given types name, however far down, each after
+     * every one its own declaration names: the order a component declares them in, a type being
+     * declared before anything refers to it.
+     */
+    public List<WitType.Named> closureOf(Collection<WitType> naming) {
+        return closure(types, naming);
+    }
+
+    /**
+     * The walk {@link #closureOf} answers by, over declarations by module: refusing, on the way, a
+     * declaration that holds itself however far round, which WIT declares no type as. One walk,
+     * because the order a type is declared in and whether it can be declared at all are the same
+     * question about what each declaration holds.
+     */
+    private static List<WitType.Named> closure(Map<String, List<WitType.Declaration>> types,
+            Collection<WitType> naming) {
+        List<WitType.Named> ordered = new ArrayList<>();
+        Set<WitType.Named> placed = new HashSet<>();
+        for (WitType type : naming) {
+            for (WitType.Named name : namesIn(type)) {
+                placeAfterWhatItHolds(types, name, ordered, placed, new ArrayList<>());
+            }
+        }
+        return ordered;
+    }
+
+    private static void placeAfterWhatItHolds(Map<String, List<WitType.Declaration>> types,
+            WitType.Named at, List<WitType.Named> ordered, Set<WitType.Named> placed,
+            List<WitType.Named> path) {
+        if (at.module() == null || placed.contains(at)) {
+            return;
+        }
+        int seen = path.indexOf(at);
+        if (seen >= 0) {
+            List<String> round = new ArrayList<>();
+            for (WitType.Named each : path.subList(seen, path.size())) {
+                round.add(each.module() + "." + each.name());
+            }
+            round.add(at.module() + "." + at.name());
+            throw new IllegalArgumentException("a typed interface cannot hold "
+                    + at.module() + "." + at.name() + ", which holds itself ("
+                    + String.join(" -> ", round) + "), and WIT declares no recursive type");
+        }
+        path.add(at);
+        for (WitType held : holds(declarationIn(types, at))) {
+            for (WitType.Named inner : namesIn(held)) {
+                placeAfterWhatItHolds(types, inner, ordered, placed, path);
+            }
+        }
+        path.removeLast();
+        placed.add(at);
+        ordered.add(at);
+    }
+
+    /** Every name a type writes, wherever in it a name stands, in the order they stand. */
+    public static List<WitType.Named> namesIn(WitType type) {
+        List<WitType.Named> found = new ArrayList<>();
+        named(type, found::add);
+        return found;
     }
 
     /**
@@ -303,47 +389,6 @@ public record TypedOffering(Map<String, List<WitType.Declaration>> types,
                 }
             });
         }
-    }
-
-    /**
-     * Refuses a declaration that holds itself, however far round: WIT declares no recursive type.
-     */
-    private static void unrecursive(Map<String, Map<String, WitType.Declaration>> declared) {
-        Set<WitType.Named> done = new HashSet<>();
-        for (Map.Entry<String, Map<String, WitType.Declaration>> module : declared.entrySet()) {
-            for (String name : module.getValue().keySet()) {
-                visit(declared, new WitType.Named(module.getKey(), name), new ArrayList<>(), done);
-            }
-        }
-    }
-
-    private static void visit(Map<String, Map<String, WitType.Declaration>> declared,
-            WitType.Named at, List<WitType.Named> path, Set<WitType.Named> done) {
-        if (done.contains(at)) {
-            return;
-        }
-        int seen = path.indexOf(at);
-        if (seen >= 0) {
-            List<String> round = new ArrayList<>();
-            for (WitType.Named each : path.subList(seen, path.size())) {
-                round.add(each.module() + "." + each.name());
-            }
-            round.add(at.module() + "." + at.name());
-            throw new IllegalArgumentException("a typed interface cannot hold "
-                    + at.module() + "." + at.name() + ", which holds itself ("
-                    + String.join(" -> ", round) + "), and WIT declares no recursive type");
-        }
-        path.add(at);
-        WitType.Declaration declaration = declared.get(at.module()).get(at.name());
-        for (WitType held : holds(declaration)) {
-            named(held, next -> {
-                if (next.module() != null) {
-                    visit(declared, next, path, done);
-                }
-            });
-        }
-        path.removeLast();
-        done.add(at);
     }
 
     /** The names given within one scope, refusing one given twice and one WIT does not write. */

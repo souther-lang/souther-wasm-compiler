@@ -187,52 +187,16 @@ public final class TypedComponent {
 
         /** A module's declarations, each after the ones of the module it names. */
         private List<WitType.Declaration> inModuleOrder(String module) {
-            Map<String, WitType.Declaration> byName = new LinkedHashMap<>();
-            offering.declaredIn(module).forEach(each -> byName.put(each.name(), each));
+            List<WitType> declaredHere = new ArrayList<>();
+            offering.declaredIn(module).forEach(each ->
+                    declaredHere.add(new WitType.Named(module, each.name())));
             List<WitType.Declaration> ordered = new ArrayList<>();
-            Set<String> placed = new HashSet<>();
-            for (WitType.Declaration each : byName.values()) {
-                placeAfterWhatItHolds(module, each, byName, ordered, placed);
+            for (WitType.Named name : offering.closureOf(declaredHere)) {
+                if (module.equals(name.module())) {
+                    ordered.add(offering.declarationOf(name));
+                }
             }
             return ordered;
-        }
-
-        private void placeAfterWhatItHolds(String module, WitType.Declaration declaration,
-                Map<String, WitType.Declaration> byName, List<WitType.Declaration> ordered,
-                Set<String> placed) {
-            if (!placed.add(declaration.name())) {
-                return;
-            }
-            for (WitType held : TypedOffering.holds(declaration)) {
-                for (WitType.Named name : namesIn(held)) {
-                    if (module.equals(name.module()) && byName.containsKey(name.name())) {
-                        placeAfterWhatItHolds(module, byName.get(name.name()), byName, ordered,
-                                placed);
-                    }
-                }
-            }
-            ordered.add(declaration);
-        }
-
-        private static List<WitType.Named> namesIn(WitType type) {
-            List<WitType.Named> found = new ArrayList<>();
-            collect(type, found);
-            return found;
-        }
-
-        private static void collect(WitType type, List<WitType.Named> found) {
-            switch (type) {
-                case WitType.Primitive ignored -> {
-                }
-                case WitType.ListOf list -> collect(list.element(), found);
-                case WitType.OptionOf option -> collect(option.present(), found);
-                case WitType.ResultOf result -> {
-                    collect(result.ok(), found);
-                    collect(result.err(), found);
-                }
-                case WitType.TupleOf tuple -> tuple.members().forEach(each -> collect(each, found));
-                case WitType.Named name -> found.add(name);
-            }
         }
 
         /**
@@ -362,9 +326,9 @@ public final class TypedComponent {
                 functions.forEach(each -> naming.addAll(TypedOffering.holds(each)));
 
                 Space.Within imported = new Space.Within(this);
-                for (WitType.Named name : closure(naming)) {
+                for (WitType.Named name : writing.offering.closureOf(naming)) {
                     imported.name(name, importType(
-                            writing.definition(writing.declarationOf(name), imported),
+                            writing.definition(writing.offering.declarationOf(name), imported),
                             writing.declared.get(name)));
                 }
                 for (WitType.Declaration declaration : TypedOffering.PROTOCOL) {
@@ -458,40 +422,6 @@ public final class TypedComponent {
                 });
             }
 
-            /**
-             * Every type of the model what the functions name holds, however far down, each
-             * after what its own declaration names.
-             */
-            private List<WitType.Named> closure(List<WitType> naming) {
-                List<WitType.Named> ordered = new ArrayList<>();
-                for (WitType type : naming) {
-                    for (WitType.Named name : Writing.namesIn(type)) {
-                        reach(name, ordered);
-                    }
-                }
-                return ordered;
-            }
-
-            private void reach(WitType.Named name, List<WitType.Named> ordered) {
-                if (name.module() == null || ordered.contains(name)) {
-                    return;
-                }
-                for (WitType held : TypedOffering.holds(writing.declarationOf(name))) {
-                    for (WitType.Named inner : Writing.namesIn(held)) {
-                        reach(inner, ordered);
-                    }
-                }
-                ordered.add(name);
-            }
-        }
-
-        private WitType.Declaration declarationOf(WitType.Named name) {
-            for (WitType.Declaration each : offering.declaredIn(name.module())) {
-                if (each.name().equals(name.name())) {
-                    return each;
-                }
-            }
-            throw new IllegalStateException(name + " is declared nowhere");
         }
 
         private byte[] functionType(TypedOffering.Function function, WitType answers, Space space) {

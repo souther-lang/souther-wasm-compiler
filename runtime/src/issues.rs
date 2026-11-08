@@ -210,26 +210,25 @@ unsafe fn put(record: u32, offset: usize, value: u32) {
 /// raised while a document is being read, and what it says may be a value written out for it — the
 /// duplicates a list held — which is written through that run. The two must not share a buffer.
 pub mod meta {
-    use crate::alloc;
+    use crate::text::Run;
 
-    static mut AT: u32 = 0;
-    static mut WRITTEN: u32 = 0;
-    static mut ROOM: u32 = 0;
+    static mut RUN: Run = Run::EMPTY;
     static mut ENTRIES: u32 = 0;
+
+    /// The object being written, which only this crate's one thread writes.
+    unsafe fn run() -> &'static mut Run {
+        &mut *core::ptr::addr_of_mut!(RUN)
+    }
 
     /// Forgets the object being written, as the arena it lives in is popped.
     pub(crate) unsafe fn forget() {
-        AT = 0;
-        WRITTEN = 0;
-        ROOM = 0;
+        *run() = Run::EMPTY;
         ENTRIES = 0;
     }
 
     /// Starts an object.
     pub unsafe fn begin() {
-        AT = alloc(64);
-        WRITTEN = 0;
-        ROOM = 64;
+        run().begin(64);
         ENTRIES = 0;
         put(b"{");
     }
@@ -243,7 +242,7 @@ pub mod meta {
     /// Ends the object, answering where it is and how long.
     pub unsafe fn end() -> (u32, u32) {
         put(b"}");
-        (AT, WRITTEN)
+        run().ended()
     }
 
     /// An entry whose value is text, quoted as JSON writes it.
@@ -316,16 +315,6 @@ pub mod meta {
     }
 
     unsafe fn push(from: u32, length: u32) {
-        if WRITTEN + length > ROOM {
-            let wanted = crate::room(0, crate::together(WRITTEN, length), 2);
-            let wider = alloc(wanted);
-            if WRITTEN > 0 {
-                core::ptr::copy_nonoverlapping(AT as *const u8, wider as *mut u8, WRITTEN as usize);
-            }
-            AT = wider;
-            ROOM = wanted;
-        }
-        core::ptr::copy_nonoverlapping(from as *const u8, (AT + WRITTEN) as *mut u8, length as usize);
-        WRITTEN += length;
+        run().push(from, length);
     }
 }

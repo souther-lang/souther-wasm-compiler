@@ -657,7 +657,19 @@ public final class WasmCompiler {
                 .writeLittleEndian4(abi.size(issue))
                 .writeLittleEndian4(abi.alignment(issue));
         abi.offsets(issue).forEach(out::writeLittleEndian4);
-        out.writeLittleEndian4(abi.payloadOffset(new WitType.OptionOf(WitType.STRING)));
+        WitType option = new WitType.OptionOf(WitType.STRING);
+        // Any result: which case answers and which refuses is the Canonical ABI's, whatever the
+        // answer is, and so is how many bytes say it.
+        WitType result = new WitType.ResultOf(WitType.BOOL, refusal);
+        out.writeLittleEndian4(abi.payloadOffset(option))
+                .writeLittleEndian4(abi.discriminantSize(result))
+                .writeLittleEndian4(abi.caseNumber(result, "ok"))
+                .writeLittleEndian4(abi.caseNumber(result, "err"))
+                .writeLittleEndian4(abi.discriminantSize(refusal))
+                .writeLittleEndian4(abi.caseNumber(refusal, "issues"))
+                .writeLittleEndian4(abi.caseNumber(refusal, TypedOffering.ENDED))
+                .writeLittleEndian4(abi.discriminantSize(option))
+                .writeLittleEndian4(abi.caseNumber(option, "some"));
         return table.toByteArray();
     }
 

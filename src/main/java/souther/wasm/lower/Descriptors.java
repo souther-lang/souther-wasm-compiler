@@ -702,9 +702,10 @@ final class Descriptors {
     /**
      * Places where a value of a descriptor's type lies when it crosses typed, as the Canonical ABI
      * lays out what the type crosses as ({@code runtime/src/typed.rs}): its size, alignment and
-     * how many core values it flattens to; for a variant, how wide its case is and where what the
-     * case carries lies; for a product, where each field lies; for a map, how wide an entry is
-     * and where its key and its value lie.
+     * how many core values it flattens to; for a variant, how wide its case is, where what the
+     * case carries lies and how many cases it has, and for an option and a unit which number each
+     * of its cases is; for a product, where each field lies; for a map, how wide an entry is and
+     * where its key and its value lie.
      *
      * <p>Worked out by {@link CanonicalAbi} and nowhere here, from the WIT type the program's
      * typed interfaces say the type crosses as.
@@ -719,12 +720,20 @@ final class Descriptors {
         WitType type = typed.types().apply(origin);
         int discriminant = 0;
         int payload = 0;
+        int cases = 0;
         List<Integer> offsets = List.of();
         switch (kind) {
             case KIND_PRODUCT -> offsets = abi.offsets(type);
             case KIND_SUM, KIND_ENUMERATION, KIND_OPTION, KIND_UNIT -> {
-                discriminant = CanonicalAbi.discriminantSize(abi.caseCount(type));
+                discriminant = abi.discriminantSize(type);
                 payload = abi.payloadOffset(type);
+                cases = abi.caseCount(type);
+                if (kind == KIND_OPTION) {
+                    offsets = List.of(abi.caseNumber(type, "none"), abi.caseNumber(type, "some"));
+                } else if (kind == KIND_UNIT) {
+                    // A unit standing as a value is an enum of itself alone.
+                    offsets = List.of(abi.caseNumber(type, ((WitType.Named) type).name()));
+                }
             }
             case KIND_MAP -> {
                 WitType entry = ((WitType.ListOf) type).element();
@@ -740,7 +749,8 @@ final class Descriptors {
                 .writeLittleEndian4(abi.alignment(type))
                 .writeLittleEndian4(abi.flatten(type).size())
                 .writeLittleEndian4(discriminant)
-                .writeLittleEndian4(payload);
+                .writeLittleEndian4(payload)
+                .writeLittleEndian4(cases);
         offsets.forEach(out::writeLittleEndian4);
         return fragment.place(table.toByteArray());
     }
