@@ -143,6 +143,13 @@ jobs:
           wasm-tools component wit /tmp/asked/out.wit > /dev/null
           wasm-tools component wit /tmp/component/out.wit > /dev/null
           wasm-tools component wit /tmp/worded/out.wit > /dev/null
+          # The typed interfaces a test holds to their version are WIT a component can be made to,
+          # every form a value crosses in among them.
+          typed=src/test/resources/souther/wasm/lower/souther-typed-0.1.0.wit
+          wasm-tools component wit "$typed" > /dev/null
+          wasm-tools component embed --dummy "$typed" -o /tmp/typed-core.wasm
+          wasm-tools component new /tmp/typed-core.wasm -o /tmp/typed.wasm
+          wasm-tools validate --features all /tmp/typed.wasm
 
       # Validating says each index names something of the right type, and not that a function
       # lifts the right one: every function here takes a string and answers the same result, so a lift

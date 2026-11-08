@@ -449,7 +449,7 @@ public final class Component {
         return READ_UNDER + writable(module);
     }
 
-    private static String writable(String module) {
+    static String writable(String module) {
         String held = interfaceName(module.replace('.', '-'));
         if (!WRITABLE.matcher(held).matches()) {
             throw new IllegalArgumentException(module + " comes to " + held

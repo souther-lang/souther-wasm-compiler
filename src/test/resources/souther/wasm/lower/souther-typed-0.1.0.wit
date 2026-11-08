@@ -1,0 +1,84 @@
+// What a Souther program offers, typed. A behavior takes its arguments as the types
+// its signature names and answers the type it answers, as the ok of a result. Its err
+// is a refusal: issues, where what it was handed is of the right shape and breaks a
+// rule Souther holds the value to, each naming where in the arguments it is; or ended,
+// a call the runtime ended, with the reason a core module's abort record holds. A
+// function of souther:typed-decode takes one value of its type and answers it back,
+// or the same refusal. What a program reaches out for answers its behavior's type, and
+// an answer that breaks one of the type's rules ends the call with reason 13, whose
+// invalid-answer names the behavior and says what is wrong as issues.
+//
+// An amount and a date cross as the text the JSON boundary writes them as, and a map
+// as a list of its entries. An issue's meta is JSON text: what it holds depends on its
+// code.
+
+package root:component;
+
+world program {
+  import souther:typed-types/%every@0.1.0;
+  import souther:typed-types/%lib-rates@0.1.0;
+  import souther:typed-reached/%every@0.1.0;
+  export souther:typed-program/%every@0.1.0;
+  export souther:typed-decode/%every@0.1.0;
+}
+
+package souther:typed-types@0.1.0 {
+  interface %every {
+    variant %pick-result { %red, %green, %int(s64), %missing }
+    record %wide { %code: %code, %note: option<string>, %notes: list<option<string>>, %tags: list<string>, %by-code: list<tuple<%code, s64>>, %by-day: list<tuple<string, option<string>>>, %on: string, %at: string, %stamped: string, %moment: string, %flag: bool, %amount: string, %shape: %shape, %colour: %colour }
+    type %code = string;
+    record %point { %x: s64 }
+    record %line { %from: %point }
+    enum %nothing { %nothing }
+    variant %shape { %point(%point), %line(%line), %code(%code), %nothing }
+    enum %colour { %red, %green }
+    enum %missing { %missing }
+  }
+  interface %lib-rates {
+    record %rate { %bps: s64 }
+  }
+}
+
+package souther:typed-reached@0.1.0 {
+  interface %every {
+    use souther:typed-types/%every@0.1.0.{%code};
+    use souther:typed-types/%lib-rates@0.1.0.{%rate};
+    %injected: func(%code: %code) -> string;
+    %rated: func(%n: s64) -> %rate;
+  }
+}
+
+package souther:typed-program@0.1.0 {
+  interface %every {
+    use souther:typed-types/%every@0.1.0.{%wide, %code, %pick-result, %point};
+    use souther:typed-types/%lib-rates@0.1.0.{%rate};
+    record %issue { %path: string, %code: string, %message-key: string, %meta: string }
+    record %invalid-answer { %behavior: string, %issues: list<%issue> }
+    record %ended { %reason: u32, %invalid-answer: option<%invalid-answer> }
+    variant %refusal { %issues(list<%issue>), %ended(%ended) }
+    %price: func(%wide: %wide, %codes: list<%code>, %seen: list<s64>, %by-code: list<tuple<string, s64>>) -> result<s64, %refusal>;
+    %injected: func(%code: %code) -> result<string, %refusal>;
+    %pick: func(%n: s64) -> result<%pick-result, %refusal>;
+    %rated: func(%n: s64) -> result<%rate, %refusal>;
+    %composed: func(%n: s64) -> result<list<%point>, %refusal>;
+    %sizes: func(%points: list<%point>) -> result<list<tuple<string, list<s64>>>, %refusal>;
+  }
+}
+
+package souther:typed-decode@0.1.0 {
+  interface %every {
+    use souther:typed-types/%every@0.1.0.{%code, %point, %line, %nothing, %shape, %colour, %missing, %wide};
+    record %issue { %path: string, %code: string, %message-key: string, %meta: string }
+    record %invalid-answer { %behavior: string, %issues: list<%issue> }
+    record %ended { %reason: u32, %invalid-answer: option<%invalid-answer> }
+    variant %refusal { %issues(list<%issue>), %ended(%ended) }
+    %check-code: func(%value: %code) -> result<%code, %refusal>;
+    %check-point: func(%value: %point) -> result<%point, %refusal>;
+    %check-line: func(%value: %line) -> result<%line, %refusal>;
+    %check-nothing: func(%value: %nothing) -> result<%nothing, %refusal>;
+    %check-shape: func(%value: %shape) -> result<%shape, %refusal>;
+    %check-colour: func(%value: %colour) -> result<%colour, %refusal>;
+    %check-missing: func(%value: %missing) -> result<%missing, %refusal>;
+    %check-wide: func(%value: %wide) -> result<%wide, %refusal>;
+  }
+}

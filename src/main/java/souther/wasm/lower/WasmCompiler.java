@@ -46,6 +46,7 @@ import souther.wasm.link.Component;
 import souther.wasm.link.LinkPlan;
 import souther.wasm.link.Linker;
 import souther.wasm.link.Offering;
+import souther.wasm.link.TypedOffering;
 import souther.wasm.link.WasmFragment;
 import souther.wasm.link.WitText;
 
@@ -141,6 +142,17 @@ public final class WasmCompiler {
     }
 
     /**
+     * What a program offers and has to be given with the type of everything that crosses, as the
+     * typed interfaces are written from it.
+     *
+     * @param program what a Souther compile checked
+     * @return the program's typed offering
+     */
+    public static TypedOffering typedOffering(CheckedProgram program) {
+        return WitTypes.of(program);
+    }
+
+    /**
      * Each type a caller may read a value of on its own, by the module that declares it: its name,
      * and the name {@link Component.Lifted#reading} is given for it.
      */
@@ -180,7 +192,7 @@ public final class WasmCompiler {
      * call out carries for them: a call out names what it reaches by its place here, and
      * {@code souther:surface} says each one's place as its {@code reachOut}.
      */
-    private static List<CheckedBehavior> reachingOut(CheckedProgram program) {
+    static List<CheckedBehavior> reachingOut(CheckedProgram program) {
         List<CheckedBehavior> reaching = new ArrayList<>();
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {

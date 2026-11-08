@@ -111,6 +111,16 @@ class TheSurfaceChangesOnlyWithItsVersionTest {
             let sizes (points) = Map.empty
             """;
 
+    /**
+     * The program that writes every form, checked against the declaration on its path. The typed
+     * interfaces are held to a file of their version from it too
+     * ({@code TheTypedInterfacesChangeOnlyWithTheirVersionTest}), so both files say every form.
+     */
+    static CheckedProgram everyForm() {
+        Map<String, ClassFileImage> published = Compiler.compile(ON_THE_PATH);
+        return CheckedProgram.of(List.of(EVERY_FORM), ModulePath.of(published));
+    }
+
     @Test
     void saysWhatTheFileOfItsVersionSays() throws IOException {
         String file = "souther-surface-v" + Surface.VERSION + ".txt";
@@ -123,9 +133,7 @@ class TheSurfaceChangesOnlyWithItsVersionTest {
     }
 
     private static String schema() {
-        Map<String, ClassFileImage> published = Compiler.compile(ON_THE_PATH);
-        byte[] module = WasmCompiler.compile(
-                CheckedProgram.of(List.of(EVERY_FORM), ModulePath.of(published)));
+        byte[] module = WasmCompiler.compile(everyForm());
         JsonNode surface = new ObjectMapper().readTree(
                 Running.customSection(module, "souther:surface"));
         Set<String> lines = new TreeSet<>();
