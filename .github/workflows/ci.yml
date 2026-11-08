@@ -314,8 +314,8 @@ jobs:
 
       # A typed component that reaches out, composed with what answers it in the text format: a
       # string in and a string out, the answer laid out at an address the lowering is told, as
-      # the Canonical ABI lowers a function of that type. Then one whose answer is no Decimal,
-      # which ends the call naming the behavior and the issues as records.
+      # the Canonical ABI lowers a function of that type. Then one whose answer is text that is no
+      # amount, which ends the call naming the behavior and the issues as records.
       - name: Call a typed component that reaches out, composed with what answers it
         run: |
           mkdir -p /tmp/typed-answering
@@ -361,7 +361,7 @@ jobs:
           answering x
           got=$(wasmtime run --invoke 'priced("5")' composed.wasm)
           case "$got" in
-            'err(ended({reason: 13, invalid-answer: some({behavior: "rates.today", issues: [{path: "", code: "type_mismatch"'*) ;;
+            'err(ended({reason: 13, invalid-answer: some({behavior: "rates.today", issues: [{path: "", code: "invalid_format"'*) ;;
             *) echo "priced, answered x, answered $got"; exit 1 ;;
           esac
 

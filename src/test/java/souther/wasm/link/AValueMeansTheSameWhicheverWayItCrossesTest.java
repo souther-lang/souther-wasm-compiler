@@ -159,6 +159,37 @@ class AValueMeansTheSameWhicheverWayItCrossesTest {
                 .describedAs("a value read on its own, at its root").isEqualTo("/price");
     }
 
+    /**
+     * What a typed call takes of the arena, beside what the JSON call of the same list takes: it
+     * makes the document the readers read, as the JSON one parses it, and no text to parse it
+     * from. So it takes less, and a typed call that came to take more would be one doing work the
+     * readers do again. It did twice: writing the place of every value it read in case an issue
+     * named it, and starting a run of text for each member of a set it ordered.
+     */
+    @Test
+    void takesLessOfTheArenaThanTheJsonCallOfTheSameList() {
+        Running module = module();
+        List<String> texts = new ArrayList<>();
+        StringBuilder json = new StringBuilder("[[");
+        for (int i = 0; i < 1000; i++) {
+            texts.add("item" + i);
+            json.append(i == 0 ? "" : ",").append("\"item").append(i).append('"');
+        }
+        String arguments = json.append("]]").toString();
+        int staged = module.staged(arguments);
+        int[] list = list(module, texts);
+
+        int mark = module.call(RuntimeAbi.ALLOC_MARK);
+        module.callWithString("same.distinct", staged,
+                arguments.getBytes(StandardCharsets.UTF_8).length);
+        int asJson = module.call(RuntimeAbi.ALLOC_MARK) - mark;
+        mark = module.call(RuntimeAbi.ALLOC_MARK);
+        typed(module, "same.distinct", list);
+        int typed = module.call(RuntimeAbi.ALLOC_MARK) - mark;
+
+        assertThat(typed).isLessThan(asJson);
+    }
+
     private static Running module() {
         return Running.linked(Compiled.typedCore(Compiled.program(List.of(SAME))));
     }

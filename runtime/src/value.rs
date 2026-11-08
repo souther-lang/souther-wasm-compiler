@@ -2057,7 +2057,9 @@ unsafe fn members_written(cell: u32, element: u32) {
 /// reads them in, so that one set is one list whichever way it crosses.
 ///
 /// Asked the way that order is asked, of each member as it is written and read back, by the same
-/// comparison.
+/// comparison. Every member is written into one run, as that writing does: a run started for each
+/// took the room a run starts with for each, and a set of a thousand short strings took two and a
+/// half times what the JSON call answering it took.
 pub(crate) unsafe fn written_order(cell: u32, element: u32) -> &'static [u32] {
     let held = __souther_list_length(cell);
     let order = crate::alloc_words(held as usize);
@@ -2067,12 +2069,17 @@ pub(crate) unsafe fn written_order(cell: u32, element: u32) -> &'static [u32] {
     if held < 2 {
         return order;
     }
+    text::begin();
+    let ends = crate::alloc_words(held as usize);
+    for i in 0..held {
+        written(__souther_list_get(cell, i), element);
+        ends[i as usize] = text::so_far();
+    }
+    let (run, _) = text::ended();
     let read = crate::alloc_words(held as usize);
     for i in 0..held {
-        text::begin();
-        written(__souther_list_get(cell, i), element);
-        let (at, length) = text::ended();
-        let node = json::parse_own(at, length);
+        let start = if i == 0 { 0 } else { ends[i as usize - 1] };
+        let node = json::parse_own(run + start, ends[i as usize] - start);
         order::keyed(node);
         read[i as usize] = node;
     }
