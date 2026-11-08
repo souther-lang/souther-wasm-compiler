@@ -150,6 +150,10 @@ jobs:
           wasm-tools component embed --dummy "$typed" -o /tmp/typed-core.wasm
           wasm-tools component new /tmp/typed-core.wasm -o /tmp/typed.wasm
           wasm-tools validate --features all /tmp/typed.wasm
+          # The core function each typed one is, as the tool flattens it, is the file the
+          # compiler's own flattening is held to.
+          wasm-tools print /tmp/typed-core.wasm | node scripts/core-signatures.mjs \
+            | diff - src/test/resources/souther/wasm/lower/souther-typed-0.1.0.core.txt
 
       # Validating says each index names something of the right type, and not that a function
       # lifts the right one: every function here takes a string and answers the same result, so a lift

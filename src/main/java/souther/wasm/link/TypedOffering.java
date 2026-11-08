@@ -106,6 +106,11 @@ public record TypedOffering(Map<String, List<WitType.Declaration>> types,
         public Function {
             parameters = List.copyOf(parameters);
         }
+
+        /** What it answers where it can refuse: its answer as the {@code ok} of a result. */
+        public WitType refusing() {
+            return new WitType.ResultOf(answers, new WitType.Named(null, REFUSAL));
+        }
     }
 
     /**
@@ -203,6 +208,10 @@ public record TypedOffering(Map<String, List<WitType.Declaration>> types,
             }
             case WitType.ListOf list -> named(list.element(), found);
             case WitType.OptionOf option -> named(option.present(), found);
+            case WitType.ResultOf result -> {
+                named(result.ok(), found);
+                named(result.err(), found);
+            }
             case WitType.TupleOf tuple -> tuple.members().forEach(member -> named(member, found));
             case WitType.Named name -> found.accept(name);
         }

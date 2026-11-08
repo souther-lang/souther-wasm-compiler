@@ -41,6 +41,13 @@ public sealed interface WitType {
     record OptionOf(WitType present) implements WitType {
     }
 
+    /**
+     * A {@code result}: what a function that can refuse answers, its {@code ok} or its
+     * {@code err}. Only a function's answer is one; nothing a model declares holds one.
+     */
+    record ResultOf(WitType ok, WitType err) implements WitType {
+    }
+
     /** A {@code tuple} of what it holds, in order. */
     record TupleOf(List<WitType> members) implements WitType {
 

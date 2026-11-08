@@ -95,10 +95,7 @@ public final class TypedWitText {
                 TypedOffering.PROTOCOL.forEach(each -> declaration(out, each));
             }
             for (TypedOffering.Function function : module.getValue().values()) {
-                String answers = refuses
-                        ? "result<" + type(function.answers()) + ", "
-                                + named(TypedOffering.REFUSAL) + ">"
-                        : type(function.answers());
+                String answers = type(refuses ? function.refusing() : function.answers());
                 out.append("    ").append(named(function.name())).append(": func(")
                         .append(function.parameters().stream()
                                 .map(parameter -> named(parameter.name()) + ": "
@@ -150,6 +147,8 @@ public final class TypedWitText {
             case WitType.Primitive primitive -> primitive.name();
             case WitType.ListOf list -> "list<" + type(list.element()) + ">";
             case WitType.OptionOf option -> "option<" + type(option.present()) + ">";
+            case WitType.ResultOf result ->
+                    "result<" + type(result.ok()) + ", " + type(result.err()) + ">";
             case WitType.TupleOf tuple -> "tuple<" + tuple.members().stream()
                     .map(TypedWitText::type).collect(Collectors.joining(", ")) + ">";
             case WitType.Named name -> named(name.name());
