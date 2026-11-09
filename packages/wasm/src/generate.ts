@@ -65,10 +65,17 @@ class Names {
   }
 }
 
-/** `name` as TypeScript can write an identifier: what it cannot hold becomes `_`. */
+/** What an ECMAScript identifier cannot hold in any position, and what it cannot start with. */
+const NOT_IDENTIFIER_PART = /[^$_\u200C\u200D\p{ID_Continue}]/gu;
+const IDENTIFIER_START = /^[$_\p{ID_Start}]/u;
+
+/**
+ * `name` as TypeScript can write an identifier: what is one is kept as written, whatever the script,
+ * and what cannot be one becomes `_`. Reserved words and clashes are `Names`' to settle.
+ */
 function identifier(name: string): string {
-  const written = name.replace(/[^A-Za-z0-9_$]/g, "_");
-  return /^[A-Za-z_$]/.test(written) ? written : `_${written}`;
+  const written = name.replace(NOT_IDENTIFIER_PART, "_");
+  return IDENTIFIER_START.test(written) ? written : `_${written}`;
 }
 
 /**

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -440,6 +441,33 @@ export async function all(bytes: Uint8Array): Promise<unknown[]> {
     const page = await import(join(at, "page.ts"));
     assert.deepEqual(await page.all(bytes),
       [2n, 5n, 6n, 6n, { b: true }, { m: 2n }, { k: 3n }, { s: 1n }, { r: 3n }]);
+  });
+
+  it("keeps the names a model writes in Japanese as they are written", async () => {
+    const { at, bytes } = await generated(`module careplan.共通
+
+data 保険者番号 = String
+data 性別 = 男性 | 女性
+data 男性
+data 女性
+data 年月 = { 年: Int, 月: Int }
+
+behavior 読む : (位置: Int, 番号: 保険者番号, 月: 年月) -> 性別
+
+let 読む (位置, 番号, 月) = 男性
+`, `import { load, type 保険者番号, type 年月 } from "./binding.ts";
+
+export async function all(bytes: Uint8Array): Promise<unknown> {
+  const bound = await load(bytes);
+  const 番号: 保険者番号 = "A";
+  const 月: 年月 = { "年": 2026n, "月": 1n };
+  return bound.modules["careplan.共通"].読む(1n, 番号, 月).value;
+}
+`);
+    assert.match(await readFile(join(at, "binding.ts"), "utf8"), /export type 保険者番号 = string;/);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.equal(await page.all(bytes), "男性");
   });
 
   it("refuses a module it was not generated from", async () => {
