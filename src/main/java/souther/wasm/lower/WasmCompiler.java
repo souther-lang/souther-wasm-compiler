@@ -1135,7 +1135,7 @@ public final class WasmCompiler {
 
         /** Leaves on the stack whether the running value is one of the cases a stage accepts. */
         private void accepts(BodyWriter out, int running, List<TypeSymbol> cases) {
-            isOneOf(out, running, madeAs(out, running), cases);
+            isOneOf(out, running, cases);
         }
 
         /**
@@ -2239,11 +2239,10 @@ public final class WasmCompiler {
             out.localSet(subject);
 
             List<Core.Case> cases = chosen.cases();
-            int made = cases.subList(0, cases.size() - 1).stream().anyMatch(this::selectsLeaves)
-                    ? madeAs(out, subject) : -1;
+            int armOf = armsOf(out, cases, subject);
             for (int i = 0; i < cases.size() - 1; i++) {
                 Core.Case arm = cases.get(i);
-                condition(out, arm, subject, made);
+                condition(out, arm, subject, armOf, i);
                 out.ifNotZero();
                 bind(out, arm, subject);
                 arms.write(out, arm.body());
@@ -2271,10 +2270,11 @@ public final class WasmCompiler {
         /**
          * Leaves on the stack whether an arm is the one a value takes.
          *
-         * @param made where the descriptor the value was made as is, asked once of the value for
-         *     every arm of the match that needs it
+         * @param armOf where the number of the arm the value's leaf belongs to is, asked once of the
+         *     value for every arm of the match that selects by leaves
+         * @param place which arm this is
          */
-        private void condition(BodyWriter out, Core.Case arm, int subject, int made) {
+        private void condition(BodyWriter out, Core.Case arm, int subject, int armOf, int place) {
             Optional<ResolvedCase> selected = arm.selectedCase();
             if (selected.isPresent()
                     && selected.get().refinement() instanceof Refinement.OptionPresent) {
@@ -2287,8 +2287,12 @@ public final class WasmCompiler {
                         .compares(BodyWriter.Comparison.EQUAL);
                 return;
             }
-            // The leaves each selected case covers, as the checker settled them: an arm written
-            // as a sum takes every leaf under it, which no name the arm is written by is.
+            out.localGet(armOf).constant(place).compares(BodyWriter.Comparison.EQUAL);
+        }
+
+        /** The leaves each selected case of an arm covers, as the checker settled them: an arm
+         *  written as a sum takes every leaf under it, which no name the arm is written by is. */
+        private List<TypeSymbol> leavesOf(Core.Case arm) {
             List<TypeSymbol> atoms = arm.pattern().cases().stream()
                     .flatMap(each -> each.atoms().stream())
                     .distinct()
@@ -2297,62 +2301,59 @@ public final class WasmCompiler {
                 throw new NotLowered(writing
                         + " has an arm selecting nothing this backend can tell a value by");
             }
-            isOneOf(out, subject, made, atoms);
+            return atoms;
         }
 
         /**
-         * Puts in a local the descriptor of the declared type a cell was made as, or zero where it
-         * was made as none.
-         *
-         * <p>A primitive holds none, and what the word after its tag holds is part of the
-         * primitive, which may be any number and so may be the address of a descriptor; the tag
-         * is what says that word is one. Asked once of a value, so that telling it from each leaf
-         * it may be costs a comparison and not a call into the runtime.
+         * Puts in a local which arm a value's leaf belongs to, asked once of the value by a table
+         * that maps each leaf to the first arm covering it, or returns -1 where no arm before the
+         * last selects by leaves. The last arm is not in the table: it takes what no other does.
          */
-        private int madeAs(BodyWriter out, int cell) {
-            int made = scratch();
-            out.constant(0).localSet(made);
-            out.localGet(cell).load(0).constant(Cell.TAG_UNIT)
-                    .compares(BodyWriter.Comparison.EQUAL)
-                    .localGet(cell).load(0).constant(Cell.TAG_RECORD)
-                    .compares(BodyWriter.Comparison.EQUAL)
-                    .or()
-                    .ifNotZero()
-                    .localGet(cell).load(Cell.SECOND).localSet(made)
-                    .end();
-            return made;
+        private int armsOf(BodyWriter out, List<Core.Case> cases, int subject) {
+            Map<Integer, Integer> arms = new LinkedHashMap<>();
+            for (int i = 0; i < cases.size() - 1; i++) {
+                if (!selectsLeaves(cases.get(i))) {
+                    continue;
+                }
+                for (TypeSymbol leaf : leavesOf(cases.get(i))) {
+                    arms.putIfAbsent(leafDescriptor(leaf), i);
+                }
+            }
+            if (arms.isEmpty()) {
+                return -1;
+            }
+            int armOf = scratch();
+            out.localGet(subject).constant(shapes.indexing(arms))
+                    .call(calls.of(RuntimeAbi.CLASSIFY)).localSet(armOf);
+            return armOf;
+        }
+
+        private int leafDescriptor(TypeSymbol leaf) {
+            int descriptor = shapes.ofMember(leaf);
+            if (descriptor == 0) {
+                throw new NotLowered(writing + " asks for a leaf with no descriptor");
+            }
+            return descriptor;
         }
 
         /**
          * Leaves on the stack whether a value is one of the leaves, which are leaves and not
          * sums: a sum has no descriptor a value was made as.
          *
-         * <p>A declared leaf is told by what the value was made as, which {@link #madeAs} read.
-         * A scalar has no descriptor to be made as and is asked of the runtime, which holds the
-         * one account of what a tag says.
+         * <p>Told by one lookup of what the value is in a table of the leaves, whatever their
+         * number, and not by asking of each in turn.
          */
-        private void isOneOf(BodyWriter out, int cell, int made, List<TypeSymbol> leaves) {
+        private void isOneOf(BodyWriter out, int cell, List<TypeSymbol> leaves) {
             if (leaves.isEmpty()) {
                 out.constant(0);
                 return;
             }
-            for (int i = 0; i < leaves.size(); i++) {
-                TypeSymbol leaf = leaves.get(i);
-                int descriptor = shapes.ofMember(leaf);
-                if (leaf instanceof TypeSymbol.Primitive) {
-                    out.localGet(cell).constant(descriptor).call(calls.of(RuntimeAbi.IS));
-                } else {
-                    if (descriptor == 0) {
-                        throw new NotLowered(writing + " asks for a leaf with no descriptor");
-                    }
-                    out.localGet(made).constant(descriptor)
-                            .compares(BodyWriter.Comparison.EQUAL);
-                }
-                if (i > 0) {
-                    // Either of them: a case answers for each of the leaves it covers.
-                    out.or();
-                }
+            Map<Integer, Integer> accepted = new LinkedHashMap<>();
+            for (TypeSymbol leaf : leaves) {
+                accepted.put(leafDescriptor(leaf), 1);
             }
+            out.localGet(cell).constant(shapes.indexing(accepted)).call(calls.of(RuntimeAbi.CLASSIFY))
+                    .constant(-1).compares(BodyWriter.Comparison.UNEQUAL);
         }
 
         /** Puts what an arm binds where its body reads it. */
