@@ -443,7 +443,10 @@ export async function all(bytes: Uint8Array): Promise<unknown[]> {
       [2n, 5n, 6n, 6n, { b: true }, { m: 2n }, { k: 3n }, { s: 1n }, { r: 3n }]);
   });
 
-  it("keeps the names a model writes in Japanese as they are written", async () => {
+  it("keeps the names a model writes as they are, and writes what TypeScript refuses as one it reads", async () => {
+    // One model for both, since each model costs a compiler started and a page checked. 保険者番号 and
+    // 位置 are names TypeScript reads as they are. U+088F begins a Souther name and is a letter to
+    // Node, but TypeScript's own table does not hold it.
     const { at, bytes } = await generated(`module careplan.共通
 
 data 保険者番号 = String
@@ -451,49 +454,34 @@ data 性別 = 男性 | 女性
 data 男性
 data 女性
 data 年月 = { 年: Int, 月: Int }
+data \u088f型 = String
+data \u088f = String
 
 behavior 読む : (位置: Int, 番号: 保険者番号, 月: 年月) -> 性別
 
 let 読む (位置, 番号, 月) = 男性
+
+behavior 拒む : (\u088f: \u088f型, 位置: \u088f) -> Int
+
+let 拒む (\u088f, 位置) = 1
 `, `import { load, type 保険者番号, type 年月 } from "./binding.ts";
 
-export async function all(bytes: Uint8Array): Promise<unknown> {
+export async function all(bytes: Uint8Array): Promise<unknown[]> {
   const bound = await load(bytes);
   const 番号: 保険者番号 = "A";
   const 月: 年月 = { "年": 2026n, "月": 1n };
-  return bound.modules["careplan.共通"].読む(1n, 番号, 月).value;
-}
-`);
-    assert.match(await readFile(join(at, "binding.ts"), "utf8"), /export type 保険者番号 = string;/);
-    assert.equal(await checked(at), "");
-    const page = await import(join(at, "page.ts"));
-    assert.equal(await page.all(bytes), "男性");
-  });
-
-  it("writes a name Souther admits and TypeScript does not as one TypeScript reads", async () => {
-    // U+088F begins a Souther name, and is a letter to Node, but TypeScript's own table does not hold it.
-    const { at, bytes } = await generated(`module m
-
-data \u088f型 = String
-data \u088f = String
-
-behavior f : (\u088f: \u088f型, 位置: \u088f) -> Int
-
-let f (\u088f, 位置) = 1
-`, `import { load } from "./binding.ts";
-
-export async function all(bytes: Uint8Array): Promise<unknown> {
-  const bound = await load(bytes);
-  return bound.modules.m.f("a", "b").value;
+  const m = bound.modules["careplan.共通"];
+  return [m.読む(1n, 番号, 月).value, m.拒む("a", "b").value];
 }
 `);
     const binding = await readFile(join(at, "binding.ts"), "utf8");
+    assert.match(binding, /export type 保険者番号 = string;/);
     // A name written as it is stays where a property or a comment says it, and is not an identifier.
     assert.match(binding, /export type _型 = string;/);
     assert.match(binding, /export type _ = string;/);
     assert.equal(await checked(at), "");
     const page = await import(join(at, "page.ts"));
-    assert.equal(await page.all(bytes), 1n);
+    assert.deepEqual(await page.all(bytes), ["男性", 1n]);
   });
 
   it("refuses a module it was not generated from", async () => {
