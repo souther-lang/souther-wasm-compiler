@@ -6,6 +6,7 @@
 // the binding, and a page that still names the old one does not compile.
 
 import { type Declaration, type Form, keyOf as key, type Shape, type Surface, tagOf } from "./surface.ts";
+import { isIdentifierPart, isIdentifierStart } from "./ts-identifier-table.ts";
 
 /**
  * What no name the binding declares at its top may be: what TypeScript reserves, what a type alias
@@ -65,17 +66,18 @@ class Names {
   }
 }
 
-/** What an ECMAScript identifier cannot hold in any position, and what it cannot start with. */
-const NOT_IDENTIFIER_PART = /[^$_\u200C\u200D\p{ID_Continue}]/gu;
-const IDENTIFIER_START = /^[$_\p{ID_Start}]/u;
-
 /**
  * `name` as TypeScript can write an identifier: what is one is kept as written, whatever the script,
  * and what cannot be one becomes `_`. Reserved words and clashes are `Names`' to settle.
+ *
+ * What TypeScript reads as an identifier is its own table (see ts-identifier-table.ts), not the one
+ * of the Node that runs this nor of the language the model is written in, so a name Souther admits
+ * may still be one TypeScript refuses.
  */
 function identifier(name: string): string {
-  const written = name.replace(NOT_IDENTIFIER_PART, "_");
-  return IDENTIFIER_START.test(written) ? written : `_${written}`;
+  const written = Array.from(name, (each) => isIdentifierPart(each.codePointAt(0)!) ? each : "_").join("");
+  const first = written.codePointAt(0);
+  return first !== undefined && isIdentifierStart(first) ? written : `_${written}`;
 }
 
 /**

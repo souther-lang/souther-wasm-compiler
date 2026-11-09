@@ -470,6 +470,32 @@ export async function all(bytes: Uint8Array): Promise<unknown> {
     assert.equal(await page.all(bytes), "男性");
   });
 
+  it("writes a name Souther admits and TypeScript does not as one TypeScript reads", async () => {
+    // U+088F begins a Souther name, and is a letter to Node, but TypeScript's own table does not hold it.
+    const { at, bytes } = await generated(`module m
+
+data \u088f型 = String
+data \u088f = String
+
+behavior f : (\u088f: \u088f型, 位置: \u088f) -> Int
+
+let f (\u088f, 位置) = 1
+`, `import { load } from "./binding.ts";
+
+export async function all(bytes: Uint8Array): Promise<unknown> {
+  const bound = await load(bytes);
+  return bound.modules.m.f("a", "b").value;
+}
+`);
+    const binding = await readFile(join(at, "binding.ts"), "utf8");
+    // A name written as it is stays where a property or a comment says it, and is not an identifier.
+    assert.match(binding, /export type _型 = string;/);
+    assert.match(binding, /export type _ = string;/);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.equal(await page.all(bytes), 1n);
+  });
+
   it("refuses a module it was not generated from", async () => {
     const { at } = await generated(MODEL);
     const other = await generated(MODEL.replace("note: String?", "note: String?, gift: Bool"));
