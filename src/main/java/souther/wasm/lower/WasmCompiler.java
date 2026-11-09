@@ -97,7 +97,19 @@ public final class WasmCompiler {
      * @return the linked module
      */
     public static byte[] compile(CheckedProgram program, byte[] runtime) {
-        return Linker.link(written(program, runtime, Lifting.NONE, null, null));
+        return Linker.link(written(program, runtime, Lifting.NONE, null, null, LeafTelling.BY_COST));
+    }
+
+    /**
+     * Compiles a checked program telling a value's leaf the way it is asked to, whatever it costs:
+     * for holding each way to the same answer.
+     *
+     * @param program what a Souther compile checked
+     * @param telling how the leaf of a value is told where a match or a composition asks it
+     * @return the linked module
+     */
+    public static byte[] compile(CheckedProgram program, LeafTelling telling) {
+        return Linker.link(written(program, runtimeModule(), Lifting.NONE, null, null, telling));
     }
 
     /**
@@ -108,7 +120,8 @@ public final class WasmCompiler {
      * @return the linked module, with all of the runtime in it
      */
     public static byte[] unshaken(CheckedProgram program) {
-        return Linker.unshaken(written(program, runtimeModule(), Lifting.NONE, null, null));
+        return Linker.unshaken(written(program, runtimeModule(), Lifting.NONE, null, null,
+                LeafTelling.BY_COST));
     }
 
     /**
@@ -134,7 +147,8 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(Linker.link(written(program, runtime, Lifting.JSON, null, null)),
+        return Component.around(Linker.link(written(program, runtime, Lifting.JSON, null, null,
+                LeafTelling.BY_COST)),
                 offering(program));
     }
 
@@ -171,7 +185,7 @@ public final class WasmCompiler {
         WitTypes typed = WitTypes.read(program);
         TypedBuild.Recording recording = new TypedBuild.Recording(typed.offering());
         byte[] core = Linker.link(written(program, runtimeModule(), Lifting.TYPED, typed,
-                recording));
+                recording, LeafTelling.BY_COST));
         return new TypedCompiled(core, recording.build());
     }
 
@@ -319,9 +333,11 @@ public final class WasmCompiler {
     /**
      * @param typed what each type crosses typed as, for a typed compile, and nothing otherwise
      * @param recording where what the typed compile settles is written down, beside {@code typed}
+     * @param telling how a leaf is told where a match or a composition asks which of some it is
      */
     private static WasmFragment written(CheckedProgram program, byte[] runtime, Lifting lifting,
-            @Nullable WitTypes typed, TypedBuild.@Nullable Recording recording) {
+            @Nullable WitTypes typed, TypedBuild.@Nullable Recording recording,
+            LeafTelling telling) {
         CanonicalAbi abi = recording == null ? null : recording.abi();
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
@@ -409,7 +425,7 @@ public final class WasmCompiler {
                 throw new IllegalStateException(name + " is checked, and no check was declared for it");
             }
             return check;
-        });
+        }, telling);
         for (Written each : written) {
             fragment.write(each.index(), emitter.overValues(each));
         }
@@ -1002,6 +1018,8 @@ public final class WasmCompiler {
         private final Cells cells;
         /** The function checking what must hold of a type, by the type. */
         private final java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf;
+        /** How a leaf is told where a match or a composition asks which of some it is. */
+        private final LeafTelling telling;
 
         private BodyWriter out;
         private Map<BindingId, Integer> locals;
@@ -1010,7 +1028,9 @@ public final class WasmCompiler {
 
         Emitter(CheckedProgram program, WasmFragment fragment, Runtime calls, Descriptors shapes,
                 Map<ValueName, Integer> reached, Map<ValueName, Integer> entries,
-                java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf) {
+                java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf,
+                LeafTelling telling) {
+            this.telling = telling;
             this.program = program;
             this.entries = entries;
             this.fragment = fragment;
@@ -2245,7 +2265,8 @@ public final class WasmCompiler {
 
             List<Core.Case> cases = chosen.cases();
             int armOf = armsOf(out, cases, subject);
-            if (armOf >= 0 && cases.subList(0, cases.size() - 1).stream().allMatch(this::selectsLeaves)) {
+            if (armOf >= 0 && telling != LeafTelling.LOOKING_UP
+                    && cases.subList(0, cases.size() - 1).stream().allMatch(this::selectsLeaves)) {
                 matchByTable(out, cases, subject, armOf, answer, arms);
                 return;
             }
@@ -2445,10 +2466,16 @@ public final class WasmCompiler {
          * @param arms how many arms are tested
          * @param jumps whether every arm is told by its leaf, so that one jump reaches it
          */
-        private static boolean comparing(int asking, int arms, boolean jumps) {
-            int comparing = arms > 1 ? (asking + 1) / 2 : asking;
-            int looking = CALL_COST + (jumps ? JUMP_COST : (arms + 1) / 2);
-            return comparing <= looking;
+        private boolean comparing(int asking, int arms, boolean jumps) {
+            return switch (telling) {
+                case COMPARING -> true;
+                case LOOKING_UP, JUMPING -> false;
+                case BY_COST -> {
+                    int comparing = arms > 1 ? (asking + 1) / 2 : asking;
+                    int looking = CALL_COST + (jumps ? JUMP_COST : (arms + 1) / 2);
+                    yield comparing <= looking;
+                }
+            };
         }
 
         /** Whether telling a value from these leaves needs what it was made as: one is declared. */

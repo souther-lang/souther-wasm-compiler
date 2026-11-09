@@ -80,6 +80,40 @@ class ACompositionOffersEachStageWhatItTakesTest {
         assertThat(answerOf(module, "counting.worked", "[10,4]")).isEqualTo("{\"value\":7}");
     }
 
+    /**
+     * A stage that takes half of forty leaves, told whether it takes the one running: by comparing
+     * what it was made as with each of twenty, and by a lookup in a table of them. Each way is asked
+     * for, since which the rule chooses for twenty leaves is not what this is about.
+     */
+    @Test
+    void offersAStageWhatItTakesAmongManyLeavesWhicheverWayTheyAreTold() {
+        int leaves = 40;
+        String declared = java.util.stream.IntStream.range(0, leaves).mapToObj(i -> "data A" + i)
+                .collect(java.util.stream.Collectors.joining("\n"));
+        String all = java.util.stream.IntStream.range(0, leaves).mapToObj(i -> "A" + i)
+                .collect(java.util.stream.Collectors.joining(" | "));
+        String half = java.util.stream.IntStream.range(0, leaves / 2).mapToObj(i -> "A" + i)
+                .collect(java.util.stream.Collectors.joining(" | "));
+        String picks = java.util.stream.IntStream.range(0, leaves - 1).mapToObj(i -> "if n == " + i + " then A" + i + " else ")
+                .collect(java.util.stream.Collectors.joining()) + "A" + (leaves - 1);
+        String source = "module routed\n\n" + declared + "\n\ndata Done\n\ndata All = " + all
+                + "\n\ndata Half = " + half + "\n\nbehavior route : (n: Int) -> All\n\nlet route (n) = " + picks
+                + "\n\nbehavior take : (h: Half) -> Done\n\nlet take (h) = Done\n\n"
+                + "behavior pipeline = route >-> take\n";
+
+        for (LeafTelling telling : LeafTelling.values()) {
+            Running module = Running.linked(Compiled.module(Compiled.program(List.of(source)), telling));
+            for (int n : new int[] {0, 1, 9, 19}) {
+                assertThat(answerOf(module, "routed.pipeline", "[" + n + "]"))
+                        .as("%s, taken, %d", telling, n).isEqualTo("{\"value\":\"Done\"}");
+            }
+            for (int n : new int[] {20, 21, 30, 39}) {
+                assertThat(answerOf(module, "routed.pipeline", "[" + n + "]"))
+                        .as("%s, left the main line, %d", telling, n).isEqualTo("{\"value\":\"A" + n + "\"}");
+            }
+        }
+    }
+
     private static Running compiled() {
         return compiled(ROUTED);
     }

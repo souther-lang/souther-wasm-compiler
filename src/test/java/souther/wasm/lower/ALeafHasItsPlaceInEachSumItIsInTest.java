@@ -121,13 +121,13 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
         String source = "module wide\n\n" + declared + "\n\ndata Wide = " + names + "\n\n"
                 + "behavior echo : (xs: List<Wide>) -> List<Wide>\nlet echo (xs) = xs\n\n"
                 + "behavior place : (x: Wide) -> Int\nlet place (x) = match x with\n" + arms + "\n";
-        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
-
-        for (int leaf : new int[] {0, 1, 47, 94, 95}) {
-            assertThat(answerOf(module, "wide.place", "[\"L" + leaf + "\"]"))
-                    .isEqualTo("{\"value\":" + leaf + "}");
-            assertThat(answerOf(module, "wide.echo", "[[\"L" + leaf + "\"]]"))
-                    .isEqualTo("{\"value\":[\"L" + leaf + "\"]}");
+        for (Running module : everyWay(source)) {
+            for (int leaf : new int[] {0, 1, 47, 94, 95}) {
+                assertThat(answerOf(module, "wide.place", "[\"L" + leaf + "\"]"))
+                        .isEqualTo("{\"value\":" + leaf + "}");
+                assertThat(answerOf(module, "wide.echo", "[[\"L" + leaf + "\"]]"))
+                        .isEqualTo("{\"value\":[\"L" + leaf + "\"]}");
+            }
         }
     }
 
@@ -146,11 +146,11 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
         String source = "module many\n\n" + declared + "\n\ndata W = " + names + "\n\n"
                 + "behavior arm : (x: W) -> Int\nlet arm (x) = match x with\n    | " + first + " -> 1\n    | "
                 + rest + " -> 2\n";
-        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
-
-        for (int leaf = 0; leaf < leaves; leaf++) {
-            assertThat(answerOf(module, "many.arm", "[\"L" + leaf + "\"]"))
-                    .isEqualTo("{\"value\":" + (leaf < covered ? 1 : 2) + "}");
+        for (Running module : everyWay(source)) {
+            for (int leaf = 0; leaf < leaves; leaf++) {
+                assertThat(answerOf(module, "many.arm", "[\"L" + leaf + "\"]"))
+                        .isEqualTo("{\"value\":" + (leaf < covered ? 1 : 2) + "}");
+            }
         }
     }
 
@@ -170,17 +170,16 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
                         | Int | String -> 1
                         | Bool -> 2
                 """;
-        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
-
-        assertThat(answerOf(module, "scalars.kind", "[0]")).isEqualTo("{\"value\":1}");
-        assertThat(answerOf(module, "scalars.kind", "[1]")).isEqualTo("{\"value\":1}");
-        assertThat(answerOf(module, "scalars.kind", "[2]")).isEqualTo("{\"value\":2}");
+        for (Running module : everyWay(source)) {
+            assertThat(answerOf(module, "scalars.kind", "[0]")).isEqualTo("{\"value\":1}");
+            assertThat(answerOf(module, "scalars.kind", "[1]")).isEqualTo("{\"value\":1}");
+            assertThat(answerOf(module, "scalars.kind", "[2]")).isEqualTo("{\"value\":2}");
+        }
     }
 
     /**
-     * A lookup in a table tells scalars as well as declared leaves, in one arm: forty-odd leaves of
-     * both kinds, more than comparing one by one is worth, so the arm asks the table; and the same
-     * leaves two at a time are compared, which asks no table at all.
+     * Scalars as well as declared leaves in one arm, told every way a leaf is told: by comparing, and
+     * by a table, which the rule chooses only for more than a few dozen leaves and so is asked for.
      */
     @Test
     void anArmOverScalarsAndDeclaredLeavesTakesEachOfThemAndNoOther() {
@@ -194,14 +193,21 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
                 + "let pick (n: Int): " + union + " =\n    if n == 0 then 5 else if n == 1 then \"s\" else " + pick + "L0\n\n"
                 + "behavior kind : (n: Int) -> Int\n\nlet kind (n) =\n    match pick(n) with\n        | " + arm
                 + " -> 1\n        | L" + (covered - 1) + " -> 2\n";
-        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
-
-        assertThat(answerOf(module, "mixed.kind", "[0]")).isEqualTo("{\"value\":1}");
-        assertThat(answerOf(module, "mixed.kind", "[1]")).isEqualTo("{\"value\":1}");
-        for (int i : new int[] {0, 1, 17, covered - 2}) {
-            assertThat(answerOf(module, "mixed.kind", "[" + (i + 2) + "]")).isEqualTo("{\"value\":1}");
+        for (Running module : everyWay(source)) {
+            assertThat(answerOf(module, "mixed.kind", "[0]")).isEqualTo("{\"value\":1}");
+            assertThat(answerOf(module, "mixed.kind", "[1]")).isEqualTo("{\"value\":1}");
+            for (int i : new int[] {0, 1, 17, covered - 2}) {
+                assertThat(answerOf(module, "mixed.kind", "[" + (i + 2) + "]")).isEqualTo("{\"value\":1}");
+            }
+            assertThat(answerOf(module, "mixed.kind", "[" + (covered + 1) + "]")).isEqualTo("{\"value\":2}");
         }
-        assertThat(answerOf(module, "mixed.kind", "[" + (covered + 1) + "]")).isEqualTo("{\"value\":2}");
+    }
+
+    /** The same program compiled every way a leaf is told. */
+    private static List<Running> everyWay(String source) {
+        return java.util.Arrays.stream(LeafTelling.values())
+                .map(telling -> Running.linked(Compiled.module(Compiled.program(List.of(source)), telling)))
+                .toList();
     }
 
     private static String answerOf(Running module, String export, String arguments) {
