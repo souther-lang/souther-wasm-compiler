@@ -85,8 +85,11 @@ public final class RuntimeAbi {
      * 16 when the last of the sixteen bytes before a descriptor came to say where a value of its
      * type lies when it crosses typed, and a typed component's lifted functions came to answer
      * through {@link #TYPED_ANSWERED}, {@link #TYPED_REFUSED} and {@link #TYPED_ENDED} (issue #73).
+     * Raised to 17 when a set of alternatives came to end in the address of an index of its cases,
+     * so that which case a value is is read off the value once and not asked of each case in turn,
+     * and {@link #CLASSIFY} came to answer the same of a table a body carries (issue #77).
      */
-    public static final int VERSION = 16;
+    public static final int VERSION = 17;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
@@ -558,6 +561,13 @@ public final class RuntimeAbi {
 
     /** {@code (i32 cell, i32 descriptor) -> i32}: a value's place among a set's alternatives. */
     public static final String CASE_OF = "__souther_case_of";
+
+    /**
+     * {@code (i32 cell, i32 table) -> i32}: what a table of leaves ({@code CaseIndex}) maps the
+     * descriptor a value was made as to, or minus one where it maps none, or the value is none of
+     * a set's alternatives.
+     */
+    public static final String CLASSIFY = "__souther_classify";
 
     /** {@code (i32 cell) -> i32}: whether an option holds something. */
     public static final String IS_SOME = "__souther_is_some";

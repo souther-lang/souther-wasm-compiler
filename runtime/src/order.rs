@@ -840,10 +840,24 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
 /// option or a tuple is never one of a set's alternatives, which are named types, so a cell of one
 /// met here ends the call rather than standing for something it is not.
 pub unsafe fn identity(cell: u32) -> u32 {
+    match try_identity(cell) {
+        Some(identity) => identity,
+        None => abort(
+            REASON_BACKEND_INVARIANT_BROKEN,
+            0,
+            core::ptr::read_unaligned(cell as usize as *const u32) as u64,
+            cell as u64,
+        ),
+    }
+}
+
+/// The same, where a cell that is none of a set's alternatives is an answer and not the end of the
+/// call: a list, a map, an option, a tuple, or a primitive the program holds no descriptor of.
+pub unsafe fn try_identity(cell: u32) -> Option<u32> {
     let tag = core::ptr::read_unaligned(cell as usize as *const u32);
-    descriptor::primitive(match tag {
+    descriptor::try_primitive(match tag {
         value::TAG_UNIT | value::TAG_RECORD => {
-            return core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+            return Some(core::ptr::read_unaligned((cell as usize + 4) as *const u32));
         }
         value::TAG_INT => KIND_INT,
         value::TAG_BOOL => KIND_BOOL,
@@ -854,7 +868,7 @@ pub unsafe fn identity(cell: u32) -> u32 {
         value::TAG_TIME => KIND_TIME,
         value::TAG_DATE_TIME => KIND_DATE_TIME,
         value::TAG_INSTANT => KIND_INSTANT,
-        other => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, cell as u64),
+        _ => return None,
     })
 }
 

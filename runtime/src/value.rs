@@ -1980,11 +1980,23 @@ unsafe fn named(cell: u32, descriptor: u32) {
 
 /// Which of a set's alternatives a value is, as its place among them, or nothing where it is none.
 ///
-/// Asked as `__souther_is` asks it of each: a value of a declared type by the descriptor it was
-/// made as, and a primitive — which holds none — by its tag. The one account of which member a
-/// value is, for writing it, for the order a declaration states, and for a `match`.
+/// Asked of the value once: what it is is its descriptor (`order::try_identity`), and the set's
+/// index of its cases (`descriptor::case_index`) says where that leaf stands, so the answer does
+/// not wait on how far down the declaration the leaf is. The one account of which member a value
+/// is, for writing it, for the order a declaration states, and for a `match`.
 pub(crate) unsafe fn member_of(cell: u32, descriptor: u32) -> Option<u32> {
-    (0..descriptor::arity(descriptor)).find(|&i| __souther_is(cell, descriptor::member(descriptor, i)) != 0)
+    descriptor::index_find(descriptor::case_index(descriptor), order::try_identity(cell)?)
+}
+
+/// Which leaf a table maps a value to: what it maps what the value is to, or all ones where it maps
+/// none. A `match` asks it with a table of which arm takes each leaf, and a composition with one of
+/// the leaves a stage accepts.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_classify(cell: u32, table: u32) -> u32 {
+    match order::try_identity(cell) {
+        Some(identity) => descriptor::index_find(table, identity).unwrap_or(u32::MAX),
+        None => u32::MAX,
+    }
 }
 
 /// The same, where the value has to be one: a place whose type the checker settled holds a value

@@ -114,7 +114,11 @@ const PAGE: usize = 65536;
 /// type lies when it crosses typed (`typed`), and a typed component's lifted functions came to be
 /// handed core values and to answer through `__souther_typed_answered`, `__souther_typed_refused`
 /// and `__souther_typed_ended` (issue #73).
-const ABI_VERSION: u32 = 16;
+///
+/// Raised to 17 when a set of alternatives came to point at an index of its cases, so that which
+/// case a value is is read off the value once and not asked of each case in turn (issue #77), and
+/// `__souther_classify` came to answer the same of any table of leaves a program writes.
+const ABI_VERSION: u32 = 17;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.

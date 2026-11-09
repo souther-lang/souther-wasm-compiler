@@ -37,6 +37,7 @@
 //! then, of a SUM, u32 where the key the tag stands under is, u32 how long, u32 where the key a
 //!      case carried as itself stands under is, u32 how long — the checker's, nothing for a set
 //!      only a body holds
+//! then u32 where the index of its cases is (see below)
 //!
 //! kind LIST / OPTION
 //! +4  u32 one
@@ -67,6 +68,20 @@
 //! themselves after their fields, so what a case is called is asked of the value too, and not of
 //! a set of alternatives it is met as — which may be a union narrower than what it was made as,
 //! not listing it at all.
+
+//! The index of a set's cases, and of any other set of leaves, is a table the compiler writes once:
+//!
+//! ```text
+//! +0  u32 mask, one less than how many slots there are, a power of two
+//! +4  per slot: u32 the descriptor of a leaf, nothing where the slot is empty, u32 what it maps to
+//! ```
+//!
+//! A leaf is looked up by `index_find`: the slot its descriptor hashes to, then the next one, until
+//! the slot holds the descriptor or is empty. There are at least twice as many slots as leaves, so
+//! one is always empty. The hash is `((descriptor * 0x9E3779B1) >> 16) & mask` over 32 bits, which
+//! the compiler computes the same way when it lays the table out (`CaseIndex`). A set's own index
+//! maps a leaf to its place among the cases; the table a `match` or a composition asks of a value
+//! maps a leaf to the arm that takes it, or to one where it is accepted.
 
 /// An `Int`.
 pub const KIND_INT: u32 = 0;
@@ -135,6 +150,30 @@ pub unsafe fn kind(descriptor: u32) -> u32 {
 /// How many fields a product has, or how many cases a sum has.
 pub unsafe fn arity(descriptor: u32) -> u32 {
     read(descriptor as usize + 4)
+}
+
+/// Where the index of a set of alternatives' cases is: the table that maps the descriptor of a
+/// leaf to its place among the cases.
+pub unsafe fn case_index(descriptor: u32) -> u32 {
+    let after = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
+    read(if kind(descriptor) == KIND_SUM { after + 16 } else { after })
+}
+
+/// What a table written as `CaseIndex` maps a leaf's descriptor to, or nothing where it holds none.
+pub unsafe fn index_find(table: u32, leaf: u32) -> Option<u32> {
+    let mask = read(table as usize);
+    let mut slot = (leaf.wrapping_mul(0x9E37_79B1) >> 16) & mask;
+    loop {
+        let at = table as usize + 4 + 8 * slot as usize;
+        let held = read(at);
+        if held == leaf {
+            return Some(read(at + 4));
+        }
+        if held == 0 {
+            return None;
+        }
+        slot = (slot + 1) & mask;
+    }
 }
 
 /// Where a field's name, or a case's tag, is written, and how long it is.
@@ -241,11 +280,14 @@ pub unsafe fn held_primitives(at: u32) {
     PRIMITIVES = at;
 }
 
-/// The program's descriptor of a primitive kind, for a value of it asked what it is.
+/// The program's descriptor of a primitive kind, for a value of it asked what it is, or nothing
+/// where the program holds none of it.
 ///
-/// A program holding a value of a primitive holds the primitive's descriptor, so one it does not
-/// hold is this compiler and this runtime disagreeing about what the program holds.
-pub unsafe fn primitive(kind: u32) -> u32 {
+/// A program holding a value of a primitive holds the primitive's descriptor, so a value met of
+/// one the program holds none of is this compiler and this runtime disagreeing about what the
+/// program holds. Whether that ends the call is the caller's to say: a leaf asked of a set it is
+/// not in is an answer, and a value ordered among a set's alternatives is the end of the call.
+pub unsafe fn try_primitive(kind: u32) -> Option<u32> {
     let at = match kind {
         KIND_INT => 0,
         KIND_BOOL => 1,
@@ -256,13 +298,10 @@ pub unsafe fn primitive(kind: u32) -> u32 {
         KIND_TIME => 6,
         KIND_DATE_TIME => 7,
         KIND_INSTANT => 8,
-        other => crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, 0),
+        _ => return None,
     };
     let held = if PRIMITIVES == 0 { 0 } else { read(PRIMITIVES as usize + 4 * at) };
-    if held == 0 {
-        crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, kind as u64, 0);
-    }
-    held
+    if held == 0 { None } else { Some(held) }
 }
 
 /// What a type is called, for telling one case from another where they are written: a unit's,

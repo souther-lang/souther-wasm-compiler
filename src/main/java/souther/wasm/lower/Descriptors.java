@@ -389,12 +389,16 @@ final class Descriptors {
     private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members,
             CheckedAlternativesForm form) {
         List<int[]> described = new ArrayList<>();
+        Map<Integer, Integer> places = new LinkedHashMap<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
-            described.add(new int[] {fragment.intern(utf8), utf8.length, ofMember(member)});
+            int leaf = ofMember(member);
+            described.add(new int[] {fragment.intern(utf8), utf8.length, leaf});
+            places.putIfAbsent(leaf, places.size());
         }
+        int index = indexing(places);
         if (form instanceof CheckedAlternativesForm.Enumeration) {
-            return written(KIND_ENUMERATION, name, described);
+            return written(KIND_ENUMERATION, name, described, index);
         }
         int[] keys = {0, 0, 0, 0};
         if (form instanceof CheckedAlternativesForm.Discriminated(String tag, String contents)) {
@@ -403,7 +407,15 @@ final class Descriptors {
             keys = new int[] {fragment.intern(tagged), tagged.length,
                     fragment.intern(held), held.length};
         }
-        return written(KIND_SUM, name, described, keys);
+        return written(KIND_SUM, name, described, keys[0], keys[1], keys[2], keys[3], index);
+    }
+
+    /**
+     * Where the index that maps each of these leaves' descriptors to a number is, written once
+     * for every set that asks the same of the same leaves.
+     */
+    int indexing(Map<Integer, Integer> leaves) {
+        return fragment.intern(CaseIndex.of(leaves));
     }
 
     /** A field of a shape, or a case of a sum: what it is called and what it holds. */
