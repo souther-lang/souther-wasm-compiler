@@ -2278,7 +2278,12 @@ public final class WasmCompiler {
                         .compares(BodyWriter.Comparison.EQUAL);
                 return;
             }
-            List<TypeSymbol> atoms = arm.caseTypes();
+            // The leaves each selected case covers, as the checker settled them: an arm written
+            // as a sum takes every leaf under it, which no name the arm is written by is.
+            List<TypeSymbol> atoms = arm.pattern().cases().stream()
+                    .flatMap(each -> each.atoms().stream())
+                    .distinct()
+                    .toList();
             if (atoms.isEmpty()) {
                 throw new NotLowered(writing
                         + " has an arm selecting nothing this backend can tell a value by");
@@ -2288,7 +2293,7 @@ public final class WasmCompiler {
                         .constant(shapes.ofMember(atoms.get(i)))
                         .call(calls.of(RuntimeAbi.IS));
                 if (i > 0) {
-                    // Either of them: an or-pattern answers for each of the leaves it names.
+                    // Either of them: an arm answers for each of the leaves it covers.
                     out.or();
                 }
             }

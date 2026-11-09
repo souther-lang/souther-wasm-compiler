@@ -107,6 +107,105 @@ class AMatchTakesTheArmItsValueIsTest {
         assertThat(answerOf(module, "counting.quadrupled", "[3]")).isEqualTo("{\"value\":12}");
     }
 
+    @Test
+    void takesAnArmWrittenAsASumForEachLeafUnderIt() {
+        Running module = compiled("""
+                module matching
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data AB = A | B
+
+                data Bad = { n: Int }
+
+                data Pick = AB | Bad
+
+                behavior read : (p: Pick) -> String
+
+                let read (p) = match p with
+                    | AB -> "AB"
+                    | Bad -> "Bad"
+                """);
+
+        assertThat(answerOf(module, "matching.read", "[{\"type\": \"A\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[{\"type\": \"B\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[{\"type\": \"Bad\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"Bad\"}");
+    }
+
+    @Test
+    void takesAnArmWrittenAsASumOfSumsAndAnOrOfASumAndALeaf() {
+        Running module = compiled("""
+                module nesting
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data C = { n: Int }
+
+                data D = { n: Int }
+
+                data AB = A | B
+
+                data ABC = AB | C
+
+                data Wide = ABC | D
+
+                behavior read : (w: Wide) -> String
+
+                let read (w) = match w with
+                    | ABC -> "abc"
+                    | D -> "d"
+
+                behavior pair : (w: Wide) -> String
+
+                let pair (w) = match w with
+                    | AB | C -> "abc"
+                    | D -> "d"
+                """);
+
+        for (String leaf : List.of("A", "B", "C")) {
+            String input = "[{\"type\": \"" + leaf + "\", \"n\": 1}]";
+            assertThat(answerOf(module, "nesting.read", input)).isEqualTo("{\"value\":\"abc\"}");
+            assertThat(answerOf(module, "nesting.pair", input)).isEqualTo("{\"value\":\"abc\"}");
+        }
+        assertThat(answerOf(module, "nesting.read", "[{\"type\": \"D\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"d\"}");
+    }
+
+    @Test
+    void bindsTheValueOfAnArmWrittenAsASum() {
+        Running module = compiled("""
+                module binding
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data AB = A | B
+
+                data Bad = { n: Int }
+
+                data Pick = AB | Bad
+
+                behavior read : (p: Pick) -> Int
+
+                let read (p) = match p with
+                    | AB as v -> 1
+                    | Bad as b -> b.n
+                """);
+
+        assertThat(answerOf(module, "binding.read", "[{\"type\": \"B\", \"n\": 7}]"))
+                .isEqualTo("{\"value\":1}");
+        assertThat(answerOf(module, "binding.read", "[{\"type\": \"Bad\", \"n\": 7}]"))
+                .isEqualTo("{\"value\":7}");
+    }
+
     private static Running compiled(String... sources) {
         return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
