@@ -548,9 +548,9 @@ final class Descriptors {
             written.add(new int[] {field, utf8.length, of(member.type())});
             fields.add(new NameIndex.Entry(member.name(), field, fields.size()));
         }
-        // What a document's keys are told apart by. A newtype is written as what it names and has
-        // no keys, so it has no index.
-        int named = kind == KIND_PRODUCT ? fragment.intern(NameIndex.of(fields)) : 0;
+        // What a field is found by when it is read by its name, off a document or off a value
+        // whose case is not known until it is read.
+        int named = fragment.intern(NameIndex.of(fields));
         return filled(kind, name, descriptor, written, named);
     }
 

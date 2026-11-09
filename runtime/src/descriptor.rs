@@ -23,8 +23,8 @@
 //! +4  u32 one
 //! +8  u32 where the field's name is, u32 how long, u32 the field's own descriptor
 //! then u32 where the type's own name is, u32 how long, u32 the slot of what checks it,
-//!      u32 where the table of what its clauses are reported as is, u32 nothing: a newtype has no
-//!      keys
+//!      u32 where the table of what its clauses are reported as is, u32 where the index of the
+//!      field's name is (see below)
 //!
 //! kind PRODUCT
 //! +4  u32 how many fields
@@ -180,7 +180,8 @@ pub unsafe fn tag_index(descriptor: u32) -> u32 {
     read(if kind(descriptor) == KIND_SUM { after + 20 } else { after + 4 })
 }
 
-/// Where the index of a product's field names is: the table that maps a field's name to its place.
+/// Where the index of a product's or a newtype's field names is: the table that maps a field's name
+/// to its place.
 pub unsafe fn field_index(descriptor: u32) -> u32 {
     read(descriptor as usize + 8 + 12 * arity(descriptor) as usize + 16)
 }

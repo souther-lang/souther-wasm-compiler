@@ -90,6 +90,27 @@ class AJsonKeyIsToldItsPlaceByOneLookupTest {
                 .isEqualTo("{\"value\":" + inOrder + "}");
     }
 
+    /**
+     * A field read off a set of alternatives is found by its name in the descriptor of the case the
+     * value is, and the two cases do not keep it at the same place.
+     */
+    @Test
+    void aFieldReadOffASumIsFoundByNameWhereverEachCaseKeepsIt() {
+        int fields = 48;
+        String declared = IntStream.range(0, fields).mapToObj(i -> "f" + i + ": Int").collect(Collectors.joining(", "));
+        String source = "module spread\n\ndata Common = { " + declared + " }\n"
+                + "data P = { ...Common }\ndata Q = { extra: Int, ...Common }\ndata PQ = P | Q\n\n"
+                + "behavior last : (x: PQ) -> Int\nlet last (x) = x.f" + (fields - 1) + "\n\n"
+                + "behavior first : (x: PQ) -> Int\nlet first (x) = x.f0\n";
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
+        String body = IntStream.range(0, fields).mapToObj(i -> "\"f" + i + "\":" + (100 + i))
+                .collect(Collectors.joining(","));
+
+        assertThat(answerOf(module, "spread.last", "[{\"type\":\"P\"," + body + "}]")).isEqualTo("{\"value\":147}");
+        assertThat(answerOf(module, "spread.last", "[{\"type\":\"Q\",\"extra\":1," + body + "}]")).isEqualTo("{\"value\":147}");
+        assertThat(answerOf(module, "spread.first", "[{\"type\":\"Q\",\"extra\":1," + body + "}]")).isEqualTo("{\"value\":100}");
+    }
+
     private static Running compiled() {
         return Running.linked(Compiled.module(Compiled.program(List.of(SOURCE))));
     }

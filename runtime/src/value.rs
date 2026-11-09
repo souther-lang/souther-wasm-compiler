@@ -1316,9 +1316,11 @@ unsafe fn named_for(value: u32, descriptor: u32, path: u32, path_length: u32) ->
 #[no_mangle]
 pub unsafe extern "C" fn __souther_record_named(cell: u32, at: u32, length: u32) -> u32 {
     let descriptor = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        let (field, field_length) = descriptor::name(descriptor, i);
-        if same(field, field_length, at, length) {
+    // Found by one lookup of the name in what the value's own descriptor indexes its fields by, and
+    // not by asking each field in turn: a field far down a wide shape cost as many comparisons as
+    // there are fields before it, at every read.
+    if matches!(descriptor::kind(descriptor), KIND_PRODUCT | KIND_NEWTYPE) {
+        if let Some(i) = descriptor::name_find(descriptor::field_index(descriptor), at, length) {
             return __souther_record_get(cell, i);
         }
     }
