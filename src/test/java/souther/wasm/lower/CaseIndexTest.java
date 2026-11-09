@@ -83,6 +83,74 @@ class CaseIndexTest {
         }
     }
 
+    /**
+     * How far a leaf lies from the slot it hashes to, which is what a lookup pays. The descriptors of
+     * a program are laid one after another, so what a table holds is keys at a stride — any stride
+     * a descriptor's size can make — and every one of them must be spread: a multiplicative hash is
+     * not, at a stride near a Fibonacci number, where every key of a table went to one slot.
+     */
+    @Test
+    void spreadsKeysAtEveryStrideWhateverTheTableSize() {
+        for (int count : new int[] {96, 1000, 4000}) {
+            int furthest = 0;
+            int widest = 0;
+            int mean = 0;
+            int meanAt = 0;
+            for (int stride = 4; stride <= 4096; stride += 4) {
+                Map<Integer, Integer> leaves = new LinkedHashMap<>();
+                for (int i = 0; i < count; i++) {
+                    leaves.put(1_000_000 + stride * i, i);
+                }
+                int[] displaced = displacements(CaseIndex.of(leaves));
+                if (displaced[0] > furthest) {
+                    furthest = displaced[0];
+                    widest = stride;
+                }
+                if (displaced[1] > mean) {
+                    mean = displaced[1];
+                    meanAt = stride;
+                }
+            }
+
+            assertThat(furthest).as("%d keys: the furthest a key lies from its slot, at stride %d", count, widest)
+                    .isLessThanOrEqualTo(64);
+            assertThat(mean).as("%d keys: the mean, in hundredths, at stride %d", count, meanAt)
+                    .isLessThanOrEqualTo(150);
+        }
+    }
+
+    /** Nothing here limits how many leaves a table holds: past what sixteen bits number, and beyond. */
+    @Test
+    void holdsMoreLeavesThanSixteenBitsNumber() {
+        Map<Integer, Integer> leaves = new LinkedHashMap<>();
+        for (int i = 0; i < 100_000; i++) {
+            leaves.put(4096 + 16 * i, i);
+        }
+        byte[] index = CaseIndex.of(leaves);
+
+        leaves.forEach((leaf, number) -> assertThat(find(index, leaf)).isEqualTo(number));
+        assertThat(find(index, 4096 + 16 * 100_000)).isEqualTo(-1);
+    }
+
+    /** The furthest a leaf is from its slot, and the mean in hundredths. */
+    private static int[] displacements(byte[] index) {
+        java.nio.ByteBuffer table = java.nio.ByteBuffer.wrap(index).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        int mask = table.getInt(0);
+        int furthest = 0;
+        long total = 0;
+        int count = 0;
+        for (int slot = 0; slot <= mask; slot++) {
+            int leaf = table.getInt(4 + 8 * slot);
+            if (leaf != 0) {
+                int by = (slot - CaseIndex.hash(leaf, mask)) & mask;
+                furthest = Math.max(furthest, by);
+                total += by;
+                count++;
+            }
+        }
+        return new int[] {furthest, (int) (total * 100 / count)};
+    }
+
     @Test
     void refusesALeafWithNoDescriptor() {
         assertThatThrownBy(() -> CaseIndex.of(Map.of(0, 0))).isInstanceOf(IllegalArgumentException.class);

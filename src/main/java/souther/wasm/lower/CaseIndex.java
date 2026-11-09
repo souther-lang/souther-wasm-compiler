@@ -15,27 +15,26 @@ import souther.wasm.emit.WasmWriter;
  * stage accepts it — and a leaf the table does not hold is a leaf it does not answer for.
  *
  * <pre>
- * +0  u32 mask, one less than how many slots there are, a power of two
+ * +0  u32 mask, one less than how many slots there are, a power of two of at least two
  * +4  per slot: u32 the descriptor of a leaf, zero where the slot is empty, u32 what it maps to
  * </pre>
  *
- * <p>Open addressing with linear probing over at least twice as many slots as leaves, so a slot is
- * always empty and a lookup ends. The hash is part of the ABI: the runtime computes the same one.
+ * <p>Open addressing with linear probing. What a table is, and what the runtime counts on of it,
+ * is stated once in {@code runtime/src/descriptor.rs}; this makes a table that is that: keys are
+ * any nonzero number and none twice, there are at least twice as many slots as keys and so one is
+ * always empty, and there is no limit on keys but how many slots an {@code int} can number.
  */
 final class CaseIndex {
 
-    /** The multiplier of the hash, 2^32 over the golden ratio. */
-    static final int MULTIPLIER = 0x9E3779B1;
-
-    /** The slots a table may have, which the hash's sixteen bits can address. */
-    private static final int MOST_SLOTS = 1 << 16;
+    /** The most slots a table may have, which is what an {@code int} mask can number. */
+    private static final int MOST_SLOTS = 1 << 30;
 
     private CaseIndex() {
     }
 
     /** Where in a table of {@code mask + 1} slots a leaf is looked for first. */
     static int hash(int leaf, int mask) {
-        return ((leaf * MULTIPLIER) >>> 16) & mask;
+        return IndexHash.mix(leaf) & mask;
     }
 
     /**
@@ -45,12 +44,12 @@ final class CaseIndex {
      *     empty slot
      */
     static byte[] of(Map<Integer, Integer> leaves) {
+        if (leaves.size() > MOST_SLOTS / 2) {
+            throw new IllegalArgumentException(leaves.size() + " leaves are more than one index holds");
+        }
         int slots = 2;
         while (slots < 2 * leaves.size()) {
             slots <<= 1;
-        }
-        if (slots > MOST_SLOTS) {
-            throw new IllegalArgumentException(leaves.size() + " leaves are more than one index holds");
         }
         int[] keys = new int[slots];
         int[] numbers = new int[slots];

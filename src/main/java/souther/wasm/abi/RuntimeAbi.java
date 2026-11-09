@@ -559,7 +559,10 @@ public final class RuntimeAbi {
      */
     public static final String CHECK_INVARIANTS = "__souther_check_invariants";
 
-    /** {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. */
+    /**
+     * {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. No generated
+     * body asks it: it is the account {@link #CLASSIFY} is held to.
+     */
     public static final String IS = "__souther_is";
 
     /** {@code (i32 cell, i32 descriptor) -> i32}: a value's place among a set's alternatives. */
@@ -913,6 +916,24 @@ public final class RuntimeAbi {
 
         /** A block as a value: the second word is its slot, and the payload what it captured. */
         public static final int TAG_CLOSURE = 9;
+
+        /** A {@code Decimal}. */
+        public static final int TAG_DECIMAL = 13;
+
+        /** A {@code Date}. */
+        public static final int TAG_DATE = 14;
+
+        /** A {@code Time}. */
+        public static final int TAG_TIME = 15;
+
+        /** A {@code DateTime}. */
+        public static final int TAG_DATE_TIME = 16;
+
+        /** An {@code Instant}. */
+        public static final int TAG_INSTANT = 17;
+
+        /** A {@code Rational}. */
+        public static final int TAG_RATIONAL = 19;
     }
 
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */

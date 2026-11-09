@@ -72,6 +72,48 @@ class NameIndexTest {
         assertThatThrownBy(names::built).isInstanceOf(IllegalArgumentException.class);
     }
 
+    /**
+     * Names that are alike — the tags and fields a program numbers, or spells with a common prefix
+     * or suffix — at every size of table, each within a few slots of where it hashes to.
+     */
+    @Test
+    void spreadsNamesThatAreAlikeWhateverTheTableSize() {
+        String[] families = {"field%d", "L%d", "%d", "x_%d_y", "名前%d", "Case%dOf"};
+        for (String family : families) {
+            for (int count : new int[] {96, 1000, 4000, 70_000}) {
+                String[] each = new String[count];
+                for (int i = 0; i < count; i++) {
+                    each[i] = family.formatted(i);
+                }
+                Table names = new Table(each);
+                byte[] index = names.built();
+                java.nio.ByteBuffer table = java.nio.ByteBuffer.wrap(index).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                int mask = table.getInt(0);
+                int furthest = 0;
+                for (int slot = 0; slot <= mask; slot++) {
+                    int address = table.getInt(4 + 12 * slot);
+                    if (address != 0) {
+                        String name = names.texts.get(address);
+                        furthest = Math.max(furthest,
+                                (slot - NameIndex.hash(name.getBytes(StandardCharsets.UTF_8), mask)) & mask);
+                    }
+                }
+
+                assertThat(furthest).as("%d names of %s: the furthest a name lies from its slot", count, family)
+                        .isLessThanOrEqualTo(64);
+                assertThat(find(index, names.texts, each[count - 1])).isEqualTo(count - 1);
+            }
+        }
+    }
+
+    /** Two names are one where they are written the same, which is what the runtime tells them by. */
+    @Test
+    void refusesTwoNamesThatAreWrittenTheSame() {
+        // Two lone surrogates are neither text, and both are written as the same replacement byte.
+        Table names = new Table("\uD800", "\uDFFF");
+        assertThatThrownBy(names::built).isInstanceOf(IllegalArgumentException.class);
+    }
+
     /** What a table maps a name to, read as the runtime reads it (descriptor::name_find). */
     private static int find(byte[] table, Map<Integer, String> texts, String name) {
         java.nio.ByteBuffer held = java.nio.ByteBuffer.wrap(table).order(java.nio.ByteOrder.LITTLE_ENDIAN);

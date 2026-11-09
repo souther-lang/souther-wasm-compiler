@@ -323,6 +323,10 @@ pub(crate) unsafe fn held_as_tree(cell: u32) -> bool {
 /// A value of a declared type holds the descriptor it was made as, and is that type where the two
 /// are the same one. A scalar holds no descriptor — an `Int` is an `Int` and there is only one —
 /// so it is that type where its tag says so.
+///
+/// No generated body asks this any more — a body tells a leaf by comparing, or by a table
+/// (`__souther_classify`) — and it stays as the account every index is held to: for a cell that is
+/// well formed, a table answers as this does (`descriptor.rs`, on what a leaf is).
 #[no_mangle]
 pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
     let tag = core::ptr::read_unaligned(cell as usize as *const u32);
@@ -1318,8 +1322,8 @@ pub unsafe extern "C" fn __souther_record_named(cell: u32, at: u32, length: u32)
     let descriptor = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
     // Found by one lookup of the name in what the value's own descriptor indexes its fields by, and
     // not by asking each field in turn: a field far down a wide shape cost as many comparisons as
-    // there are fields before it, at every read.
-    if matches!(descriptor::kind(descriptor), KIND_PRODUCT | KIND_NEWTYPE) {
+    // there are fields before it, at every read. Only a shape has names to look up.
+    if descriptor::kind(descriptor) == KIND_PRODUCT {
         if let Some(i) = descriptor::name_find(descriptor::name_index(descriptor), at, length) {
             return __souther_record_get(cell, i);
         }
@@ -2008,6 +2012,11 @@ pub(crate) unsafe fn member_of(cell: u32, descriptor: u32) -> Option<u32> {
 /// the leaves a stage accepts.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_classify(cell: u32, table: u32) -> u32 {
+    // A table the compiler did not write is the compiler and this runtime disagreeing about what
+    // it hands over, not a table of nothing.
+    if table == 0 {
+        abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, cell as u64, 0);
+    }
     match order::try_identity(cell) {
         Some(identity) => descriptor::index_find(table, identity).unwrap_or(u32::MAX),
         None => u32::MAX,

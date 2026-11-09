@@ -857,10 +857,18 @@ pub unsafe fn try_identity(cell: u32) -> Option<u32> {
     let tag = core::ptr::read_unaligned(cell as usize as *const u32);
     descriptor::try_primitive(match tag {
         value::TAG_UNIT | value::TAG_RECORD => {
-            // No descriptor is at address zero, which is what an index calls an empty slot: a cell
-            // holding it was not made as anything.
+            // What a cell was made as is a descriptor of the kind a cell of its tag is made as: a
+            // unit's, or a shape's or a newtype's for a record. A word that is zero, or is the
+            // address of a scalar's descriptor, or of a list's, is not that, and the cell was not
+            // made as anything — it is none of what the descriptor it names is of.
             let made = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-            return if made == 0 { None } else { Some(made) };
+            let held = made != 0
+                && match (tag, descriptor::kind(made)) {
+                    (value::TAG_UNIT, KIND_UNIT) => true,
+                    (value::TAG_RECORD, KIND_PRODUCT | KIND_NEWTYPE) => true,
+                    _ => false,
+                };
+            return if held { Some(made) } else { None };
         }
         value::TAG_INT => KIND_INT,
         value::TAG_BOOL => KIND_BOOL,

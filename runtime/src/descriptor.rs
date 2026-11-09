@@ -74,29 +74,39 @@
 //! The index of a set's cases, and of any other set of leaves, is a table the compiler writes once:
 //!
 //! ```text
-//! +0  u32 mask, one less than how many slots there are, a power of two
+//! +0  u32 mask, one less than how many slots there are, a power of two of at least two
 //! +4  per slot: u32 the descriptor of a leaf, nothing where the slot is empty, u32 what it maps to
 //! ```
 //!
 //! A leaf is looked up by `index_find`: the slot its descriptor hashes to, then the next one, until
-//! the slot holds the descriptor or is empty. There are at least twice as many slots as leaves, so
-//! one is always empty. The hash is `((descriptor * 0x9E3779B1) >> 16) & mask` over 32 bits, which
-//! the compiler computes the same way when it lays the table out (`CaseIndex`). A set's own index
-//! maps a leaf to its place among the cases; the table a `match` or a composition asks of a value
-//! maps a leaf to the arm that takes it, or to one where it is accepted.
-
-//! The index of names, which a reader tells the field a key names and the case a tag names by, is
-//! another table the compiler writes once (`NameIndex`):
+//! the slot holds the descriptor or is empty. A set's own index maps a leaf to its place among the
+//! cases; the table a `match` or a composition asks of a value maps a leaf to the arm that takes it,
+//! or to one where it is accepted.
 //!
-//! ```text
-//! +0  u32 mask, one less than how many slots there are, a power of two
-//! +4  per slot: u32 where a name is written, nothing where the slot is empty, u32 how long, u32
-//!     its place
-//! ```
+//! What a table is, and what a reader may count on, is stated here once; `CaseIndex` and `NameIndex`
+//! (the compiler's side) and `index_find` and `name_find` (this side) each answer to it.
 //!
-//! Found by `name_find` the way a leaf is, from the hash (FNV-1a over the bytes, its high half
-//! folded into its low) and then by the text itself, so one lookup costs what comparing one name
-//! does and not what comparing each of them does.
+//! * A key is a descriptor's address, any nonzero 32-bit number: nothing is assumed of how it is
+//!   aligned or how large it is. Zero is no leaf's descriptor and is what an empty slot holds, so
+//!   zero is a key no table holds and a lookup of it finds nothing.
+//! * A table holds no key twice, and has at least twice as many slots as keys, so a slot is
+//!   always empty. There is no limit on how many keys that is but memory. A reader still stops
+//!   after as many slots as there are, so a table that broke this ends a lookup and does not hang it.
+//! * A lookup costs the same whatever keys a table holds. The descriptors of a program lie one after
+//!   another, so a table of leaves holds keys at a stride, and a multiplicative hash piles up keys
+//!   whose stride is near a Fibonacci number — all of a table's, at 144 or 2584 — so that a lookup
+//!   read as many slots as there were keys. The hash of a key is `mixed` (the finalizer of 32-bit
+//!   MurmurHash3, which changes every bit of the result with every bit of its input) masked to the
+//!   slots, and the compiler computes the same thing (`IndexHash`).
+//! * The hash of a name is FNV-1a over its bytes, then `mixed`, masked to the slots; the table's
+//!   slots hold where a name is written, how long it is and its place, and a name is found where
+//!   its bytes are the same as the text asked for.
+//! * What a leaf is — `order::try_identity` — is asked of a cell only: a cell made as a declared
+//!   type, whose descriptor is of a kind a cell is made as, or a scalar, by its tag, whose
+//!   descriptor the program holds. A cell that is neither has no identity, whatever its words say,
+//!   and is none of any table's leaves. Where a cell has one, the answer is the one `__souther_is`
+//!   gives for the same cell and leaf, which stays the oracle that holds this to it; where it has
+//!   none, `__souther_is` would still find it the descriptor its second word names.
 
 /// An `Int`.
 pub const KIND_INT: u32 = 0;
@@ -178,7 +188,8 @@ pub unsafe fn case_index(descriptor: u32) -> u32 {
 }
 
 /// Where the index of a descriptor's names is: the table that maps what a product's field or a set
-/// of alternatives' case is called to its place. Filled only where a reader takes the names of a
+/// of alternatives' case is called to its place. A newtype has none: it is written as what it
+/// names, and a field is not read by name off one. Filled only where a reader takes the names of a
 /// document, or a field is found by name off a value, as `case_index` is.
 pub unsafe fn name_index(descriptor: u32) -> u32 {
     asked(descriptor, read(descriptor as usize - 24))
@@ -198,8 +209,8 @@ pub unsafe fn name_find(table: u32, name: u32, length: u32) -> Option<u32> {
     for i in 0..length as usize {
         hash = (hash ^ core::ptr::read((name as usize + i) as *const u8) as u32).wrapping_mul(0x0100_0193);
     }
-    let mut slot = (hash ^ (hash >> 16)) & mask;
-    loop {
+    let mut slot = mixed(hash) & mask;
+    for _ in 0..=mask {
         let at = table as usize + 4 + 12 * slot as usize;
         let held = read(at);
         if held == 0 {
@@ -210,6 +221,7 @@ pub unsafe fn name_find(table: u32, name: u32, length: u32) -> Option<u32> {
         }
         slot = (slot + 1) & mask;
     }
+    None
 }
 
 unsafe fn same_text(left: u32, right: u32, length: u32) -> bool {
@@ -218,11 +230,22 @@ unsafe fn same_text(left: u32, right: u32, length: u32) -> bool {
     })
 }
 
+/// What every bit of a key changes in the hash of it: the finalizer of 32-bit MurmurHash3, which
+/// the compiler computes as `IndexHash.mix`. A key that differs from another in one bit is spread
+/// as far from it as any other, so a table costs what it does whatever its keys are.
+fn mixed(mut h: u32) -> u32 {
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85EB_CA6B);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xC2B2_AE35);
+    h ^ (h >> 16)
+}
+
 /// What a table written as `CaseIndex` maps a leaf's descriptor to, or nothing where it holds none.
 pub unsafe fn index_find(table: u32, leaf: u32) -> Option<u32> {
     let mask = read(table as usize);
-    let mut slot = (leaf.wrapping_mul(0x9E37_79B1) >> 16) & mask;
-    loop {
+    let mut slot = mixed(leaf) & mask;
+    for _ in 0..=mask {
         let at = table as usize + 4 + 8 * slot as usize;
         let held = read(at);
         // Empty first: zero is no leaf's descriptor, so a slot holding it is one nothing is in, and
@@ -235,6 +258,7 @@ pub unsafe fn index_find(table: u32, leaf: u32) -> Option<u32> {
         }
         slot = (slot + 1) & mask;
     }
+    None
 }
 
 /// Where a field's name, or a case's tag, is written, and how long it is.

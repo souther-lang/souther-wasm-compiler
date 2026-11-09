@@ -761,12 +761,13 @@ final class Descriptors {
     /**
      * Whether what a document or a value names is looked up in the descriptor: a field a reader
      * takes a key for, a tag a reader takes a case by, and a field read off a set of alternatives.
-     * A newtype is read as what it names and has no keys, so it is asked only for the last.
+     * A newtype is read as what it names and has no keys, and a field is read by name only off a
+     * set whose every case spreads the data that carries it, which a newtype cannot, so it has no
+     * names to look up.
      */
     private boolean namesAreAsked(int at, int kind) {
         return switch (kind) {
             case KIND_PRODUCT -> reads.contains(at) || found.contains(at);
-            case KIND_NEWTYPE -> found.contains(at);
             case KIND_SUM, KIND_ENUMERATION -> reads.contains(at);
             default -> false;
         };
@@ -774,7 +775,10 @@ final class Descriptors {
 
     /**
      * Whether which of a set of alternatives' cases a value is gets asked of the descriptor: by
-     * what writes it, what orders it and what carries it typed, and by a body asking for itself.
+     * what writes it, what orders it and what carries it typed ({@code typed.rs} asks it of a set
+     * it stores or flattens), and by a body asking for itself. A type that crosses typed is offered
+     * and so is written as well, which is why the typed source alone is never the one that decides;
+     * it is named because what carries a set typed asks it, whether or not anything writes it.
      */
     private boolean casesAreAsked(int at, int kind) {
         return (kind == KIND_SUM || kind == KIND_ENUMERATION)
