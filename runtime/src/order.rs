@@ -857,7 +857,10 @@ pub unsafe fn try_identity(cell: u32) -> Option<u32> {
     let tag = core::ptr::read_unaligned(cell as usize as *const u32);
     descriptor::try_primitive(match tag {
         value::TAG_UNIT | value::TAG_RECORD => {
-            return Some(core::ptr::read_unaligned((cell as usize + 4) as *const u32));
+            // No descriptor is at address zero, which is what an index calls an empty slot: a cell
+            // holding it was not made as anything.
+            let made = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+            return if made == 0 { None } else { Some(made) };
         }
         value::TAG_INT => KIND_INT,
         value::TAG_BOOL => KIND_BOOL,

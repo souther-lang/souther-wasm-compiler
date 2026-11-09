@@ -1135,8 +1135,8 @@ public final class WasmCompiler {
 
         /** Leaves on the stack whether the running value is one of the cases a stage accepts. */
         private void accepts(BodyWriter out, int running, List<TypeSymbol> cases) {
-            isOneOf(out, running, costOfAsking(cases) > CALL_COST + 1 ? -1 : madeAs(out, running),
-                    cases);
+            isOneOf(out, running,
+                    comparing(costOfAsking(cases), 1) ? madeAs(out, running) : -1, cases);
         }
 
         /**
@@ -2337,8 +2337,7 @@ public final class WasmCompiler {
                     arms.putIfAbsent(leafDescriptor(leaf), i);
                 }
             }
-            // One lookup and a comparison per arm, or what asking of each leaf costs.
-            if (arms.isEmpty() || asking <= CALL_COST + told) {
+            if (arms.isEmpty() || comparing(asking, told)) {
                 return -1;
             }
             int armOf = scratch();
@@ -2362,6 +2361,16 @@ public final class WasmCompiler {
          * 1 to 32 leaves cost the same as a lookup at about 32.
          */
         private static final int CALL_COST = 32;
+
+        /**
+         * Whether leaves are told by comparing what a value was made as with each of them, which is
+         * so where asking of each costs no more than the lookup that would stand in for them: one
+         * call, and one comparison for each of {@code tests} things the answer is tested against.
+         * The one place that is decided, for a match and for a stage's accepted cases alike.
+         */
+        private static boolean comparing(int asking, int tests) {
+            return asking <= CALL_COST + tests;
+        }
 
         /** What telling a value from each of these leaves costs, in comparisons: one for a leaf
          *  a value holds the descriptor of, a call into the runtime for a scalar. */
@@ -2411,7 +2420,7 @@ public final class WasmCompiler {
                 out.constant(0);
                 return;
             }
-            if (costOfAsking(leaves) > CALL_COST + 1) {
+            if (!comparing(costOfAsking(leaves), 1)) {
                 Map<Integer, Integer> accepted = new LinkedHashMap<>();
                 for (TypeSymbol leaf : leaves) {
                     accepted.put(leafDescriptor(leaf), 1);

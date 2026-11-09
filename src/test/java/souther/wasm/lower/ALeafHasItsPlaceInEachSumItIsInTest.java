@@ -27,6 +27,15 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
             data BA = B | A
             data ABC = C | A | B
 
+            behavior sortedAB : (xs: List<AB>) -> List<AB>
+            let sortedAB (xs) = List.sort(xs)
+
+            behavior sortedBA : (xs: List<BA>) -> List<BA>
+            let sortedBA (xs) = List.sort(xs)
+
+            behavior sortedABC : (xs: List<ABC>) -> List<ABC>
+            let sortedABC (xs) = List.sort(xs)
+
             behavior beforeAB : (x: AB, y: AB) -> Bool
             let beforeAB (x, y) = x < y
 
@@ -67,6 +76,20 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
         assertThat(answerOf(module, "shared.beforeABC", "[\"C\",\"A\"]")).isEqualTo("{\"value\":true}");
         assertThat(answerOf(module, "shared.beforeABC", "[\"A\",\"B\"]")).isEqualTo("{\"value\":true}");
         assertThat(answerOf(module, "shared.beforeABC", "[\"B\",\"C\"]")).isEqualTo("{\"value\":false}");
+    }
+
+    /**
+     * The same leaves, sorted by the sum each is met as: a sort places a case by where its
+     * declaration put it, and a set of them is written by name, which is the other order.
+     */
+    @Test
+    void sortingPutsTheSameLeavesInEachSumsOwnOrder() {
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of(SHARED))));
+
+        assertThat(answerOf(module, "shared.sortedAB", "[[\"B\",\"A\"]]")).isEqualTo("{\"value\":[\"A\",\"B\"]}");
+        assertThat(answerOf(module, "shared.sortedBA", "[[\"A\",\"B\"]]")).isEqualTo("{\"value\":[\"B\",\"A\"]}");
+        assertThat(answerOf(module, "shared.sortedABC", "[[\"B\",\"A\",\"C\"]]"))
+                .isEqualTo("{\"value\":[\"C\",\"A\",\"B\"]}");
     }
 
     @Test

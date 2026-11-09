@@ -220,11 +220,13 @@ pub unsafe fn index_find(table: u32, leaf: u32) -> Option<u32> {
     loop {
         let at = table as usize + 4 + 8 * slot as usize;
         let held = read(at);
-        if held == leaf {
-            return Some(read(at + 4));
-        }
+        // Empty first: zero is no leaf's descriptor, so a slot holding it is one nothing is in, and
+        // a leaf asked for as zero is none the table holds.
         if held == 0 {
             return None;
+        }
+        if held == leaf {
+            return Some(read(at + 4));
         }
         slot = (slot + 1) & mask;
     }

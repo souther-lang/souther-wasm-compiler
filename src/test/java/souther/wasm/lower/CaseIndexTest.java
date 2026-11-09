@@ -28,6 +28,8 @@ class CaseIndexTest {
 
         assertThat(find(index, 3000)).isEqualTo(-1);
         assertThat(find(index, 1004)).isEqualTo(-1);
+        // Zero is what an empty slot holds, and no leaf's descriptor.
+        assertThat(find(index, 0)).isEqualTo(-1);
     }
 
     @Test
@@ -72,11 +74,11 @@ class CaseIndexTest {
         int mask = held.getInt(0);
         for (int at = CaseIndex.hash(leaf, mask); ; at = (at + 1) & mask) {
             int key = held.getInt(4 + 8 * at);
-            if (key == leaf) {
-                return held.getInt(4 + 8 * at + 4);
-            }
             if (key == 0) {
                 return -1;
+            }
+            if (key == leaf) {
+                return held.getInt(4 + 8 * at + 4);
             }
         }
     }
