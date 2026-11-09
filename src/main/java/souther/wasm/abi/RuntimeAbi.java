@@ -888,6 +888,9 @@ public final class RuntimeAbi {
         /** A {@code String}: the second word is how many bytes, and the payload is the bytes. */
         public static final int TAG_STRING = 3;
 
+        /** A value of a product type. The second word is which type, as it is of a unit. */
+        public static final int TAG_RECORD = 4;
+
         /** A list: the payload is how many elements, and then where they are, which is read through
          *  {@link RuntimeAbi#LIST_ELEMENTS} and not off the cell. */
         public static final int TAG_LIST = 5;

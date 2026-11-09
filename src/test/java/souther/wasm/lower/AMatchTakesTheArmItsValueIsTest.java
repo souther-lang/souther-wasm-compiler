@@ -107,6 +107,227 @@ class AMatchTakesTheArmItsValueIsTest {
         assertThat(answerOf(module, "counting.quadrupled", "[3]")).isEqualTo("{\"value\":12}");
     }
 
+    @Test
+    void takesAnArmWrittenAsASumForEachLeafUnderIt() {
+        Running module = compiled("""
+                module matching
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data AB = A | B
+
+                data Bad = { n: Int }
+
+                data Pick = AB | Bad
+
+                behavior read : (p: Pick) -> String
+
+                let read (p) = match p with
+                    | AB -> "AB"
+                    | Bad -> "Bad"
+                """);
+
+        assertThat(answerOf(module, "matching.read", "[{\"type\": \"A\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[{\"type\": \"B\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[{\"type\": \"Bad\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"Bad\"}");
+    }
+
+    @Test
+    void takesAnArmWrittenAsASumOfSumsAndAnOrOfASumAndALeaf() {
+        Running module = compiled("""
+                module nesting
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data C = { n: Int }
+
+                data D = { n: Int }
+
+                data AB = A | B
+
+                data ABC = AB | C
+
+                data Wide = ABC | D
+
+                behavior read : (w: Wide) -> String
+
+                let read (w) = match w with
+                    | ABC -> "abc"
+                    | D -> "d"
+
+                behavior pair : (w: Wide) -> String
+
+                let pair (w) = match w with
+                    | AB | C -> "abc"
+                    | D -> "d"
+                """);
+
+        for (String leaf : List.of("A", "B", "C")) {
+            String input = "[{\"type\": \"" + leaf + "\", \"n\": 1}]";
+            assertThat(answerOf(module, "nesting.read", input)).isEqualTo("{\"value\":\"abc\"}");
+            assertThat(answerOf(module, "nesting.pair", input)).isEqualTo("{\"value\":\"abc\"}");
+        }
+        assertThat(answerOf(module, "nesting.read", "[{\"type\": \"D\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"d\"}");
+        assertThat(answerOf(module, "nesting.pair", "[{\"type\": \"D\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"d\"}");
+    }
+
+    @Test
+    void takesAnArmForTheLeavesItCoversWhateverSumNamesThem() {
+        Running module = compiled("""
+                module aliasing
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data Bad = { n: Int }
+
+                data AB = A | B
+
+                data OtherAB = A | B
+
+                data Pick = AB | Bad
+
+                behavior read : (p: Pick) -> String
+
+                let read (p) = match p with
+                    | OtherAB -> "matched"
+                    | Bad -> "bad"
+                """);
+
+        assertThat(answerOf(module, "aliasing.read", "[{\"type\": \"A\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"matched\"}");
+        assertThat(answerOf(module, "aliasing.read", "[{\"type\": \"B\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"matched\"}");
+        assertThat(answerOf(module, "aliasing.read", "[{\"type\": \"Bad\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"bad\"}");
+    }
+
+    @Test
+    void takesAnArmWrittenAsASumOverUnitsAnAnonymousUnionAnswers() {
+        Running module = compiled("""
+                module matching
+
+                data A
+
+                data B
+
+                data AB = A | B
+
+                data Bad
+
+                let pick (s: String): AB | Bad =
+                    if s == "a" then A
+                    else if s == "b" then B
+                    else Bad
+
+                behavior read : (s: String) -> String
+
+                let read (s) =
+                    match pick(s) with
+                        | AB -> "AB"
+                        | Bad -> "Bad"
+                """);
+
+        assertThat(answerOf(module, "matching.read", "[\"a\"]")).isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[\"b\"]")).isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[\"other\"]"))
+                .isEqualTo("{\"value\":\"Bad\"}");
+    }
+
+    @Test
+    void bindsTheValueOfAnArmWrittenAsASum() {
+        Running module = compiled("""
+                module binding
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data AB = A | B
+
+                data Bad = { n: Int }
+
+                data Pick = AB | Bad
+
+                behavior opened : (v: AB) -> Int
+
+                let opened (v) = match v with
+                    | A as a -> a.n
+                    | B as b -> b.n
+
+                behavior read : (p: Pick) -> Int
+
+                let read (p) = match p with
+                    | AB as v -> opened(v)
+                    | Bad as b -> b.n + 100
+                """);
+
+        assertThat(answerOf(module, "binding.read", "[{\"type\": \"A\", \"n\": 3}]"))
+                .isEqualTo("{\"value\":3}");
+        assertThat(answerOf(module, "binding.read", "[{\"type\": \"B\", \"n\": 7}]"))
+                .isEqualTo("{\"value\":7}");
+        assertThat(answerOf(module, "binding.read", "[{\"type\": \"Bad\", \"n\": 7}]"))
+                .isEqualTo("{\"value\":107}");
+    }
+
+    @Test
+    void tellsScalarsNewtypesAndUnitsApartInOneMatch() {
+        Running module = compiled("""
+                module mixing
+
+                data Code = Int
+
+                data Missing
+
+                data A
+
+                data B
+
+                data AB = A | B
+
+                let first (n: Int): Int | String | AB | Code | Missing =
+                    if n == 0 then 5 else second(n)
+
+                let second (n: Int): Int | String | AB | Code | Missing =
+                    if n == 1 then "s" else third(n)
+
+                let third (n: Int): Int | String | AB | Code | Missing =
+                    if n == 2 then A else fourth(n)
+
+                let fourth (n: Int): Int | String | AB | Code | Missing =
+                    if n == 3 then B else fifth(n)
+
+                let fifth (n: Int): Int | String | AB | Code | Missing =
+                    if n == 4 then Code(7) else Missing
+
+                behavior kind : (n: Int) -> String
+
+                let kind (n) =
+                    match first(n) with
+                        | Int -> "int"
+                        | String -> "string"
+                        | AB -> "ab"
+                        | Code -> "code"
+                        | Missing -> "missing"
+                """);
+
+        List<String> expected = List.of("int", "string", "ab", "ab", "code", "missing");
+        for (int n = 0; n < expected.size(); n++) {
+            assertThat(answerOf(module, "mixing.kind", "[" + n + "]"))
+                    .isEqualTo("{\"value\":\"" + expected.get(n) + "\"}");
+        }
+    }
+
     private static Running compiled(String... sources) {
         return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
