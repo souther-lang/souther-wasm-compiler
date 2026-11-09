@@ -35,9 +35,9 @@ class NameIndexTest {
         Table names = new Table("id", "hiredOn", "leaveFrom");
         byte[] index = names.built();
 
-        assertThat(NameIndex.find(index, names.texts, "id")).isZero();
-        assertThat(NameIndex.find(index, names.texts, "hiredOn")).isEqualTo(1);
-        assertThat(NameIndex.find(index, names.texts, "leaveFrom")).isEqualTo(2);
+        assertThat(find(index, names.texts, "id")).isZero();
+        assertThat(find(index, names.texts, "hiredOn")).isEqualTo(1);
+        assertThat(find(index, names.texts, "leaveFrom")).isEqualTo(2);
     }
 
     @Test
@@ -45,9 +45,9 @@ class NameIndexTest {
         Table names = new Table("id", "idle");
         byte[] index = names.built();
 
-        assertThat(NameIndex.find(index, names.texts, "i")).isEqualTo(-1);
-        assertThat(NameIndex.find(index, names.texts, "ids")).isEqualTo(-1);
-        assertThat(NameIndex.find(index, names.texts, "")).isEqualTo(-1);
+        assertThat(find(index, names.texts, "i")).isEqualTo(-1);
+        assertThat(find(index, names.texts, "ids")).isEqualTo(-1);
+        assertThat(find(index, names.texts, "")).isEqualTo(-1);
     }
 
     @Test
@@ -60,9 +60,9 @@ class NameIndexTest {
         byte[] index = names.built();
 
         for (int i = 0; i < each.length; i++) {
-            assertThat(NameIndex.find(index, names.texts, each[i])).isEqualTo(i);
+            assertThat(find(index, names.texts, each[i])).isEqualTo(i);
         }
-        assertThat(NameIndex.find(index, names.texts, "field200")).isEqualTo(-1);
+        assertThat(find(index, names.texts, "field200")).isEqualTo(-1);
         assertThat((index.length - 4) / 12).isGreaterThanOrEqualTo(2 * each.length);
     }
 
@@ -72,10 +72,18 @@ class NameIndexTest {
         assertThatThrownBy(names::built).isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test
-    void hashesTheBytesOfWhatIsWritten() {
-        // 'é' is two bytes of UTF-8 and the hash is over those, as the runtime's is.
-        assertThat(NameIndex.hash("é".getBytes(StandardCharsets.UTF_8), 255))
-                .isEqualTo(NameIndex.hash(new byte[] {(byte) 0xC3, (byte) 0xA9}, 255));
+    /** What a table maps a name to, read as the runtime reads it (descriptor::name_find). */
+    private static int find(byte[] table, Map<Integer, String> texts, String name) {
+        java.nio.ByteBuffer held = java.nio.ByteBuffer.wrap(table).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        int mask = held.getInt(0);
+        for (int at = NameIndex.hash(name.getBytes(StandardCharsets.UTF_8), mask); ; at = (at + 1) & mask) {
+            int address = held.getInt(4 + 12 * at);
+            if (address == 0) {
+                return -1;
+            }
+            if (texts.get(address).equals(name)) {
+                return held.getInt(4 + 12 * at + 8);
+            }
+        }
     }
 }

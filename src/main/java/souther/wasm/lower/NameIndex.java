@@ -77,22 +77,4 @@ final class NameIndex {
         }
         return table.toByteArray();
     }
-
-    /** What a table made by {@link #of} maps a name to, or -1 where it holds none, for a test
-     *  to hold against what the runtime answers. The text is read from {@code texts}, where the
-     *  entries' addresses are. */
-    static int find(byte[] table, java.util.Map<Integer, String> texts, String name) {
-        java.nio.ByteBuffer held = java.nio.ByteBuffer.wrap(table).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        int mask = held.getInt(0);
-        byte[] wanted = name.getBytes(StandardCharsets.UTF_8);
-        for (int at = hash(wanted, mask); ; at = (at + 1) & mask) {
-            int address = held.getInt(4 + 12 * at);
-            if (address == 0) {
-                return -1;
-            }
-            if (texts.get(address).equals(name)) {
-                return held.getInt(4 + 12 * at + 8);
-            }
-        }
-    }
 }

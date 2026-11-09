@@ -27,11 +27,14 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
             data BA = B | A
             data ABC = C | A | B
 
-            behavior orderedAB : (xs: List<AB>) -> Set<AB>
-            let orderedAB (xs) = Set.fromList(xs)
+            behavior beforeAB : (x: AB, y: AB) -> Bool
+            let beforeAB (x, y) = x < y
 
-            behavior orderedBA : (xs: List<BA>) -> Set<BA>
-            let orderedBA (xs) = Set.fromList(xs)
+            behavior beforeBA : (x: BA, y: BA) -> Bool
+            let beforeBA (x, y) = x < y
+
+            behavior beforeABC : (x: ABC, y: ABC) -> Bool
+            let beforeABC (x, y) = x < y
 
             behavior echoABC : (x: ABC) -> ABC
             let echoABC (x) = x
@@ -47,14 +50,29 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
                 | A | B -> 7
             """;
 
+    /**
+     * The order a sum declares puts its cases in the order they are declared, so the same two
+     * leaves are in one order in one sum and in the other in another: the leaf is the same value,
+     * and its place is the sum's.
+     */
     @Test
-    void aLeafSharedByTwoSumsIsPlacedByEach() {
+    void aLeafSharedByTwoSumsStandsWhereEachDeclaresIt() {
         Running module = Running.linked(Compiled.module(Compiled.program(List.of(SHARED))));
 
-        // A is the first case of one sum and the second of another, and a set of either is written
-        // by the names of its members, and is the same leaves in both.
-        assertThat(answerOf(module, "shared.orderedAB", "[[\"B\",\"A\",\"B\"]]")).isEqualTo("{\"value\":[\"A\",\"B\"]}");
-        assertThat(answerOf(module, "shared.orderedBA", "[[\"A\",\"B\",\"A\"]]")).isEqualTo("{\"value\":[\"A\",\"B\"]}");
+        assertThat(answerOf(module, "shared.beforeAB", "[\"A\",\"B\"]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "shared.beforeAB", "[\"B\",\"A\"]")).isEqualTo("{\"value\":false}");
+        assertThat(answerOf(module, "shared.beforeBA", "[\"A\",\"B\"]")).isEqualTo("{\"value\":false}");
+        assertThat(answerOf(module, "shared.beforeBA", "[\"B\",\"A\"]")).isEqualTo("{\"value\":true}");
+        // C, A, B: a third sum with the two of them in another place again.
+        assertThat(answerOf(module, "shared.beforeABC", "[\"C\",\"A\"]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "shared.beforeABC", "[\"A\",\"B\"]")).isEqualTo("{\"value\":true}");
+        assertThat(answerOf(module, "shared.beforeABC", "[\"B\",\"C\"]")).isEqualTo("{\"value\":false}");
+    }
+
+    @Test
+    void aSumWritesTheLeafItHolds() {
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of(SHARED))));
+
         assertThat(answerOf(module, "shared.echoABC", "[\"A\"]")).isEqualTo("{\"value\":\"A\"}");
         assertThat(answerOf(module, "shared.echoABC", "[\"C\"]")).isEqualTo("{\"value\":\"C\"}");
     }

@@ -17,17 +17,17 @@ class CaseIndexTest {
     void mapsEachLeafToItsNumberIncludingZero() {
         byte[] index = CaseIndex.of(Map.of(1000, 0, 2000, 1, 3000, 2));
 
-        assertThat(CaseIndex.find(index, 1000)).isZero();
-        assertThat(CaseIndex.find(index, 2000)).isEqualTo(1);
-        assertThat(CaseIndex.find(index, 3000)).isEqualTo(2);
+        assertThat(find(index, 1000)).isZero();
+        assertThat(find(index, 2000)).isEqualTo(1);
+        assertThat(find(index, 3000)).isEqualTo(2);
     }
 
     @Test
     void mapsNothingForALeafItWasNotMadeOf() {
         byte[] index = CaseIndex.of(Map.of(1000, 0, 2000, 1));
 
-        assertThat(CaseIndex.find(index, 3000)).isEqualTo(-1);
-        assertThat(CaseIndex.find(index, 1004)).isEqualTo(-1);
+        assertThat(find(index, 3000)).isEqualTo(-1);
+        assertThat(find(index, 1004)).isEqualTo(-1);
     }
 
     @Test
@@ -42,13 +42,13 @@ class CaseIndexTest {
         }
         byte[] index = CaseIndex.of(leaves);
 
-        leaves.forEach((leaf, number) -> assertThat(CaseIndex.find(index, leaf)).isEqualTo(number));
+        leaves.forEach((leaf, number) -> assertThat(find(index, leaf)).isEqualTo(number));
         // A leaf that collides with them and is not among them.
         int stranger = 4;
         while (leaves.containsKey(stranger) || CaseIndex.hash(stranger, 7) != target) {
             stranger += 4;
         }
-        assertThat(CaseIndex.find(index, stranger)).isEqualTo(-1);
+        assertThat(find(index, stranger)).isEqualTo(-1);
     }
 
     @Test
@@ -59,11 +59,26 @@ class CaseIndexTest {
         }
         byte[] index = CaseIndex.of(leaves);
 
-        leaves.forEach((leaf, number) -> assertThat(CaseIndex.find(index, leaf)).isEqualTo(number));
-        assertThat(CaseIndex.find(index, 1)).isEqualTo(-1);
+        leaves.forEach((leaf, number) -> assertThat(find(index, leaf)).isEqualTo(number));
+        assertThat(find(index, 1)).isEqualTo(-1);
         int slots = (index.length - 4) / 8;
         assertThat(slots).isGreaterThanOrEqualTo(2 * leaves.size());
         assertThat(Integer.bitCount(slots)).isEqualTo(1);
+    }
+
+    /** What a table maps a leaf to, read as the runtime reads it (descriptor::index_find). */
+    private static int find(byte[] table, int leaf) {
+        java.nio.ByteBuffer held = java.nio.ByteBuffer.wrap(table).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        int mask = held.getInt(0);
+        for (int at = CaseIndex.hash(leaf, mask); ; at = (at + 1) & mask) {
+            int key = held.getInt(4 + 8 * at);
+            if (key == leaf) {
+                return held.getInt(4 + 8 * at + 4);
+            }
+            if (key == 0) {
+                return -1;
+            }
+        }
     }
 
     @Test

@@ -78,20 +78,4 @@ final class CaseIndex {
         }
         return table.toByteArray();
     }
-
-    /** What a table made by {@link #of} maps a leaf to, or -1 where it holds none: the runtime's
-     *  lookup, written again here so that a test can hold the two to the one table. */
-    static int find(byte[] table, int leaf) {
-        java.nio.ByteBuffer held = java.nio.ByteBuffer.wrap(table).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        int mask = held.getInt(0);
-        for (int at = hash(leaf, mask); ; at = (at + 1) & mask) {
-            int key = held.getInt(4 + 8 * at);
-            if (key == leaf) {
-                return held.getInt(4 + 8 * at + 4);
-            }
-            if (key == 0) {
-                return -1;
-            }
-        }
-    }
 }
