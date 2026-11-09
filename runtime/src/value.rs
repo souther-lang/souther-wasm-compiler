@@ -1229,11 +1229,30 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     }
     let cell = __souther_record(descriptor);
     let mut whole = true;
-    for i in 0..descriptor::arity(descriptor) {
+    // What each field was written as, found by reading the object's keys once and telling each
+    // the field it names — and not by asking the object for each field in turn, which costs the
+    // number of keys for every field. The first of a key written twice is the one read.
+    let count = descriptor::arity(descriptor);
+    let written_as = crate::alloc_words(count as usize);
+    written_as.fill(0);
+    let fields = descriptor::field_index(descriptor);
+    for k in 0..json::__souther_json_length(value) {
+        let key = json::__souther_json_key(value, k);
+        if let Some(i) = descriptor::name_find(
+            fields,
+            json::__souther_json_bytes(key),
+            json::__souther_json_length(key),
+        ) {
+            if written_as[i as usize] == 0 {
+                written_as[i as usize] = json::__souther_json_value(value, k);
+            }
+        }
+    }
+    for i in 0..count {
         let (field, field_length) = descriptor::name(descriptor, i);
         let (at, at_length) = below(path, path_length, (field, field_length));
         let member = descriptor::member(descriptor, i);
-        let written = entry(value, field, field_length);
+        let written = written_as[i as usize];
         if written == 0 {
             // An optional field has a key to be missing, and its being missing is what absence is
             // written as there — not `null`, which is what absence is where there is no key.
@@ -1671,11 +1690,8 @@ unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) 
     }
     let held = json::__souther_json_bytes(value);
     let held_length = json::__souther_json_length(value);
-    for i in 0..descriptor::arity(descriptor) {
-        let (case, case_length) = descriptor::name(descriptor, i);
-        if same(case, case_length, held, held_length) {
-            return __souther_unit(descriptor::member(descriptor, i));
-        }
+    if let Some(i) = descriptor::name_find(descriptor::tag_index(descriptor), held, held_length) {
+        return __souther_unit(descriptor::member(descriptor, i));
     }
     // A name no case goes by is reported as Raoh's `oneOf` over strings reports a value that is
     // none of the ones allowed, since that constraint states the same rule: the names allowed, and
@@ -1720,28 +1736,25 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     }
     let held = json::__souther_json_bytes(written);
     let held_length = json::__souther_json_length(written);
-    for i in 0..descriptor::arity(descriptor) {
-        let (case, case_length) = descriptor::name(descriptor, i);
-        if same(case, case_length, held, held_length) {
-            let member = descriptor::member(descriptor, i);
-            return match descriptor::carried(member) {
-                // A unit and a shape are read from the object membership gave them, the tag
-                // beside whatever fields they lay there.
-                Carried::Nothing | Carried::Fields => __souther_read(value, member, path, path_length),
-                // Anything else keeps its own form, under a key of its own beside the tag.
-                Carried::Itself => {
-                    let contents_under = keyed(descriptor::contents_key(descriptor), descriptor);
-                    let (at, at_length) = below(path, path_length, contents_under);
-                    let contents = entry(value, contents_under.0, contents_under.1);
-                    if contents == 0 {
-                        required(at, at_length);
-                        return 0;
-                    }
-                    __souther_read(contents, member, at, at_length)
+    if let Some(i) = descriptor::name_find(descriptor::tag_index(descriptor), held, held_length) {
+        let member = descriptor::member(descriptor, i);
+        return match descriptor::carried(member) {
+            // A unit and a shape are read from the object membership gave them, the tag
+            // beside whatever fields they lay there.
+            Carried::Nothing | Carried::Fields => __souther_read(value, member, path, path_length),
+            // Anything else keeps its own form, under a key of its own beside the tag.
+            Carried::Itself => {
+                let contents_under = keyed(descriptor::contents_key(descriptor), descriptor);
+                let (at, at_length) = below(path, path_length, contents_under);
+                let contents = entry(value, contents_under.0, contents_under.1);
+                if contents == 0 {
+                    required(at, at_length);
+                    return 0;
                 }
-            };
-        }
-    }
+                __souther_read(contents, member, at, at_length)
+            }
+        };
+}
     // A tag naming no case is not one of those the sum allows, and which those are is said, as
     // Raoh's `discriminate` says it.
     let (at, at_length) = below(path, path_length, tagged_under);

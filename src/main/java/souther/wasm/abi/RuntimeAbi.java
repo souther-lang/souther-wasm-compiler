@@ -87,7 +87,9 @@ public final class RuntimeAbi {
      * through {@link #TYPED_ANSWERED}, {@link #TYPED_REFUSED} and {@link #TYPED_ENDED} (issue #73).
      * Raised to 17 when a set of alternatives came to end in the address of an index of its cases,
      * so that which case a value is is read off the value once and not asked of each case in turn,
-     * and {@link #CLASSIFY} came to answer the same of a table a body carries (issue #77).
+     * and {@link #CLASSIFY} came to answer the same of a table a body carries, and a product and a
+     * set of alternatives came to end in the address of an index of the names a document reads
+     * them by, so that a key's field and a tag's case are found by one lookup (issue #77).
      */
     public static final int VERSION = 17;
 

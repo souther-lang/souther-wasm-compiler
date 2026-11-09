@@ -390,15 +390,19 @@ final class Descriptors {
             CheckedAlternativesForm form) {
         List<int[]> described = new ArrayList<>();
         Map<Integer, Integer> places = new LinkedHashMap<>();
+        List<NameIndex.Entry> tags = new ArrayList<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
             int leaf = ofMember(member);
-            described.add(new int[] {fragment.intern(utf8), utf8.length, leaf});
+            int tag = fragment.intern(utf8);
+            described.add(new int[] {tag, utf8.length, leaf});
+            tags.add(new NameIndex.Entry(member.name(), tag, tags.size()));
             places.putIfAbsent(leaf, places.size());
         }
         int index = indexing(places);
+        int named = fragment.intern(NameIndex.of(tags));
         if (form instanceof CheckedAlternativesForm.Enumeration) {
-            return written(KIND_ENUMERATION, name, described, index);
+            return written(KIND_ENUMERATION, name, described, index, named);
         }
         int[] keys = {0, 0, 0, 0};
         if (form instanceof CheckedAlternativesForm.Discriminated(String tag, String contents)) {
@@ -407,7 +411,7 @@ final class Descriptors {
             keys = new int[] {fragment.intern(tagged), tagged.length,
                     fragment.intern(held), held.length};
         }
-        return written(KIND_SUM, name, described, keys[0], keys[1], keys[2], keys[3], index);
+        return written(KIND_SUM, name, described, keys[0], keys[1], keys[2], keys[3], index, named);
     }
 
     /**
@@ -535,13 +539,19 @@ final class Descriptors {
      * descriptor being described and neither would ever have an address.
      */
     private int composite(int kind, TypeSymbol.AtModule name, List<Member> members) {
-        int descriptor = reserveFor(kind, name, members.size());
+        int descriptor = reserveFor(kind, name, members.size(), 1);
         List<int[]> written = new ArrayList<>();
+        List<NameIndex.Entry> fields = new ArrayList<>();
         for (Member member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
-            written.add(new int[] {fragment.intern(utf8), utf8.length, of(member.type())});
+            int field = fragment.intern(utf8);
+            written.add(new int[] {field, utf8.length, of(member.type())});
+            fields.add(new NameIndex.Entry(member.name(), field, fields.size()));
         }
-        return filled(kind, name, descriptor, written);
+        // What a document's keys are told apart by. A newtype is written as what it names and has
+        // no keys, so it has no index.
+        int named = kind == KIND_PRODUCT ? fragment.intern(NameIndex.of(fields)) : 0;
+        return filled(kind, name, descriptor, written, named);
     }
 
     /**
@@ -551,10 +561,6 @@ final class Descriptors {
     private int written(int kind, TypeSymbol.AtModule name, List<int[]> members, int... after) {
         int descriptor = reserveFor(kind, name, members.size(), after.length);
         return filled(kind, name, descriptor, members, after);
-    }
-
-    private int reserveFor(int kind, TypeSymbol.AtModule name, int members) {
-        return reserveFor(kind, name, members, 0);
     }
 
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members, int after) {

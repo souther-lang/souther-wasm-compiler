@@ -23,13 +23,15 @@
 //! +4  u32 one
 //! +8  u32 where the field's name is, u32 how long, u32 the field's own descriptor
 //! then u32 where the type's own name is, u32 how long, u32 the slot of what checks it,
-//!      u32 where the table of what its clauses are reported as is
+//!      u32 where the table of what its clauses are reported as is, u32 nothing: a newtype has no
+//!      keys
 //!
 //! kind PRODUCT
 //! +4  u32 how many fields
 //! +8  per field: u32 where its name is, u32 how long, u32 the field's own descriptor
 //! then u32 where the type's own name is, u32 how long, u32 the slot of what checks it,
-//!      u32 where the table of what its clauses are reported as is
+//!      u32 where the table of what its clauses are reported as is, u32 where the index of the
+//!      fields' names is (see below)
 //!
 //! kind SUM / ENUMERATION
 //! +4  u32 how many cases
@@ -37,7 +39,7 @@
 //! then, of a SUM, u32 where the key the tag stands under is, u32 how long, u32 where the key a
 //!      case carried as itself stands under is, u32 how long — the checker's, nothing for a set
 //!      only a body holds
-//! then u32 where the index of its cases is (see below)
+//! then u32 where the index of its cases is, u32 where the index of their tags is (see below)
 //!
 //! kind LIST / OPTION
 //! +4  u32 one
@@ -82,6 +84,19 @@
 //! the compiler computes the same way when it lays the table out (`CaseIndex`). A set's own index
 //! maps a leaf to its place among the cases; the table a `match` or a composition asks of a value
 //! maps a leaf to the arm that takes it, or to one where it is accepted.
+
+//! The index of names, which a reader tells the field a key names and the case a tag names by, is
+//! another table the compiler writes once (`NameIndex`):
+//!
+//! ```text
+//! +0  u32 mask, one less than how many slots there are, a power of two
+//! +4  per slot: u32 where a name is written, nothing where the slot is empty, u32 how long, u32
+//!     its place
+//! ```
+//!
+//! Found by `name_find` the way a leaf is, from the hash (FNV-1a over the bytes, its high half
+//! folded into its low) and then by the text itself, so one lookup costs what comparing one name
+//! does and not what comparing each of them does.
 
 /// An `Int`.
 pub const KIND_INT: u32 = 0;
@@ -157,6 +172,44 @@ pub unsafe fn arity(descriptor: u32) -> u32 {
 pub unsafe fn case_index(descriptor: u32) -> u32 {
     let after = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
     read(if kind(descriptor) == KIND_SUM { after + 16 } else { after })
+}
+
+/// Where the index of a set of alternatives' tags is: the table that maps a case's name to its place.
+pub unsafe fn tag_index(descriptor: u32) -> u32 {
+    let after = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
+    read(if kind(descriptor) == KIND_SUM { after + 20 } else { after + 4 })
+}
+
+/// Where the index of a product's field names is: the table that maps a field's name to its place.
+pub unsafe fn field_index(descriptor: u32) -> u32 {
+    read(descriptor as usize + 8 + 12 * arity(descriptor) as usize + 16)
+}
+
+/// What a table written as `NameIndex` maps a name to, or nothing where it holds none.
+pub unsafe fn name_find(table: u32, name: u32, length: u32) -> Option<u32> {
+    let mask = read(table as usize);
+    let mut hash = 0x811C_9DC5u32;
+    for i in 0..length as usize {
+        hash = (hash ^ core::ptr::read((name as usize + i) as *const u8) as u32).wrapping_mul(0x0100_0193);
+    }
+    let mut slot = (hash ^ (hash >> 16)) & mask;
+    loop {
+        let at = table as usize + 4 + 12 * slot as usize;
+        let held = read(at);
+        if held == 0 {
+            return None;
+        }
+        if read(at + 4) == length && same_text(held, name, length) {
+            return Some(read(at + 8));
+        }
+        slot = (slot + 1) & mask;
+    }
+}
+
+unsafe fn same_text(left: u32, right: u32, length: u32) -> bool {
+    (0..length as usize).all(|i| {
+        core::ptr::read((left as usize + i) as *const u8) == core::ptr::read((right as usize + i) as *const u8)
+    })
 }
 
 /// What a table written as `CaseIndex` maps a leaf's descriptor to, or nothing where it holds none.
