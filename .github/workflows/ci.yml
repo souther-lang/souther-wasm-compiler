@@ -465,6 +465,13 @@ jobs:
           npm run typecheck
           npm run build
           npm test
+      # What the README promises of TypeScript is that a binding compiles under the oldest one it names
+      # with its declarations checked, which the tests above, run by the newest, do not say. The
+      # package the installed test archived is installed beside that TypeScript and a binding of its
+      # module compiled.
+      - name: Compile a binding under the oldest TypeScript
+        working-directory: packages/wasm
+        run: node scripts/check-oldest-typescript.mjs "${{ runner.temp }}/built/souther-wasm.tgz" "${{ runner.temp }}/built/model.wasm"
       # The example names the released package, as a project would. What is checked here is this
       # commit's glue against this commit's module, so the package built above is installed over it.
       - name: Build the example

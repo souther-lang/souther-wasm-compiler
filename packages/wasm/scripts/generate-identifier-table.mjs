@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /** The oldest TypeScript a binding is written for. */
-const OLDEST = "5.5.4";
+const OLDEST = "5.7.3";
 
 const here = createRequire(import.meta.url);
 const ts = here("typescript");
