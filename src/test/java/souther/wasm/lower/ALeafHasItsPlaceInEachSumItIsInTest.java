@@ -177,6 +177,33 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
         assertThat(answerOf(module, "scalars.kind", "[2]")).isEqualTo("{\"value\":2}");
     }
 
+    /**
+     * A lookup in a table tells scalars as well as declared leaves, in one arm: forty-odd leaves of
+     * both kinds, more than comparing one by one is worth, so the arm asks the table; and the same
+     * leaves two at a time are compared, which asks no table at all.
+     */
+    @Test
+    void anArmOverScalarsAndDeclaredLeavesTakesEachOfThemAndNoOther() {
+        int covered = 38;
+        String declared = IntStream.range(0, covered).mapToObj(i -> "data L" + i).collect(Collectors.joining("\n"));
+        String union = "Int | String | " + IntStream.range(0, covered).mapToObj(i -> "L" + i).collect(Collectors.joining(" | "));
+        String arm = "Int | String | " + IntStream.range(0, covered - 1).mapToObj(i -> "L" + i).collect(Collectors.joining(" | "));
+        String pick = IntStream.range(0, covered).mapToObj(i -> "if n == " + (i + 2) + " then L" + i + " else ")
+                .collect(Collectors.joining());
+        String source = "module mixed\n\n" + declared + "\n\n"
+                + "let pick (n: Int): " + union + " =\n    if n == 0 then 5 else if n == 1 then \"s\" else " + pick + "L0\n\n"
+                + "behavior kind : (n: Int) -> Int\n\nlet kind (n) =\n    match pick(n) with\n        | " + arm
+                + " -> 1\n        | L" + (covered - 1) + " -> 2\n";
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
+
+        assertThat(answerOf(module, "mixed.kind", "[0]")).isEqualTo("{\"value\":1}");
+        assertThat(answerOf(module, "mixed.kind", "[1]")).isEqualTo("{\"value\":1}");
+        for (int i : new int[] {0, 1, 17, covered - 2}) {
+            assertThat(answerOf(module, "mixed.kind", "[" + (i + 2) + "]")).isEqualTo("{\"value\":1}");
+        }
+        assertThat(answerOf(module, "mixed.kind", "[" + (covered + 1) + "]")).isEqualTo("{\"value\":2}");
+    }
+
     private static String answerOf(Running module, String export, String arguments) {
         int address = module.staged(arguments);
         long[] answer = module.callWithString(
