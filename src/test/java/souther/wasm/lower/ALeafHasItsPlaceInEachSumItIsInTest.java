@@ -90,6 +90,52 @@ class ALeafHasItsPlaceInEachSumItIsInTest {
         }
     }
 
+    /**
+     * An arm over many leaves is told by one lookup in a table of them, and over few by comparing,
+     * which a call into the runtime costs more than. Either way each leaf takes the arm it is in.
+     */
+    @Test
+    void anArmOverManyLeavesTakesEachOfThemAndNoOther() {
+        int leaves = 48;
+        int covered = 40;
+        String declared = IntStream.range(0, leaves).mapToObj(i -> "data L" + i).collect(Collectors.joining("\n"));
+        String names = IntStream.range(0, leaves).mapToObj(i -> "L" + i).collect(Collectors.joining(" | "));
+        String first = IntStream.range(0, covered).mapToObj(i -> "L" + i).collect(Collectors.joining(" | "));
+        String rest = IntStream.range(covered, leaves).mapToObj(i -> "L" + i).collect(Collectors.joining(" | "));
+        String source = "module many\n\n" + declared + "\n\ndata W = " + names + "\n\n"
+                + "behavior arm : (x: W) -> Int\nlet arm (x) = match x with\n    | " + first + " -> 1\n    | "
+                + rest + " -> 2\n";
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
+
+        for (int leaf = 0; leaf < leaves; leaf++) {
+            assertThat(answerOf(module, "many.arm", "[\"L" + leaf + "\"]"))
+                    .isEqualTo("{\"value\":" + (leaf < covered ? 1 : 2) + "}");
+        }
+    }
+
+    /** Scalars are told apart by a call each where compared one by one, and by one lookup in a table. */
+    @Test
+    void anArmOverScalarsTakesEachOfThemAndNoOther() {
+        String source = """
+                module scalars
+
+                let pick (n: Int): Int | String | Bool =
+                    if n == 0 then 5 else if n == 1 then "s" else true
+
+                behavior kind : (n: Int) -> Int
+
+                let kind (n) =
+                    match pick(n) with
+                        | Int | String -> 1
+                        | Bool -> 2
+                """;
+        Running module = Running.linked(Compiled.module(Compiled.program(List.of(source))));
+
+        assertThat(answerOf(module, "scalars.kind", "[0]")).isEqualTo("{\"value\":1}");
+        assertThat(answerOf(module, "scalars.kind", "[1]")).isEqualTo("{\"value\":1}");
+        assertThat(answerOf(module, "scalars.kind", "[2]")).isEqualTo("{\"value\":2}");
+    }
+
     private static String answerOf(Running module, String export, String arguments) {
         int address = module.staged(arguments);
         long[] answer = module.callWithString(
