@@ -21,8 +21,8 @@ import souther.wasm.emit.WasmWriter;
  *
  * <p>Open addressing with linear probing. What a table is, and what the runtime counts on of it,
  * is stated once in {@code runtime/src/descriptor.rs}; this makes a table that is that: keys are
- * any nonzero number and none twice, there are at least twice as many slots as keys and so one is
- * always empty, and there is no limit on keys but how many slots an {@code int} can number.
+ * any nonzero number and none twice, there are at least twice as many slots as keys and so at least
+ * one is empty, and there is no limit on keys but how many slots an {@code int} can number.
  */
 final class CaseIndex {
 

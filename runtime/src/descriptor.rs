@@ -89,15 +89,19 @@
 //! * A key is a descriptor's address, any nonzero 32-bit number: nothing is assumed of how it is
 //!   aligned or how large it is. Zero is no leaf's descriptor and is what an empty slot holds, so
 //!   zero is a key no table holds and a lookup of it finds nothing.
-//! * A table holds no key twice, and has at least twice as many slots as keys, so a slot is
-//!   always empty. There is no limit on how many keys that is but memory. A reader still stops
+//! * A table holds no key twice, and has at least twice as many slots as keys, so at least one slot is
+//!   empty. There is no limit on how many keys that is but memory. A reader still stops
 //!   after as many slots as there are, so a table that broke this ends a lookup and does not hang it.
-//! * A lookup costs the same whatever keys a table holds. The descriptors of a program lie one after
-//!   another, so a table of leaves holds keys at a stride, and a multiplicative hash piles up keys
-//!   whose stride is near a Fibonacci number — all of a table's, at 144 or 2584 — so that a lookup
-//!   read as many slots as there were keys. The hash of a key is `mixed` (the finalizer of 32-bit
-//!   MurmurHash3, which changes every bit of the result with every bit of its input) masked to the
-//!   slots, and the compiler computes the same thing (`IndexHash`).
+//! * A lookup is expected to read a slot or two, and what is held to that is the hash, not a bound.
+//!   The descriptors of a program lie one after another, so a table of leaves holds keys at a stride,
+//!   and a multiplicative hash piles up keys whose stride is near a Fibonacci number — all of a
+//!   table's, at 144 or 2584 — so that a lookup read as many slots as there were keys. The hash of a
+//!   key is `mixed` (the finalizer of 32-bit MurmurHash3, which carries each bit of its input into
+//!   the whole of its result) masked to the slots, and the compiler computes the same thing
+//!   (`IndexHash`). Tested at every 4-aligned stride up to 4096 and tables of up to 4000 keys, no key
+//!   lies more than a few dozen slots from where it hashes to and the mean is under one. That is
+//!   what was looked at and not a guarantee about every set of keys: the worst case of linear
+//!   probing is as many slots as there are, which is what the reader's stop above bounds.
 //! * The hash of a name is FNV-1a over its bytes, then `mixed`, masked to the slots; the table's
 //!   slots hold where a name is written, how long it is and its place, and a name is found where
 //!   its bytes are the same as the text asked for.
@@ -230,9 +234,10 @@ unsafe fn same_text(left: u32, right: u32, length: u32) -> bool {
     })
 }
 
-/// What every bit of a key changes in the hash of it: the finalizer of 32-bit MurmurHash3, which
-/// the compiler computes as `IndexHash.mix`. A key that differs from another in one bit is spread
-/// as far from it as any other, so a table costs what it does whatever its keys are.
+/// The finalizer of 32-bit MurmurHash3, which the compiler computes as `IndexHash.mix`: each bit of a
+/// key is carried into the whole of the hash of it, so keys that differ in a few bits, or lie at a
+/// stride, are not put in neighbouring slots as a multiplication puts them. It does not keep two
+/// keys from sharing a slot; probing is for that.
 fn mixed(mut h: u32) -> u32 {
     h ^= h >> 16;
     h = h.wrapping_mul(0x85EB_CA6B);
