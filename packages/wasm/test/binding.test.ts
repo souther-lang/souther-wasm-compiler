@@ -456,6 +456,7 @@ data 女性
 data 年月 = { 年: Int, 月: Int }
 data \u088f型 = String
 data \u088f = String
+data \u0c5c = String
 
 behavior 読む : (位置: Int, 番号: 保険者番号, 月: 年月) -> 性別
 
@@ -477,8 +478,14 @@ export async function all(bytes: Uint8Array): Promise<unknown[]> {
     const binding = await readFile(join(at, "binding.ts"), "utf8");
     assert.match(binding, /export type 保険者番号 = string;/);
     // A name written as it is stays where a property or a comment says it, and is not an identifier.
-    assert.match(binding, /export type _型 = string;/);
-    assert.match(binding, /export type _ = string;/);
+    // A character TypeScript refuses is written as its code point, so two of them are two names.
+    assert.match(binding, /export type _u088f_型 = string;/);
+    assert.match(binding, /export type _u088f_ = string;/);
+    assert.match(binding, /export type _u0c5c_ = string;/);
+    // What a parameter is called is what a caller reads off the signature, and a page that passes
+    // its arguments by position does not say it, so it is read here.
+    assert.match(binding, /"読む"\(位置: bigint, 番号: 保険者番号, 月: 年月\)/);
+    assert.match(binding, /"拒む"\(_u088f_: _u088f_型, 位置: _u088f_\)/);
     assert.equal(await checked(at), "");
     const page = await import(join(at, "page.ts"));
     assert.deepEqual(await page.all(bytes), ["男性", 1n]);

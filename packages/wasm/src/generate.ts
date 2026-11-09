@@ -68,14 +68,20 @@ class Names {
 
 /**
  * `name` as TypeScript can write an identifier: what is one is kept as written, whatever the script,
- * and what cannot be one becomes `_`. Reserved words and clashes are `Names`' to settle.
+ * and a character that cannot be one is written as its code point, `_u088f_`. Reserved words and
+ * clashes are `Names`' to settle.
  *
  * What TypeScript reads as an identifier is its own table (see ts-identifier-table.ts), not the one
  * of the Node that runs this nor of the language the model is written in, so a name Souther admits
- * may still be one TypeScript refuses.
+ * may still hold a character TypeScript refuses. Such a character is written as what it is rather
+ * than as `_`: two of them are then two names, and a name does not depend on which declaration came
+ * first, as it would if `Names` told them apart by a number.
  */
 function identifier(name: string): string {
-  const written = Array.from(name, (each) => isIdentifierPart(each.codePointAt(0)!) ? each : "_").join("");
+  const written = Array.from(name, (each) => {
+    const codePoint = each.codePointAt(0)!;
+    return isIdentifierPart(codePoint) ? each : `_u${codePoint.toString(16).padStart(4, "0")}_`;
+  }).join("");
   const first = written.codePointAt(0);
   return first !== undefined && isIdentifierStart(first) ? written : `_${written}`;
 }
