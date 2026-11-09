@@ -176,6 +176,72 @@ class AMatchTakesTheArmItsValueIsTest {
         }
         assertThat(answerOf(module, "nesting.read", "[{\"type\": \"D\", \"n\": 1}]"))
                 .isEqualTo("{\"value\":\"d\"}");
+        assertThat(answerOf(module, "nesting.pair", "[{\"type\": \"D\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"d\"}");
+    }
+
+    @Test
+    void takesAnArmForTheLeavesItCoversWhateverSumNamesThem() {
+        Running module = compiled("""
+                module aliasing
+
+                data A = { n: Int }
+
+                data B = { n: Int }
+
+                data Bad = { n: Int }
+
+                data AB = A | B
+
+                data OtherAB = A | B
+
+                data Pick = AB | Bad
+
+                behavior read : (p: Pick) -> String
+
+                let read (p) = match p with
+                    | OtherAB -> "matched"
+                    | Bad -> "bad"
+                """);
+
+        assertThat(answerOf(module, "aliasing.read", "[{\"type\": \"A\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"matched\"}");
+        assertThat(answerOf(module, "aliasing.read", "[{\"type\": \"B\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"matched\"}");
+        assertThat(answerOf(module, "aliasing.read", "[{\"type\": \"Bad\", \"n\": 1}]"))
+                .isEqualTo("{\"value\":\"bad\"}");
+    }
+
+    @Test
+    void takesAnArmWrittenAsASumOverUnitsAnAnonymousUnionAnswers() {
+        Running module = compiled("""
+                module matching
+
+                data A
+
+                data B
+
+                data AB = A | B
+
+                data Bad
+
+                let pick (s: String): AB | Bad =
+                    if s == "a" then A
+                    else if s == "b" then B
+                    else Bad
+
+                behavior read : (s: String) -> String
+
+                let read (s) =
+                    match pick(s) with
+                        | AB -> "AB"
+                        | Bad -> "Bad"
+                """);
+
+        assertThat(answerOf(module, "matching.read", "[\"a\"]")).isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[\"b\"]")).isEqualTo("{\"value\":\"AB\"}");
+        assertThat(answerOf(module, "matching.read", "[\"other\"]"))
+                .isEqualTo("{\"value\":\"Bad\"}");
     }
 
     @Test
@@ -193,17 +259,25 @@ class AMatchTakesTheArmItsValueIsTest {
 
                 data Pick = AB | Bad
 
+                behavior opened : (v: AB) -> Int
+
+                let opened (v) = match v with
+                    | A as a -> a.n
+                    | B as b -> b.n
+
                 behavior read : (p: Pick) -> Int
 
                 let read (p) = match p with
-                    | AB as v -> 1
-                    | Bad as b -> b.n
+                    | AB as v -> opened(v)
+                    | Bad as b -> b.n + 100
                 """);
 
+        assertThat(answerOf(module, "binding.read", "[{\"type\": \"A\", \"n\": 3}]"))
+                .isEqualTo("{\"value\":3}");
         assertThat(answerOf(module, "binding.read", "[{\"type\": \"B\", \"n\": 7}]"))
-                .isEqualTo("{\"value\":1}");
-        assertThat(answerOf(module, "binding.read", "[{\"type\": \"Bad\", \"n\": 7}]"))
                 .isEqualTo("{\"value\":7}");
+        assertThat(answerOf(module, "binding.read", "[{\"type\": \"Bad\", \"n\": 7}]"))
+                .isEqualTo("{\"value\":107}");
     }
 
     private static Running compiled(String... sources) {
