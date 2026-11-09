@@ -280,6 +280,54 @@ class AMatchTakesTheArmItsValueIsTest {
                 .isEqualTo("{\"value\":107}");
     }
 
+    @Test
+    void tellsScalarsNewtypesAndUnitsApartInOneMatch() {
+        Running module = compiled("""
+                module mixing
+
+                data Code = Int
+
+                data Missing
+
+                data A
+
+                data B
+
+                data AB = A | B
+
+                let first (n: Int): Int | String | AB | Code | Missing =
+                    if n == 0 then 5 else second(n)
+
+                let second (n: Int): Int | String | AB | Code | Missing =
+                    if n == 1 then "s" else third(n)
+
+                let third (n: Int): Int | String | AB | Code | Missing =
+                    if n == 2 then A else fourth(n)
+
+                let fourth (n: Int): Int | String | AB | Code | Missing =
+                    if n == 3 then B else fifth(n)
+
+                let fifth (n: Int): Int | String | AB | Code | Missing =
+                    if n == 4 then Code(7) else Missing
+
+                behavior kind : (n: Int) -> String
+
+                let kind (n) =
+                    match first(n) with
+                        | Int -> "int"
+                        | String -> "string"
+                        | AB -> "ab"
+                        | Code -> "code"
+                        | Missing -> "missing"
+                """);
+
+        List<String> expected = List.of("int", "string", "ab", "ab", "code", "missing");
+        for (int n = 0; n < expected.size(); n++) {
+            assertThat(answerOf(module, "mixing.kind", "[" + n + "]"))
+                    .isEqualTo("{\"value\":\"" + expected.get(n) + "\"}");
+        }
+    }
+
     private static Running compiled(String... sources) {
         return Running.linked(Compiled.module(Compiled.program(List.of(sources))));
     }
