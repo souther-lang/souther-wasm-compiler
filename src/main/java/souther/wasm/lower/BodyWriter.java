@@ -26,6 +26,7 @@ final class BodyWriter {
     private static final int OPCODE_LOOP = 0x03;
     private static final int OPCODE_BR = 0x0c;
     private static final int OPCODE_BR_IF = 0x0d;
+    private static final int OPCODE_BR_TABLE = 0x0e;
     private static final int OPCODE_LOCAL_GET = 0x20;
     private static final int OPCODE_LOCAL_SET = 0x21;
     private static final int OPCODE_I32_CONST = 0x41;
@@ -289,6 +290,20 @@ final class BodyWriter {
     /** Goes to the edge of the block that many out, whatever is on the stack. */
     BodyWriter leave(int depth) {
         writer.write((byte) OPCODE_BR).writeUnsignedLeb128(depth);
+        return this;
+    }
+
+    /**
+     * Goes to the edge of the block that many out as the number on the stack says, read as an
+     * unsigned one: {@code depths[n]} for an {@code n} among them, and {@code otherwise} for any
+     * other, minus one included.
+     */
+    BodyWriter leaveBy(int[] depths, int otherwise) {
+        writer.write((byte) OPCODE_BR_TABLE).writeUnsignedLeb128(depths.length);
+        for (int depth : depths) {
+            writer.writeUnsignedLeb128(depth);
+        }
+        writer.writeUnsignedLeb128(otherwise);
         return this;
     }
 

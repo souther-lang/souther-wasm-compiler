@@ -85,12 +85,18 @@ public final class RuntimeAbi {
      * 16 when the last of the sixteen bytes before a descriptor came to say where a value of its
      * type lies when it crosses typed, and a typed component's lifted functions came to answer
      * through {@link #TYPED_ANSWERED}, {@link #TYPED_REFUSED} and {@link #TYPED_ENDED} (issue #73).
+     * Raised to 17 when a set of alternatives came to end in the address of an index of its cases,
+     * so that which case a value is is read off the value once and not asked of each case in turn,
+     * and {@link #CLASSIFY} came to answer the same of a table a body carries, and the bytes before a
+     * descriptor came to be twenty-four, two more saying where the index of its names and the index
+     * of its cases are, so that a key's field, a tag's case and a value's case are found by one
+     * lookup, each only for a type the program asks that of (issue #77).
      */
-    public static final int VERSION = 16;
+    public static final int VERSION = 17;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
-     * each in the sixteen bytes before it: its reader at {@code -16}, its writer at {@code -12}
+     * each in the bytes before it: its reader at {@code -16}, its writer at {@code -12}
      * and its order at {@code -8}.
      *
      * <p>Named by the descriptor and not chosen by the runtime from the descriptor's kind, so that
@@ -553,11 +559,21 @@ public final class RuntimeAbi {
      */
     public static final String CHECK_INVARIANTS = "__souther_check_invariants";
 
-    /** {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. */
+    /**
+     * {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. No generated
+     * body asks it: it is the account {@link #CLASSIFY} is held to.
+     */
     public static final String IS = "__souther_is";
 
     /** {@code (i32 cell, i32 descriptor) -> i32}: a value's place among a set's alternatives. */
     public static final String CASE_OF = "__souther_case_of";
+
+    /**
+     * {@code (i32 cell, i32 table) -> i32}: what a table of leaves ({@code CaseIndex}) maps the
+     * descriptor a value was made as to, or minus one where it maps none, or the value is none of
+     * a set's alternatives.
+     */
+    public static final String CLASSIFY = "__souther_classify";
 
     /** {@code (i32 cell) -> i32}: whether an option holds something. */
     public static final String IS_SOME = "__souther_is_some";
@@ -900,6 +916,24 @@ public final class RuntimeAbi {
 
         /** A block as a value: the second word is its slot, and the payload what it captured. */
         public static final int TAG_CLOSURE = 9;
+
+        /** A {@code Decimal}. */
+        public static final int TAG_DECIMAL = 13;
+
+        /** A {@code Date}. */
+        public static final int TAG_DATE = 14;
+
+        /** A {@code Time}. */
+        public static final int TAG_TIME = 15;
+
+        /** A {@code DateTime}. */
+        public static final int TAG_DATE_TIME = 16;
+
+        /** An {@code Instant}. */
+        public static final int TAG_INSTANT = 17;
+
+        /** A {@code Rational}. */
+        public static final int TAG_RATIONAL = 19;
     }
 
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */

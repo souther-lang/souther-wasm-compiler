@@ -5,6 +5,7 @@ import java.util.Map;
 import souther.compiler.Compiler;
 import souther.compiler.jvm.ClassFileImage;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.lower.LeafTelling;
 import souther.wasm.lower.WasmCompiler;
 
 /**
@@ -64,6 +65,20 @@ public final class Compiled {
     /** {@code WasmCompiler.compile(program)}, written once for each program. */
     public static byte[] module(CheckedProgram program) {
         return MODULES.of(program, kept -> kept, WasmCompiler::compile).clone();
+    }
+
+    private record Told(CheckedProgram program, LeafTelling telling) {
+    }
+
+    private static final Recent<Told, byte[]> TOLD = new Recent<>(KEPT);
+
+    /**
+     * {@code WasmCompiler.compile(program, telling)}, written once for each program and way of
+     * telling a leaf.
+     */
+    public static byte[] module(CheckedProgram program, LeafTelling telling) {
+        return TOLD.of(new Told(program, telling), kept -> kept,
+                each -> WasmCompiler.compile(each.program(), each.telling())).clone();
     }
 
     /** {@code WasmCompiler.unshaken(program)}, written once for each program. */

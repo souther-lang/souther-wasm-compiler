@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
@@ -96,7 +97,19 @@ public final class WasmCompiler {
      * @return the linked module
      */
     public static byte[] compile(CheckedProgram program, byte[] runtime) {
-        return Linker.link(written(program, runtime, Lifting.NONE, null, null));
+        return Linker.link(written(program, runtime, Lifting.NONE, null, null, LeafTelling.BY_COST));
+    }
+
+    /**
+     * Compiles a checked program telling a value's leaf the way it is asked to, whatever it costs:
+     * for holding each way to the same answer.
+     *
+     * @param program what a Souther compile checked
+     * @param telling how the leaf of a value is told where a match or a composition asks it
+     * @return the linked module
+     */
+    public static byte[] compile(CheckedProgram program, LeafTelling telling) {
+        return Linker.link(written(program, runtimeModule(), Lifting.NONE, null, null, telling));
     }
 
     /**
@@ -107,7 +120,8 @@ public final class WasmCompiler {
      * @return the linked module, with all of the runtime in it
      */
     public static byte[] unshaken(CheckedProgram program) {
-        return Linker.unshaken(written(program, runtimeModule(), Lifting.NONE, null, null));
+        return Linker.unshaken(written(program, runtimeModule(), Lifting.NONE, null, null,
+                LeafTelling.BY_COST));
     }
 
     /**
@@ -133,7 +147,8 @@ public final class WasmCompiler {
      * @return the component
      */
     public static byte[] compileAsComponent(CheckedProgram program, byte[] runtime) {
-        return Component.around(Linker.link(written(program, runtime, Lifting.JSON, null, null)),
+        return Component.around(Linker.link(written(program, runtime, Lifting.JSON, null, null,
+                LeafTelling.BY_COST)),
                 offering(program));
     }
 
@@ -170,7 +185,7 @@ public final class WasmCompiler {
         WitTypes typed = WitTypes.read(program);
         TypedBuild.Recording recording = new TypedBuild.Recording(typed.offering());
         byte[] core = Linker.link(written(program, runtimeModule(), Lifting.TYPED, typed,
-                recording));
+                recording, LeafTelling.BY_COST));
         return new TypedCompiled(core, recording.build());
     }
 
@@ -318,9 +333,11 @@ public final class WasmCompiler {
     /**
      * @param typed what each type crosses typed as, for a typed compile, and nothing otherwise
      * @param recording where what the typed compile settles is written down, beside {@code typed}
+     * @param telling how a leaf is told where a match or a composition asks which of some it is
      */
     private static WasmFragment written(CheckedProgram program, byte[] runtime, Lifting lifting,
-            @Nullable WitTypes typed, TypedBuild.@Nullable Recording recording) {
+            @Nullable WitTypes typed, TypedBuild.@Nullable Recording recording,
+            LeafTelling telling) {
         CanonicalAbi abi = recording == null ? null : recording.abi();
         LinkPlan plan = LinkPlan.reading(runtime);
         WasmFragment fragment = new WasmFragment(plan);
@@ -408,7 +425,7 @@ public final class WasmCompiler {
                 throw new IllegalStateException(name + " is checked, and no check was declared for it");
             }
             return check;
-        });
+        }, telling);
         for (Written each : written) {
             fragment.write(each.index(), emitter.overValues(each));
         }
@@ -1001,6 +1018,8 @@ public final class WasmCompiler {
         private final Cells cells;
         /** The function checking what must hold of a type, by the type. */
         private final java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf;
+        /** How a leaf is told where a match or a composition asks which of some it is. */
+        private final LeafTelling telling;
 
         private BodyWriter out;
         private Map<BindingId, Integer> locals;
@@ -1009,7 +1028,9 @@ public final class WasmCompiler {
 
         Emitter(CheckedProgram program, WasmFragment fragment, Runtime calls, Descriptors shapes,
                 Map<ValueName, Integer> reached, Map<ValueName, Integer> entries,
-                java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf) {
+                java.util.function.ToIntFunction<TypeSymbol.AtModule> checkOf,
+                LeafTelling telling) {
+            this.telling = telling;
             this.program = program;
             this.entries = entries;
             this.fragment = fragment;
@@ -1135,7 +1156,10 @@ public final class WasmCompiler {
 
         /** Leaves on the stack whether the running value is one of the cases a stage accepts. */
         private void accepts(BodyWriter out, int running, List<TypeSymbol> cases) {
-            isOneOf(out, running, madeAs(out, running), cases);
+            isOneOf(out, running,
+                    comparing(cases.size(), 1, false) && asksWhatItWasMadeAs(cases)
+                            ? madeAs(out, running) : -1,
+                    cases);
         }
 
         /**
@@ -1622,6 +1646,7 @@ public final class WasmCompiler {
                                 .call(calls.of(RuntimeAbi.RECORD_GET));
                     } else {
                         // Read off a set of alternatives, so the value says where the field is.
+                        shapes.toFindFields(shape);
                         byte[] named = read.field().getBytes(StandardCharsets.UTF_8);
                         out.constant(fragment.intern(named))
                                 .constant(named.length)
@@ -1991,7 +2016,7 @@ public final class WasmCompiler {
                 // Which argument that is comes from the operation's own declaration: a value of
                 // one of them is typed as the case it is, not as the set it belongs to.
                 if (Descriptors.isRoundingMode(parameters.get(i))) {
-                    out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
+                    out.constant(shapes.toCase(shapes.roundingModes())).call(calls.of(RuntimeAbi.CASE_OF));
                 }
             }
             if (TAKES_RESULT_DESCRIPTOR.contains(kernel)) {
@@ -2239,11 +2264,18 @@ public final class WasmCompiler {
             out.localSet(subject);
 
             List<Core.Case> cases = chosen.cases();
-            int made = cases.subList(0, cases.size() - 1).stream().anyMatch(this::selectsLeaves)
+            int armOf = armsOf(out, cases, subject);
+            if (armOf >= 0 && telling != LeafTelling.LOOKING_UP
+                    && cases.subList(0, cases.size() - 1).stream().allMatch(this::selectsLeaves)) {
+                matchByTable(out, cases, subject, armOf, answer, arms);
+                return;
+            }
+            int made = armOf < 0 && cases.subList(0, cases.size() - 1).stream()
+                    .filter(this::selectsLeaves).anyMatch(arm -> asksWhatItWasMadeAs(leavesOf(arm)))
                     ? madeAs(out, subject) : -1;
             for (int i = 0; i < cases.size() - 1; i++) {
                 Core.Case arm = cases.get(i);
-                condition(out, arm, subject, made);
+                condition(out, arm, subject, made, armOf, i);
                 out.ifNotZero();
                 bind(out, arm, subject);
                 arms.write(out, arm.body());
@@ -2256,6 +2288,39 @@ public final class WasmCompiler {
             for (int i = 0; i < cases.size() - 1; i++) {
                 out.end();
             }
+            out.localGet(answer);
+        }
+
+        /**
+         * The arms of a match all told by the leaf of the value, as one jump: the number of the arm
+         * the value's leaf belongs to, which a table gave, says which block to leave, and the code
+         * of each arm lies at the end of its own. A value that is in no arm before the last — the
+         * table maps it to nothing, minus one — leaves the outermost block, where the last arm is.
+         * So the cost of reaching an arm is the same for the first and for the last.
+         */
+        private void matchByTable(BodyWriter out, List<Core.Case> cases, int subject, int armOf,
+                int answer, Writing arms) {
+            int tested = cases.size() - 1;
+            out.block();
+            int inside = out.depth();
+            for (int i = 0; i <= tested; i++) {
+                out.block();
+            }
+            int[] depths = IntStream.range(0, tested).toArray();
+            out.localGet(armOf).leaveBy(depths, tested);
+            for (int i = 0; i < tested; i++) {
+                out.end();
+                Core.Case arm = cases.get(i);
+                bind(out, arm, subject);
+                arms.write(out, arm.body());
+                out.localSet(answer).leave(out.depth() - inside);
+            }
+            out.end();
+            Core.Case last = cases.get(tested);
+            bind(out, last, subject);
+            arms.write(out, last.body());
+            out.localSet(answer);
+            out.end();
             out.localGet(answer);
         }
 
@@ -2272,9 +2337,13 @@ public final class WasmCompiler {
          * Leaves on the stack whether an arm is the one a value takes.
          *
          * @param made where the descriptor the value was made as is, asked once of the value for
-         *     every arm of the match that needs it
+         *     every arm of the match that needs it, where the arms are told by comparing it
+         * @param armOf where the number of the arm the value's leaf belongs to is, asked once of the
+         *     value by a table, or -1 where the arms are told by comparing {@code made}
+         * @param place which arm this is
          */
-        private void condition(BodyWriter out, Core.Case arm, int subject, int made) {
+        private void condition(BodyWriter out, Core.Case arm, int subject, int made, int armOf,
+                int place) {
             Optional<ResolvedCase> selected = arm.selectedCase();
             if (selected.isPresent()
                     && selected.get().refinement() instanceof Refinement.OptionPresent) {
@@ -2287,8 +2356,16 @@ public final class WasmCompiler {
                         .compares(BodyWriter.Comparison.EQUAL);
                 return;
             }
-            // The leaves each selected case covers, as the checker settled them: an arm written
-            // as a sum takes every leaf under it, which no name the arm is written by is.
+            if (armOf >= 0) {
+                out.localGet(armOf).constant(place).compares(BodyWriter.Comparison.EQUAL);
+            } else {
+                isOneOf(out, subject, made, leavesOf(arm));
+            }
+        }
+
+        /** The leaves each selected case of an arm covers, as the checker settled them: an arm
+         *  written as a sum takes every leaf under it, which no name the arm is written by is. */
+        private List<TypeSymbol> leavesOf(Core.Case arm) {
             List<TypeSymbol> atoms = arm.pattern().cases().stream()
                     .flatMap(each -> each.atoms().stream())
                     .distinct()
@@ -2297,7 +2374,113 @@ public final class WasmCompiler {
                 throw new NotLowered(writing
                         + " has an arm selecting nothing this backend can tell a value by");
             }
-            isOneOf(out, subject, made, atoms);
+            return atoms;
+        }
+
+        /**
+         * Puts in a local which arm a value's leaf belongs to, asked once of the value by a table
+         * that maps each leaf to the first arm covering it, or returns -1 where the arms are told
+         * by comparing what the value was made as with each leaf instead: where no arm before the
+         * last selects by leaves, or where there are few enough leaves that asking each costs less
+         * than a call into the runtime. The last arm is not in the table: it takes what no other
+         * does.
+         */
+        private int armsOf(BodyWriter out, List<Core.Case> cases, int subject) {
+            Map<Integer, Integer> arms = new LinkedHashMap<>();
+            int asking = 0;
+            int told = 0;
+            for (int i = 0; i < cases.size() - 1; i++) {
+                if (!selectsLeaves(cases.get(i))) {
+                    continue;
+                }
+                told++;
+                List<TypeSymbol> leaves = leavesOf(cases.get(i));
+                asking += leaves.size();
+                for (TypeSymbol leaf : leaves) {
+                    arms.putIfAbsent(leafDescriptor(leaf), i);
+                }
+            }
+            if (arms.isEmpty() || comparing(asking, told, told == cases.size() - 1)) {
+                return -1;
+            }
+            int armOf = scratch();
+            out.localGet(subject).constant(shapes.indexing(arms))
+                    .call(calls.of(RuntimeAbi.CLASSIFY)).localSet(armOf);
+            return armOf;
+        }
+
+        /** The tag a cell of a scalar holds, which is what says it is one. Every scalar there is has
+         *  one, so a scalar added to the language is not one this lowers until it is named here. */
+        private static int tagOf(TypeSymbol.Primitive scalar) {
+            return switch (scalar.primitive()) {
+                case INT -> Cell.TAG_INT;
+                case BOOL -> Cell.TAG_BOOL;
+                case STRING -> Cell.TAG_STRING;
+                case DECIMAL -> Cell.TAG_DECIMAL;
+                case RATIONAL -> Cell.TAG_RATIONAL;
+                case DATE -> Cell.TAG_DATE;
+                case TIME -> Cell.TAG_TIME;
+                case DATETIME -> Cell.TAG_DATE_TIME;
+                case INSTANT -> Cell.TAG_INSTANT;
+            };
+        }
+
+        private int leafDescriptor(TypeSymbol leaf) {
+            int descriptor = shapes.ofMember(leaf);
+            if (descriptor == 0) {
+                throw new NotLowered(writing + " asks for a leaf with no descriptor");
+            }
+            return descriptor;
+        }
+
+        /**
+         * What a lookup in a table costs, in the comparisons that telling a value from one leaf
+         * costs: a call into the runtime and a probe of the table. Read off the Chicory interpreter
+         * with JFR (issue #77): a match of one arm over 1 to 32 leaves cost the same as the lookup
+         * at about 32. An engine that calls more cheaply would put it lower; what a value is told
+         * as is the same either way.
+         */
+        private static final int CALL_COST = 32;
+
+        /**
+         * What reaching an arm by a jump costs beyond the lookup, in the same comparisons: the blocks
+         * around the arms and the jump itself. Read off the same interpreter: a match of one leaf to
+         * each of 96 arms cost the same by jumping as by comparing, the leaf being at a place no
+         * arm is likelier than another, which is about half of 96 comparisons.
+         */
+        private static final int JUMP_COST = 16;
+
+        /**
+         * Whether the arms are told by comparing a value with each leaf — a descriptor for a declared
+         * leaf, a tag for a scalar, a comparison each — and not by a lookup in a table, which is so
+         * where that costs no more. The one place that is decided, for a match and for a stage's
+         * accepted cases alike.
+         *
+         * <p>What comparing costs is every leaf where there is one thing to tell, and about half of
+         * them where there are several arms, since the arms are asked in turn and the one a value is
+         * in stops it: a leaf that may be anywhere is found halfway. What a lookup costs is
+         * {@link #CALL_COST}, and then a jump where every arm is told by its leaf, or a comparison
+         * of the arm's number with about half of the arms where one is not.
+         *
+         * @param asking how many leaves the arms tested cover
+         * @param arms how many arms are tested
+         * @param jumps whether every arm is told by its leaf, so that one jump reaches it
+         */
+        private boolean comparing(int asking, int arms, boolean jumps) {
+            return switch (telling) {
+                case COMPARING -> true;
+                case LOOKING_UP, JUMPING -> false;
+                case BY_COST -> {
+                    int comparing = arms > 1 ? (asking + 1) / 2 : asking;
+                    int looking = CALL_COST + (jumps ? JUMP_COST : (arms + 1) / 2);
+                    yield comparing <= looking;
+                }
+            };
+        }
+
+        /** Whether telling a value from these leaves needs what it was made as: one is declared. */
+        private static boolean asksWhatItWasMadeAs(List<TypeSymbol> leaves) {
+            return leaves.stream().anyMatch(leaf -> !(leaf instanceof TypeSymbol.Primitive));
         }
 
         /**
@@ -2306,8 +2489,8 @@ public final class WasmCompiler {
          *
          * <p>A primitive holds none, and what the word after its tag holds is part of the
          * primitive, which may be any number and so may be the address of a descriptor; the tag
-         * is what says that word is one. Asked once of a value, so that telling it from each leaf
-         * it may be costs a comparison and not a call into the runtime.
+         * is what says that word is one. Asked once of a value, so that telling it from each
+         * leaf it may be costs a comparison and not a call into the runtime.
          */
         private int madeAs(BodyWriter out, int cell) {
             int made = scratch();
@@ -2327,25 +2510,35 @@ public final class WasmCompiler {
          * Leaves on the stack whether a value is one of the leaves, which are leaves and not
          * sums: a sum has no descriptor a value was made as.
          *
-         * <p>A declared leaf is told by what the value was made as, which {@link #madeAs} read.
-         * A scalar has no descriptor to be made as and is asked of the runtime, which holds the
-         * one account of what a tag says.
+         * <p>Told by comparing what the value was made as with each leaf where those are few,
+         * and by one lookup of it in a table of them where asking of each costs more than that.
+         *
+         * @param made where {@link #madeAs} put what the value was made as, where the leaves are
+         *     compared one by one
          */
         private void isOneOf(BodyWriter out, int cell, int made, List<TypeSymbol> leaves) {
             if (leaves.isEmpty()) {
                 out.constant(0);
                 return;
             }
+            if (!comparing(leaves.size(), 1, false)) {
+                Map<Integer, Integer> accepted = new LinkedHashMap<>();
+                for (TypeSymbol leaf : leaves) {
+                    accepted.put(leafDescriptor(leaf), 1);
+                }
+                out.localGet(cell).constant(shapes.indexing(accepted))
+                        .call(calls.of(RuntimeAbi.CLASSIFY))
+                        .constant(-1).compares(BodyWriter.Comparison.UNEQUAL);
+                return;
+            }
             for (int i = 0; i < leaves.size(); i++) {
                 TypeSymbol leaf = leaves.get(i);
-                int descriptor = shapes.ofMember(leaf);
-                if (leaf instanceof TypeSymbol.Primitive) {
-                    out.localGet(cell).constant(descriptor).call(calls.of(RuntimeAbi.IS));
+                if (leaf instanceof TypeSymbol.Primitive scalar) {
+                    // A scalar holds no descriptor: it is what its tag says.
+                    out.localGet(cell).load(0).constant(tagOf(scalar))
+                            .compares(BodyWriter.Comparison.EQUAL);
                 } else {
-                    if (descriptor == 0) {
-                        throw new NotLowered(writing + " asks for a leaf with no descriptor");
-                    }
-                    out.localGet(made).constant(descriptor)
+                    out.localGet(made).constant(leafDescriptor(leaf))
                             .compares(BodyWriter.Comparison.EQUAL);
                 }
                 if (i > 0) {

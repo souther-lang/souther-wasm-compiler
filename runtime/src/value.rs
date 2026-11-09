@@ -323,6 +323,10 @@ pub(crate) unsafe fn held_as_tree(cell: u32) -> bool {
 /// A value of a declared type holds the descriptor it was made as, and is that type where the two
 /// are the same one. A scalar holds no descriptor — an `Int` is an `Int` and there is only one —
 /// so it is that type where its tag says so.
+///
+/// No generated body asks this any more — a body tells a leaf by comparing, or by a table
+/// (`__souther_classify`) — and it stays as the account every index is held to: for a cell that is
+/// well formed, a table answers as this does (`descriptor.rs`, on what a leaf is).
 #[no_mangle]
 pub unsafe extern "C" fn __souther_is(cell: u32, descriptor: u32) -> u32 {
     let tag = core::ptr::read_unaligned(cell as usize as *const u32);
@@ -1229,11 +1233,30 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     }
     let cell = __souther_record(descriptor);
     let mut whole = true;
-    for i in 0..descriptor::arity(descriptor) {
+    // What each field was written as, found by reading the object's keys once and telling each
+    // the field it names — and not by asking the object for each field in turn, which costs the
+    // number of keys for every field. The first of a key written twice is the one read.
+    let count = descriptor::arity(descriptor);
+    let written_as = crate::alloc_words(count as usize);
+    written_as.fill(0);
+    let fields = descriptor::name_index(descriptor);
+    for k in 0..json::__souther_json_length(value) {
+        let key = json::__souther_json_key(value, k);
+        if let Some(i) = descriptor::name_find(
+            fields,
+            json::__souther_json_bytes(key),
+            json::__souther_json_length(key),
+        ) {
+            if written_as[i as usize] == 0 {
+                written_as[i as usize] = json::__souther_json_value(value, k);
+            }
+        }
+    }
+    for i in 0..count {
         let (field, field_length) = descriptor::name(descriptor, i);
         let (at, at_length) = below(path, path_length, (field, field_length));
         let member = descriptor::member(descriptor, i);
-        let written = entry(value, field, field_length);
+        let written = written_as[i as usize];
         if written == 0 {
             // An optional field has a key to be missing, and its being missing is what absence is
             // written as there — not `null`, which is what absence is where there is no key.
@@ -1297,9 +1320,11 @@ unsafe fn named_for(value: u32, descriptor: u32, path: u32, path_length: u32) ->
 #[no_mangle]
 pub unsafe extern "C" fn __souther_record_named(cell: u32, at: u32, length: u32) -> u32 {
     let descriptor = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
-    for i in 0..descriptor::arity(descriptor) {
-        let (field, field_length) = descriptor::name(descriptor, i);
-        if same(field, field_length, at, length) {
+    // Found by one lookup of the name in what the value's own descriptor indexes its fields by, and
+    // not by asking each field in turn: a field far down a wide shape cost as many comparisons as
+    // there are fields before it, at every read. Only a shape has names to look up.
+    if descriptor::kind(descriptor) == KIND_PRODUCT {
+        if let Some(i) = descriptor::name_find(descriptor::name_index(descriptor), at, length) {
             return __souther_record_get(cell, i);
         }
     }
@@ -1671,11 +1696,8 @@ unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) 
     }
     let held = json::__souther_json_bytes(value);
     let held_length = json::__souther_json_length(value);
-    for i in 0..descriptor::arity(descriptor) {
-        let (case, case_length) = descriptor::name(descriptor, i);
-        if same(case, case_length, held, held_length) {
-            return __souther_unit(descriptor::member(descriptor, i));
-        }
+    if let Some(i) = descriptor::name_find(descriptor::name_index(descriptor), held, held_length) {
+        return __souther_unit(descriptor::member(descriptor, i));
     }
     // A name no case goes by is reported as Raoh's `oneOf` over strings reports a value that is
     // none of the ones allowed, since that constraint states the same rule: the names allowed, and
@@ -1720,28 +1742,25 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     }
     let held = json::__souther_json_bytes(written);
     let held_length = json::__souther_json_length(written);
-    for i in 0..descriptor::arity(descriptor) {
-        let (case, case_length) = descriptor::name(descriptor, i);
-        if same(case, case_length, held, held_length) {
-            let member = descriptor::member(descriptor, i);
-            return match descriptor::carried(member) {
-                // A unit and a shape are read from the object membership gave them, the tag
-                // beside whatever fields they lay there.
-                Carried::Nothing | Carried::Fields => __souther_read(value, member, path, path_length),
-                // Anything else keeps its own form, under a key of its own beside the tag.
-                Carried::Itself => {
-                    let contents_under = keyed(descriptor::contents_key(descriptor), descriptor);
-                    let (at, at_length) = below(path, path_length, contents_under);
-                    let contents = entry(value, contents_under.0, contents_under.1);
-                    if contents == 0 {
-                        required(at, at_length);
-                        return 0;
-                    }
-                    __souther_read(contents, member, at, at_length)
+    if let Some(i) = descriptor::name_find(descriptor::name_index(descriptor), held, held_length) {
+        let member = descriptor::member(descriptor, i);
+        return match descriptor::carried(member) {
+            // A unit and a shape are read from the object membership gave them, the tag
+            // beside whatever fields they lay there.
+            Carried::Nothing | Carried::Fields => __souther_read(value, member, path, path_length),
+            // Anything else keeps its own form, under a key of its own beside the tag.
+            Carried::Itself => {
+                let contents_under = keyed(descriptor::contents_key(descriptor), descriptor);
+                let (at, at_length) = below(path, path_length, contents_under);
+                let contents = entry(value, contents_under.0, contents_under.1);
+                if contents == 0 {
+                    required(at, at_length);
+                    return 0;
                 }
-            };
-        }
-    }
+                __souther_read(contents, member, at, at_length)
+            }
+        };
+}
     // A tag naming no case is not one of those the sum allows, and which those are is said, as
     // Raoh's `discriminate` says it.
     let (at, at_length) = below(path, path_length, tagged_under);
@@ -1980,11 +1999,28 @@ unsafe fn named(cell: u32, descriptor: u32) {
 
 /// Which of a set's alternatives a value is, as its place among them, or nothing where it is none.
 ///
-/// Asked as `__souther_is` asks it of each: a value of a declared type by the descriptor it was
-/// made as, and a primitive — which holds none — by its tag. The one account of which member a
-/// value is, for writing it, for the order a declaration states, and for a `match`.
+/// Asked of the value once: what it is is its descriptor (`order::try_identity`), and the set's
+/// index of its cases (`descriptor::case_index`) says where that leaf stands, so the answer does
+/// not wait on how far down the declaration the leaf is. The one account of which member a value
+/// is, for writing it, for the order a declaration states, and for a `match`.
 pub(crate) unsafe fn member_of(cell: u32, descriptor: u32) -> Option<u32> {
-    (0..descriptor::arity(descriptor)).find(|&i| __souther_is(cell, descriptor::member(descriptor, i)) != 0)
+    descriptor::index_find(descriptor::case_index(descriptor), order::try_identity(cell)?)
+}
+
+/// Which leaf a table maps a value to: what it maps what the value is to, or all ones where it maps
+/// none. A `match` asks it with a table of which arm takes each leaf, and a composition with one of
+/// the leaves a stage accepts.
+#[no_mangle]
+pub unsafe extern "C" fn __souther_classify(cell: u32, table: u32) -> u32 {
+    // A table the compiler did not write is the compiler and this runtime disagreeing about what
+    // it hands over, not a table of nothing.
+    if table == 0 {
+        abort(crate::REASON_BACKEND_INVARIANT_BROKEN, 0, cell as u64, 0);
+    }
+    match order::try_identity(cell) {
+        Some(identity) => descriptor::index_find(table, identity).unwrap_or(u32::MAX),
+        None => u32::MAX,
+    }
 }
 
 /// The same, where the value has to be one: a place whose type the checker settled holds a value

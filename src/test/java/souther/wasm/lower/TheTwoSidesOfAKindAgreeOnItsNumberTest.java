@@ -39,6 +39,25 @@ class TheTwoSidesOfAKindAgreeOnItsNumberTest {
     }
 
     /**
+     * And the tag a cell holds, which a generated body reads to tell a scalar from the others
+     * without asking the runtime. Every tag named here is the number the runtime gives it.
+     */
+    @Test
+    void everyTagACellHoldsHasTheNumberTheRuntimeGivesIt() {
+        Map<String, Integer> runtime = numbersIn(
+                Path.of("runtime/src/value.rs"), "pub const (TAG_\\w+): u32 = (\\d+);");
+        Map<String, Integer> here = numbersIn(
+                Path.of("src/main/java/souther/wasm/abi/RuntimeAbi.java"),
+                "int (TAG_\\w+) = (\\d+);");
+
+        assertThat(runtime).describedAs("the runtime declares tags").isNotEmpty();
+        assertThat(here).describedAs("this side names the tag of every scalar").containsKeys(
+                "TAG_INT", "TAG_BOOL", "TAG_STRING", "TAG_DECIMAL", "TAG_RATIONAL", "TAG_DATE",
+                "TAG_TIME", "TAG_DATE_TIME", "TAG_INSTANT");
+        assertThat(runtime).containsAllEntriesOf(here);
+    }
+
+    /**
      * And the rules a clause is reported as, which this compiler writes into a clause's table and
      * the runtime reads to say which constraint a value broke. Every one has a number here and the
      * same number there, and neither side names one the other does not.

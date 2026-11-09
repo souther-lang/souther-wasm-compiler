@@ -840,10 +840,35 @@ unsafe fn entries(left: u32, right: u32, descriptor: u32) -> i32 {
 /// option or a tuple is never one of a set's alternatives, which are named types, so a cell of one
 /// met here ends the call rather than standing for something it is not.
 pub unsafe fn identity(cell: u32) -> u32 {
+    match try_identity(cell) {
+        Some(identity) => identity,
+        None => abort(
+            REASON_BACKEND_INVARIANT_BROKEN,
+            0,
+            core::ptr::read_unaligned(cell as usize as *const u32) as u64,
+            cell as u64,
+        ),
+    }
+}
+
+/// The same, where a cell that is none of a set's alternatives is an answer and not the end of the
+/// call: a list, a map, an option, a tuple, or a primitive the program holds no descriptor of.
+pub unsafe fn try_identity(cell: u32) -> Option<u32> {
     let tag = core::ptr::read_unaligned(cell as usize as *const u32);
-    descriptor::primitive(match tag {
+    descriptor::try_primitive(match tag {
         value::TAG_UNIT | value::TAG_RECORD => {
-            return core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+            // What a cell was made as is a descriptor of the kind a cell of its tag is made as: a
+            // unit's, or a shape's or a newtype's for a record. A word that is zero, or is the
+            // address of a scalar's descriptor, or of a list's, is not that, and the cell was not
+            // made as anything — it is none of what the descriptor it names is of.
+            let made = core::ptr::read_unaligned((cell as usize + 4) as *const u32);
+            let held = made != 0
+                && match (tag, descriptor::kind(made)) {
+                    (value::TAG_UNIT, KIND_UNIT) => true,
+                    (value::TAG_RECORD, KIND_PRODUCT | KIND_NEWTYPE) => true,
+                    _ => false,
+                };
+            return if held { Some(made) } else { None };
         }
         value::TAG_INT => KIND_INT,
         value::TAG_BOOL => KIND_BOOL,
@@ -854,7 +879,7 @@ pub unsafe fn identity(cell: u32) -> u32 {
         value::TAG_TIME => KIND_TIME,
         value::TAG_DATE_TIME => KIND_DATE_TIME,
         value::TAG_INSTANT => KIND_INSTANT,
-        other => abort(REASON_BACKEND_INVARIANT_BROKEN, 0, other as u64, cell as u64),
+        _ => return None,
     })
 }
 
