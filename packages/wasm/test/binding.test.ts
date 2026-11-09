@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -440,6 +441,60 @@ export async function all(bytes: Uint8Array): Promise<unknown[]> {
     const page = await import(join(at, "page.ts"));
     assert.deepEqual(await page.all(bytes),
       [2n, 5n, 6n, 6n, { b: true }, { m: 2n }, { k: 3n }, { s: 1n }, { r: 3n }]);
+  });
+
+  it("keeps the names a model writes as they are, and writes what TypeScript refuses as one it reads", async () => {
+    // One model for both, since each model costs a compiler started and a page checked. 保険者番号 and
+    // 位置 are names TypeScript reads as they are. U+088F begins a Souther name and is a letter to
+    // Node, but TypeScript's own table does not hold it.
+    const { at, bytes } = await generated(`module careplan.共通
+
+data 保険者番号 = String
+data 性別 = 男性 | 女性
+data 男性
+data 女性
+data 年月 = { 年: Int, 月: Int }
+data \u088f型 = String
+data \u088f = String
+data \u0c5c = String
+data a\u088f = String
+data a_u088f_ = String
+
+behavior 読む : (位置: Int, 番号: 保険者番号, 月: 年月) -> 性別
+
+let 読む (位置, 番号, 月) = 男性
+
+behavior 拒む : (\u088f: \u088f型, 位置: \u088f) -> Int
+
+let 拒む (\u088f, 位置) = 1
+`, `import { load, type 保険者番号, type 年月 } from "./binding.ts";
+
+export async function all(bytes: Uint8Array): Promise<unknown[]> {
+  const bound = await load(bytes);
+  const 番号: 保険者番号 = "A";
+  const 月: 年月 = { "年": 2026n, "月": 1n };
+  const m = bound.modules["careplan.共通"];
+  return [m.読む(1n, 番号, 月).value, m.拒む("a", "b").value];
+}
+`);
+    const binding = await readFile(join(at, "binding.ts"), "utf8");
+    assert.match(binding, /export type 保険者番号 = string;/);
+    // A name written as it is stays where a property or a comment says it, and is not an identifier.
+    // A character TypeScript refuses is written as its code point, under a `_` that no name written as
+    // it is begins with: so two of them are two names, and so is one and a name that looks like what is
+    // written for it.
+    assert.match(binding, /export type __u088f_型 = string;/);
+    assert.match(binding, /export type __u088f_ = string;/);
+    assert.match(binding, /export type __u0c5c_ = string;/);
+    assert.match(binding, /export type _a_u088f_ = string;/);
+    assert.match(binding, /export type a_u088f_ = string;/);
+    // What a parameter is called is what a caller reads off the signature, and a page that passes
+    // its arguments by position does not say it, so it is read here.
+    assert.match(binding, /"読む"\(位置: bigint, 番号: 保険者番号, 月: 年月\)/);
+    assert.match(binding, /"拒む"\(__u088f_: __u088f_型, 位置: __u088f_\)/);
+    assert.equal(await checked(at), "");
+    const page = await import(join(at, "page.ts"));
+    assert.deepEqual(await page.all(bytes), ["男性", 1n]);
   });
 
   it("refuses a module it was not generated from", async () => {

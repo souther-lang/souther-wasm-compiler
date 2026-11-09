@@ -6,30 +6,13 @@
 // the binding, and a page that still names the old one does not compile.
 
 import { type Declaration, type Form, keyOf as key, type Shape, type Surface, tagOf } from "./surface.ts";
-
-/**
- * What no name the binding declares at its top may be: what TypeScript reserves, what a type alias
- * cannot be called, and what the binding itself declares or reads there. A declaration a model
- * calls one of these is given another name, rather than the binding declaring two things under one
- * or a type of the model standing where the binding meant TypeScript's own.
- */
-const RESERVED: ReadonlySet<string> = new Set([
-  // What JavaScript reserves, in strict code and in a module.
-  "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
-  "else", "enum", "export", "extends", "false", "finally", "for", "function", "if", "import", "in",
-  "instanceof", "new", "null", "return", "super", "switch", "this", "throw", "true", "try",
-  "typeof", "var", "void", "while", "with", "implements", "interface", "let", "package",
-  "private", "protected", "public", "static", "yield", "await", "arguments", "eval",
-  // What a type alias cannot be called.
-  "any", "unknown", "never", "string", "number", "boolean", "symbol", "object", "bigint",
-  "undefined", "type", "as", "satisfies",
-]);
+import { namesOf as declarationNames, parameterNames } from "./names.ts";
 
 /**
  * What the binding itself declares at its top, which a model's declaration does not displace.
  *
  * Every one of these is written into the binding from here and only from here, and the binding names
- * nothing else at its top but the types `Names` hands out: none of TypeScript's own (`Record`,
+ * nothing else at its top but the types `namesOf` hands out: none of TypeScript's own (`Record`,
  * `Promise`), which a model's type of the same name would stand in for. So a name the binding comes
  * to declare is reserved by being declared, and no list of reserved names can fall behind it.
  */
@@ -45,39 +28,13 @@ const R = OWN.runtime;
 /** A value with no field, written without naming TypeScript's `Readonly` or `Record`. */
 const NOTHING = "{ readonly [key: string]: never }";
 
-/** Hands out names no two of which are the same and none of which is reserved. */
-class Names {
-  readonly #taken: Set<string>;
-
-  constructor(taken: Iterable<string>) {
-    this.#taken = new Set(taken);
-  }
-
-  /** `wanted`, as an identifier, or the first of `wanted_2`, `wanted_3`… that nothing has. */
-  claim(wanted: string): string {
-    const base = identifier(wanted);
-    let name = base;
-    for (let n = 2; this.#taken.has(name); n++) {
-      name = `${base}_${n}`;
-    }
-    this.#taken.add(name);
-    return name;
-  }
-}
-
-/** `name` as TypeScript can write an identifier: what it cannot hold becomes `_`. */
-function identifier(name: string): string {
-  const written = name.replace(/[^A-Za-z0-9_$]/g, "_");
-  return /^[A-Za-z_$]/.test(written) ? written : `_${written}`;
-}
-
 /**
  * The binding of a module whose surface is `surface`, as TypeScript source.
  *
  * What the model names is the binding's to call whatever it likes only where a property says it: a
  * module, a behavior and a type a value is read as are each a property, under the name the model
  * gives it, so `bound.modules.cart.price`, `bound.decode.cart.Sku` and `bound.form.cart.Cart`. What is declared at the top
- * — a type for each declaration — is named by `Names`, apart from what TypeScript reserves and what
+ * — a type for each declaration — is named by `namesOf`, apart from what TypeScript reserves and what
  * the binding declares itself, and the runtime is read through one name, so no type of the model's
  * stands in for one of the runtime's.
  *
@@ -86,7 +43,7 @@ function identifier(name: string): string {
  * @param runtime what the binding imports the runtime as
  */
 export function bindingFor(surface: Surface, fingerprint: string, runtime = "@souther-lang/wasm"): string {
-  const names = namesOf(surface.declarations);
+  const names = declarationNames(surface.declarations, Object.values(OWN));
   const declared = new Map(surface.declarations.map((each) => [key(each), each]));
   const typeOf = (shape: Shape): string => written(shape, names, declared);
   const out: string[] = [
@@ -101,7 +58,7 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
   ];
 
   for (const declaration of surface.declarations) {
-    out.push(`/** \`${declaration.module}.${declaration.name}\`${declaration.published === false ? ", which its module keeps" : ""}. */`);
+    out.push(`/** \`${inComment(`${declaration.module}.${declaration.name}`)}\`${declaration.published === false ? ", which its module keeps" : ""}. */`);
     out.push(`export type ${names.get(key(declaration))} = ${declarationType(declaration, typeOf, names, declared)};`);
     out.push("");
   }
@@ -194,36 +151,17 @@ export function bindingFor(surface: Surface, fingerprint: string, runtime = "@so
   return out.join("\n") + "\n";
 }
 
+/**
+ * `text` as it can stand in a comment: a module is read as it is, and a name in one is not the
+ * binding's to trust to end a comment where it meant to.
+ */
+function inComment(text: string): string {
+  return text.replace(/\*\//g, "*\\/").replace(/[\r\n\u2028\u2029]/g, " ");
+}
+
 /** A property's name as TypeScript writes it: bare where it can be, quoted where it cannot. */
 function property(name: string): string {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
-}
-
-/**
- * What each declaration is called in the binding: its own name where no other module declares one
- * by that name, and its module's before it where one does, since a type is its module and its name.
- * Those that need no module are named first, so one written as `AX` in module `c` keeps its name
- * where `a.X` would be written the same way; and whatever is still taken is told apart by a number.
- */
-function namesOf(declarations: readonly Declaration[]): Map<string, string> {
-  const count = new Map<string, number>();
-  for (const each of declarations) {
-    count.set(each.name, (count.get(each.name) ?? 0) + 1);
-  }
-  const shared = (each: Declaration): boolean => (count.get(each.name) ?? 0) > 1;
-  const names = new Names([...RESERVED, ...Object.values(OWN)]);
-  const named = new Map<string, string>();
-  for (const each of declarations.filter((it) => !shared(it))) {
-    named.set(key(each), names.claim(each.name));
-  }
-  for (const each of declarations.filter(shared)) {
-    named.set(key(each), names.claim(each.module.split(".").map(capitalised).join("") + each.name));
-  }
-  return named;
-}
-
-function capitalised(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 /**
@@ -234,9 +172,8 @@ function parameters(
   declared: readonly { readonly name: string | null; readonly type: Shape }[],
   typeOf: (shape: Shape) => string,
 ): string {
-  const names = new Names(RESERVED);
-  return declared.map((each, at) => `${names.claim(each.name ?? `argument${at}`)}: ${typeOf(each.type)}`)
-    .join(", ");
+  const names = parameterNames(declared.map((each) => each.name));
+  return declared.map((each, at) => `${names[at]}: ${typeOf(each.type)}`).join(", ");
 }
 
 function declarationType(
