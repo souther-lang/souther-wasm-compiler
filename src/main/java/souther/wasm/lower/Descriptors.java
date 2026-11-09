@@ -40,12 +40,14 @@ import souther.wasm.link.WitType;
  * met while the type is being described rather than while a body is being emitted, which is where
  * the question is actually asked.
  *
- * <p>Before each descriptor, sixteen bytes name what reads, writes and orders a value of its type
- * ({@link RuntimeAbi.Operations}), each only where the program asks it of the type: a descriptor
- * is not a reader, a writer and an order, and a slot names a function the module then carries. What
- * is asked is said as it is asked ({@link #toRead}, {@link #toWrite}, {@link #toOrder}) and settled
- * once everything has been described ({@link #finish}), because asking one thing of a type asks
- * things of the types it is made of, and of types described after it.
+ * <p>Before each descriptor, twenty-four bytes name what reads, writes and orders a value of its type
+ * ({@link RuntimeAbi.Operations}), where it lies when it crosses typed, and the indexes that find a
+ * name and a case, each only where the program asks it of the type: a descriptor is not a reader, a
+ * writer and an order, and a slot names a function the module then carries, as an index is a table
+ * the module then carries. What is asked is said as it is asked ({@link #toRead}, {@link #toWrite},
+ * {@link #toOrder}, {@link #toCase}, {@link #toFindFields}) and settled once everything has been
+ * described ({@link #finish}), because asking one thing of a type asks things of the types it is
+ * made of, and of types described after it.
  */
 final class Descriptors {
 
@@ -117,6 +119,10 @@ final class Descriptors {
     private final Set<Integer> writes = new HashSet<>();
     /** The descriptors whose values the program places among a set's members. */
     private final Set<Integer> orders = new HashSet<>();
+    /** The sets of alternatives whose cases the program is asked the place of by a value. */
+    private final Set<Integer> cased = new HashSet<>();
+    /** The shapes whose fields the program finds by name off a value of a set of alternatives. */
+    private final Set<Integer> found = new HashSet<>();
 
     /**
      * The newtypes over a list one of whose clauses is that the list holds no value twice, by the
@@ -389,7 +395,6 @@ final class Descriptors {
     private int alternatives(TypeSymbol.AtModule name, List<TypeSymbol> members,
             CheckedAlternativesForm form) {
         List<int[]> described = new ArrayList<>();
-        Map<Integer, Integer> places = new LinkedHashMap<>();
         List<NameIndex.Entry> tags = new ArrayList<>();
         for (TypeSymbol member : members) {
             byte[] utf8 = member.name().getBytes(StandardCharsets.UTF_8);
@@ -397,12 +402,11 @@ final class Descriptors {
             int tag = fragment.intern(utf8);
             described.add(new int[] {tag, utf8.length, leaf});
             tags.add(new NameIndex.Entry(member.name(), tag, tags.size()));
-            places.putIfAbsent(leaf, places.size());
         }
-        int index = indexing(places);
-        int named = fragment.intern(NameIndex.of(tags));
         if (form instanceof CheckedAlternativesForm.Enumeration) {
-            return written(KIND_ENUMERATION, name, described, index, named);
+            int descriptor = written(KIND_ENUMERATION, name, described);
+            this.described.get(descriptor).names = tags;
+            return descriptor;
         }
         int[] keys = {0, 0, 0, 0};
         if (form instanceof CheckedAlternativesForm.Discriminated(String tag, String contents)) {
@@ -411,7 +415,9 @@ final class Descriptors {
             keys = new int[] {fragment.intern(tagged), tagged.length,
                     fragment.intern(held), held.length};
         }
-        return written(KIND_SUM, name, described, keys[0], keys[1], keys[2], keys[3], index, named);
+        int descriptor = written(KIND_SUM, name, described, keys);
+        this.described.get(descriptor).names = tags;
+        return descriptor;
     }
 
     /**
@@ -464,8 +470,7 @@ final class Descriptors {
     }
 
     /**
-     * Places a descriptor settled as it is written, after the sixteen bytes that will name its
-     * operations.
+     * Places a descriptor settled as it is written, after the bytes that will name its operations.
      */
     private int placed(int kind, byte[] descriptor, int... members) {
         int operations = fragment.reserve(OPERATIONS);
@@ -474,8 +479,11 @@ final class Descriptors {
         return at;
     }
 
-    /** How many bytes before a descriptor name its operations: a reader, a writer, an order. */
-    private static final int OPERATIONS = 16;
+    /**
+     * How many bytes before a descriptor name what is asked of its type: the index of its names and
+     * the index of its cases, then a reader, a writer, an order and where it lies typed.
+     */
+    private static final int OPERATIONS = 24;
 
     /**
      * A descriptor placed: its kind, where its operations go, and the descriptors of what it is made
@@ -485,6 +493,8 @@ final class Descriptors {
         final int kind;
         final int operations;
         int[] members;
+        /** What each field, or each case, is called, and where that is written. */
+        List<NameIndex.Entry> names = List.of();
 
         Described(int kind, int operations, int at, int[] members) {
             if (at != operations + OPERATIONS) {
@@ -539,7 +549,7 @@ final class Descriptors {
      * descriptor being described and neither would ever have an address.
      */
     private int composite(int kind, TypeSymbol.AtModule name, List<Member> members) {
-        int descriptor = reserveFor(kind, name, members.size(), 1);
+        int descriptor = reserveFor(kind, name, members.size());
         List<int[]> written = new ArrayList<>();
         List<NameIndex.Entry> fields = new ArrayList<>();
         for (Member member : members) {
@@ -548,10 +558,9 @@ final class Descriptors {
             written.add(new int[] {field, utf8.length, of(member.type())});
             fields.add(new NameIndex.Entry(member.name(), field, fields.size()));
         }
-        // What a field is found by when it is read by its name, off a document or off a value
-        // whose case is not known until it is read.
-        int named = fragment.intern(NameIndex.of(fields));
-        return filled(kind, name, descriptor, written, named);
+        int filled = filled(kind, name, descriptor, written);
+        described.get(filled).names = fields;
+        return filled;
     }
 
     /**
@@ -561,6 +570,10 @@ final class Descriptors {
     private int written(int kind, TypeSymbol.AtModule name, List<int[]> members, int... after) {
         int descriptor = reserveFor(kind, name, members.size(), after.length);
         return filled(kind, name, descriptor, members, after);
+    }
+
+    private int reserveFor(int kind, TypeSymbol.AtModule name, int members) {
+        return reserveFor(kind, name, members, 0);
     }
 
     private int reserveFor(int kind, TypeSymbol.AtModule name, int members, int after) {
@@ -636,6 +649,31 @@ final class Descriptors {
         return descriptor;
     }
 
+    /**
+     * Says the program asks which of a set of alternatives' cases a value is, by a call of its own
+     * ({@link RuntimeAbi#CASE_OF}), which reading, writing, ordering and crossing it ask of their own
+     * accord.
+     */
+    int toCase(int descriptor) {
+        cased.add(descriptor);
+        return descriptor;
+    }
+
+    /**
+     * Says the program reads a field by its name off a value of a set of alternatives, which the
+     * value's own descriptor answers: so each case of it, whichever the value is, has its fields'
+     * names indexed.
+     */
+    void toFindFields(TypeSymbol.AtModule alternatives) {
+        if (declared(alternatives) instanceof CheckedData.Sum choice) {
+            for (TypeSymbol each : choice.cases()) {
+                found.add(ofMember(each));
+            }
+        } else {
+            found.add(ofDeclared(alternatives));
+        }
+    }
+
     /** Says the program places values of {@code descriptor}'s type among others. */
     int toOrder(int descriptor) {
         orders.add(descriptor);
@@ -705,16 +743,52 @@ final class Descriptors {
         }
         for (Map.Entry<Integer, Described> each : described.entrySet()) {
             int at = each.getKey();
-            int kind = each.getValue().kind;
+            Described held = each.getValue();
+            int kind = held.kind;
             ByteArrayOutputStream operations = new ByteArrayOutputStream();
             new WasmWriter(operations)
+                    .writeLittleEndian4(namesAreAsked(at, kind) ? fragment.intern(NameIndex.of(held.names)) : 0)
+                    .writeLittleEndian4(casesAreAsked(at, kind) ? indexing(placesOf(held)) : 0)
                     .writeLittleEndian4(reads.contains(at) ? slotOf(readerOf(kind)) : 0)
                     .writeLittleEndian4(writes.contains(at) ? slotOf(writerOf(kind)) : 0)
                     .writeLittleEndian4(orders.contains(at) ? slotOf(ordererOf(kind)) : 0)
                     .writeLittleEndian4(crosses.contains(at) ? layoutOf(at, kind) : 0);
-            fragment.fill(each.getValue().operations, operations.toByteArray());
+            fragment.fill(held.operations, operations.toByteArray());
         }
         primitives();
+    }
+
+    /**
+     * Whether what a document or a value names is looked up in the descriptor: a field a reader
+     * takes a key for, a tag a reader takes a case by, and a field read off a set of alternatives.
+     * A newtype is read as what it names and has no keys, so it is asked only for the last.
+     */
+    private boolean namesAreAsked(int at, int kind) {
+        return switch (kind) {
+            case KIND_PRODUCT -> reads.contains(at) || found.contains(at);
+            case KIND_NEWTYPE -> found.contains(at);
+            case KIND_SUM, KIND_ENUMERATION -> reads.contains(at);
+            default -> false;
+        };
+    }
+
+    /**
+     * Whether which of a set of alternatives' cases a value is gets asked of the descriptor: by
+     * what writes it, what orders it and what carries it typed, and by a body asking for itself.
+     */
+    private boolean casesAreAsked(int at, int kind) {
+        return (kind == KIND_SUM || kind == KIND_ENUMERATION)
+                && (writes.contains(at) || orders.contains(at) || crosses.contains(at)
+                        || cased.contains(at));
+    }
+
+    /** Each case of a set of alternatives, by the leaf it is, to its place among the cases. */
+    private static Map<Integer, Integer> placesOf(Described alternatives) {
+        Map<Integer, Integer> places = new LinkedHashMap<>();
+        for (int leaf : alternatives.members) {
+            places.putIfAbsent(leaf, places.size());
+        }
+        return places;
     }
 
     /**

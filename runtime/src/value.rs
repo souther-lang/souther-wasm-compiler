@@ -1235,7 +1235,7 @@ unsafe fn product(value: u32, descriptor: u32, path: u32, path_length: u32) -> u
     let count = descriptor::arity(descriptor);
     let written_as = crate::alloc_words(count as usize);
     written_as.fill(0);
-    let fields = descriptor::field_index(descriptor);
+    let fields = descriptor::name_index(descriptor);
     for k in 0..json::__souther_json_length(value) {
         let key = json::__souther_json_key(value, k);
         if let Some(i) = descriptor::name_find(
@@ -1320,7 +1320,7 @@ pub unsafe extern "C" fn __souther_record_named(cell: u32, at: u32, length: u32)
     // not by asking each field in turn: a field far down a wide shape cost as many comparisons as
     // there are fields before it, at every read.
     if matches!(descriptor::kind(descriptor), KIND_PRODUCT | KIND_NEWTYPE) {
-        if let Some(i) = descriptor::name_find(descriptor::field_index(descriptor), at, length) {
+        if let Some(i) = descriptor::name_find(descriptor::name_index(descriptor), at, length) {
             return __souther_record_get(cell, i);
         }
     }
@@ -1692,7 +1692,7 @@ unsafe fn enumeration(value: u32, descriptor: u32, path: u32, path_length: u32) 
     }
     let held = json::__souther_json_bytes(value);
     let held_length = json::__souther_json_length(value);
-    if let Some(i) = descriptor::name_find(descriptor::tag_index(descriptor), held, held_length) {
+    if let Some(i) = descriptor::name_find(descriptor::name_index(descriptor), held, held_length) {
         return __souther_unit(descriptor::member(descriptor, i));
     }
     // A name no case goes by is reported as Raoh's `oneOf` over strings reports a value that is
@@ -1738,7 +1738,7 @@ unsafe fn sum(value: u32, descriptor: u32, path: u32, path_length: u32) -> u32 {
     }
     let held = json::__souther_json_bytes(written);
     let held_length = json::__souther_json_length(written);
-    if let Some(i) = descriptor::name_find(descriptor::tag_index(descriptor), held, held_length) {
+    if let Some(i) = descriptor::name_find(descriptor::name_index(descriptor), held, held_length) {
         let member = descriptor::member(descriptor, i);
         return match descriptor::carried(member) {
             // A unit and a shape are read from the object membership gave them, the tag

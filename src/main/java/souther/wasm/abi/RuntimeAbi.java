@@ -87,15 +87,16 @@ public final class RuntimeAbi {
      * through {@link #TYPED_ANSWERED}, {@link #TYPED_REFUSED} and {@link #TYPED_ENDED} (issue #73).
      * Raised to 17 when a set of alternatives came to end in the address of an index of its cases,
      * so that which case a value is is read off the value once and not asked of each case in turn,
-     * and {@link #CLASSIFY} came to answer the same of a table a body carries, and a product and a
-     * set of alternatives came to end in the address of an index of the names a document reads
-     * them by, so that a key's field and a tag's case are found by one lookup (issue #77).
+     * and {@link #CLASSIFY} came to answer the same of a table a body carries, and the bytes before a
+     * descriptor came to be twenty-four, two more saying where the index of its names and the index
+     * of its cases are, so that a key's field, a tag's case and a value's case are found by one
+     * lookup, each only for a type the program asks that of (issue #77).
      */
     public static final int VERSION = 17;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
-     * each in the sixteen bytes before it: its reader at {@code -16}, its writer at {@code -12}
+     * each in the bytes before it: its reader at {@code -16}, its writer at {@code -12}
      * and its order at {@code -8}.
      *
      * <p>Named by the descriptor and not chosen by the runtime from the descriptor's kind, so that

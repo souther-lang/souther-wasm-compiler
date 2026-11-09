@@ -117,9 +117,10 @@ const PAGE: usize = 65536;
 ///
 /// Raised to 17 when a set of alternatives came to point at an index of its cases, so that which
 /// case a value is is read off the value once and not asked of each case in turn (issue #77), and
-/// `__souther_classify` came to answer the same of any table of leaves a program writes. A product
-/// and a set of alternatives came to end in an index of the names a document reads them by, so a
-/// key's field and a tag's case are found by one lookup.
+/// `__souther_classify` came to answer the same of any table of leaves a program writes. The bytes
+/// before a descriptor came to be twenty-four, two more saying where the index of its names and the
+/// index of its cases are, so a key's field, a tag's case and a value's case are found by one
+/// lookup, and an index is carried only by a type the program asks that of.
 const ABI_VERSION: u32 = 17;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits

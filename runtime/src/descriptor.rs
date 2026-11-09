@@ -23,15 +23,13 @@
 //! +4  u32 one
 //! +8  u32 where the field's name is, u32 how long, u32 the field's own descriptor
 //! then u32 where the type's own name is, u32 how long, u32 the slot of what checks it,
-//!      u32 where the table of what its clauses are reported as is, u32 where the index of the
-//!      field's name is (see below)
+//!      u32 where the table of what its clauses are reported as is
 //!
 //! kind PRODUCT
 //! +4  u32 how many fields
 //! +8  per field: u32 where its name is, u32 how long, u32 the field's own descriptor
 //! then u32 where the type's own name is, u32 how long, u32 the slot of what checks it,
-//!      u32 where the table of what its clauses are reported as is, u32 where the index of the
-//!      fields' names is (see below)
+//!      u32 where the table of what its clauses are reported as is
 //!
 //! kind SUM / ENUMERATION
 //! +4  u32 how many cases
@@ -39,7 +37,6 @@
 //! then, of a SUM, u32 where the key the tag stands under is, u32 how long, u32 where the key a
 //!      case carried as itself stands under is, u32 how long — the checker's, nothing for a set
 //!      only a body holds
-//! then u32 where the index of its cases is, u32 where the index of their tags is (see below)
 //!
 //! kind LIST / OPTION
 //! +4  u32 one
@@ -49,10 +46,13 @@
 //! A list and an option are written with one member so that everything with members is read the
 //! same way. What their member is called is nothing, because nothing names it.
 //!
-//! Before every descriptor, sixteen bytes say what reads, writes and orders a value of its type,
+//! Before every descriptor, twenty-four bytes say where the indexes of its names and of its cases are,
+//! what reads, writes and orders a value of its type,
 //! and where it lies when it crosses typed:
 //!
 //! ```text
+//! -24 u32 where the index of its names is    (a product's fields, a set's tags)
+//! -20 u32 where the index of its cases is    (a set of alternatives)
 //! -16 u32 the slot of its reader       (`__souther_read_*`)
 //! -12 u32 the slot of its writer       (`__souther_write_*`)
 //! -8  u32 the slot of its order        (`__souther_order_*`)
@@ -169,21 +169,26 @@ pub unsafe fn arity(descriptor: u32) -> u32 {
 
 /// Where the index of a set of alternatives' cases is: the table that maps the descriptor of a
 /// leaf to its place among the cases.
+///
+/// Filled only where the program asks which case a value is of the type, which is where something
+/// writes, orders or carries it, or a body asks. A descriptor with none asked is one nothing asked
+/// that of, so being asked it is the compiler and this runtime disagreeing about what is asked.
 pub unsafe fn case_index(descriptor: u32) -> u32 {
-    let after = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
-    read(if kind(descriptor) == KIND_SUM { after + 16 } else { after })
+    asked(descriptor, read(descriptor as usize - 20))
 }
 
-/// Where the index of a set of alternatives' tags is: the table that maps a case's name to its place.
-pub unsafe fn tag_index(descriptor: u32) -> u32 {
-    let after = descriptor as usize + 8 + 12 * arity(descriptor) as usize;
-    read(if kind(descriptor) == KIND_SUM { after + 20 } else { after + 4 })
+/// Where the index of a descriptor's names is: the table that maps what a product's field or a set
+/// of alternatives' case is called to its place. Filled only where a reader takes the names of a
+/// document, or a field is found by name off a value, as `case_index` is.
+pub unsafe fn name_index(descriptor: u32) -> u32 {
+    asked(descriptor, read(descriptor as usize - 24))
 }
 
-/// Where the index of a product's or a newtype's field names is: the table that maps a field's name
-/// to its place.
-pub unsafe fn field_index(descriptor: u32) -> u32 {
-    read(descriptor as usize + 8 + 12 * arity(descriptor) as usize + 16)
+unsafe fn asked(descriptor: u32, index: u32) -> u32 {
+    if index == 0 {
+        crate::abort(crate::REASON_BACKEND_INVARIANT_BROKEN, descriptor, 0, 0);
+    }
+    index
 }
 
 /// What a table written as `NameIndex` maps a name to, or nothing where it holds none.

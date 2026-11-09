@@ -1623,6 +1623,7 @@ public final class WasmCompiler {
                                 .call(calls.of(RuntimeAbi.RECORD_GET));
                     } else {
                         // Read off a set of alternatives, so the value says where the field is.
+                        shapes.toFindFields(shape);
                         byte[] named = read.field().getBytes(StandardCharsets.UTF_8);
                         out.constant(fragment.intern(named))
                                 .constant(named.length)
@@ -1992,7 +1993,7 @@ public final class WasmCompiler {
                 // Which argument that is comes from the operation's own declaration: a value of
                 // one of them is typed as the case it is, not as the set it belongs to.
                 if (Descriptors.isRoundingMode(parameters.get(i))) {
-                    out.constant(shapes.roundingModes()).call(calls.of(RuntimeAbi.CASE_OF));
+                    out.constant(shapes.toCase(shapes.roundingModes())).call(calls.of(RuntimeAbi.CASE_OF));
                 }
             }
             if (TAKES_RESULT_DESCRIPTOR.contains(kernel)) {
