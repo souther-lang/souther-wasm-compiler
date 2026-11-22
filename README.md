@@ -60,13 +60,15 @@ What a string means is not written here. Its order, its length, its case, its ca
 which characters are white space, which text is a day or a moment, and which strings a pattern
 accepts are rules Souther shares with Raoh, and
 [notation-199x](https://github.com/raoh-project/notation-199x) implements them once per language.
-Souther's own runtime takes the Java artifact, and the runtime here takes the Rust crate at the same
-release, so the two backends answer from one account. A pattern is the one rule that crosses between
-them: the checker settles what it means, the Java half writes the machine that meaning is run as as
-an image with the Java artifact, and the runtime reads the image back with the crate. This build
-takes the Java artifact from souther-compiler and names no version of it, and
-`TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest` holds the crate `runtime/Cargo.lock`
-resolves to the same release.
+Souther's own runtime takes the Java artifact, and the runtime here takes the Rust crate, so the two
+backends answer from one account. A pattern is the one rule that crosses between them: the checker
+settles what it means, the Java half writes the machine that meaning is run as as an image with the
+Java artifact, and the runtime reads the image back with the crate. This build takes the Java
+artifact from souther-compiler and names no version of it. Each implementation of the library is
+released and numbered on its own, so the crate's number is not held to the artifact's:
+`TheRuntimeIsBuiltWithOneReleaseOfNotationTest` holds `runtime/Cargo.lock` to one release of the
+crate from crates.io, and the tests that run a pattern through the runtime hold what it reads to
+what the Java half writes.
 
 What an amount or an exact quotient is is not written here either. What a `Decimal` is and what
 each operation on one answers, including the widest whole number one holds, and what a `Rational`

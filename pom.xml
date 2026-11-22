@@ -65,8 +65,9 @@
              runtime reads, is not declared here: it is the one souther-compiler takes, so the
              image is written by the version that settled the pattern, and a version stated here as
              well would win over Souther's without either saying so. The runtime reads the image
-             with the same version of the library's Rust implementation, which
-             TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest holds runtime/Cargo.lock to. -->
+             with the library's Rust implementation, which is released and numbered on its own:
+             TheRuntimeIsBuiltWithOneReleaseOfNotationTest holds runtime/Cargo.lock to one release
+             of it, and running a pattern through the runtime holds the reading to the writing. -->
         <dependency>
             <groupId>org.jspecify</groupId>
             <artifactId>jspecify</artifactId>
