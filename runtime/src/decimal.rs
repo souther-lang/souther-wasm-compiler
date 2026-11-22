@@ -2,10 +2,13 @@
 //!
 //! What a value is and what each operation on one answers is `souther_exact`'s [`Amount`], which
 //! the native runtime answers from too, so the two backends give one answer by having one source
-//! and not by being held to each other. That includes where an answer has no place: an operation
-//! whose whole number would be wider than a `Decimal` holds answers nothing, before building it,
-//! and the call ends as `REQUIRED_FORM_HAS_NO_PLACE`, as it does on the JVM and in the native
-//! runtime.
+//! and not by being held to each other. That includes where an answer has no place to be written:
+//! an operation whose whole number would be wider than a `Decimal` is kept in answers nothing,
+//! before building it. A `Decimal` is any finite decimal, so a sum, a difference, a product, a
+//! rounding and a quotient always have an answer, and one with no place is the platform failing
+//! and not the language refusing a value: the call ends as an arena that cannot grow does. What
+//! the language refuses is a whole number no `Int` holds and a text no `String` holds, and those
+//! end the call as `REQUIRED_FORM_HAS_NO_PLACE`.
 //!
 //! ```text
 //! +0   u32 tag
@@ -15,7 +18,10 @@
 //! ```
 
 use crate::value::TAG_DECIMAL;
-use crate::{abort, alloc, REASON_BACKEND_INVARIANT_BROKEN, REASON_REQUIRED_FORM_HAS_NO_PLACE};
+use crate::{
+    abort, alloc, REASON_BACKEND_INVARIANT_BROKEN, REASON_OUT_OF_MEMORY,
+    REASON_REQUIRED_FORM_HAS_NO_PLACE,
+};
 use heap::string::String;
 use souther_exact::{Amount, Rounding};
 
@@ -62,12 +68,14 @@ pub unsafe fn amount(cell: u32) -> Amount {
     Amount::from_trusted_parts(signed < 0, bytes, read_u32(cell + OFF_SCALE) as i32)
 }
 
-/// A cell holding the answer, or the end of the call where it has no place: a scale past the
-/// 32-bit range, or a whole number wider than a `Decimal` holds.
+/// A cell holding the answer of an operation that always has one, or the end of the call where
+/// there is no place to write it: a scale past the 32-bit range, or a whole number wider than a
+/// `Decimal` is kept in. That is the platform failing, so the call ends as one that ran out of
+/// room and not for a reason the language gives.
 unsafe fn settled(answer: Option<Amount>) -> u32 {
     match answer {
         Some(amount) => cell_of(&amount),
-        None => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, 0, 0),
+        None => abort(REASON_OUT_OF_MEMORY, 0, 0, 0),
     }
 }
 
