@@ -460,8 +460,10 @@ const OFF_AUX1: usize = 20;
 // this backend's own machinery reaching a state the checker settled it never would — and are this
 // crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
-/// The arena asked for more than the engine would map. `aux0` is the size that did not fit. A
-/// platform failure, not a Souther program ending without a value: `WasmFault::OUT_OF_MEMORY`.
+/// The arena asked for more than the engine would map, where `aux0` is the size that did not fit,
+/// or a `Decimal` or a `Rational` an operation always has an answer of had no place to be written
+/// or no room to be worked out. A platform failure, not a Souther program ending without a value:
+/// `WasmFault::OUT_OF_MEMORY`.
 pub const REASON_OUT_OF_MEMORY: u32 = 1;
 /// A reset was handed a mark the arena never issued. `aux0` is the mark, `aux1` the top. An ABI
 /// failure by whoever calls this module, not a Souther program's own: `WasmFault::BAD_MARK`.
@@ -475,10 +477,11 @@ pub const REASON_MALFORMED_JSON: u32 = 3;
 pub const REASON_NOT_A_VALUE: u32 = 4;
 /// The value an operation would answer with, or a form its own semantics needs on the way there,
 /// has no place in the type it is declared to be (spec
-/// `an-operation-refuses-only-what-its-own-answer-has-no-place-for`): an `Int` or `Decimal` sum,
-/// difference, product or arithmetic result outside what its type holds, a `Decimal` scale outside
-/// what the runtime takes, a temporal shift off the end of what it holds, or `String.repeat`'s,
-/// the padding operations' and `List.rangeInclusive`'s count or span no answer could hold.
+/// `an-operation-refuses-only-what-its-own-answer-has-no-place-for`): an `Int` sum, difference,
+/// product or narrowing outside what an `Int` holds, a text longer than a `String` holds, a
+/// temporal shift off the end of what it holds, or `String.repeat`'s, the padding operations' and
+/// `List.rangeInclusive`'s count or span no answer could hold. Not a `Decimal` or a `Rational` the
+/// runtime has no place to write, which every operation over them has an answer of.
 /// `aux0`/`aux1` are what of, where the site has them.
 /// Represents `AbortKind::REQUIRED_FORM_HAS_NO_PLACE`.
 pub const REASON_REQUIRED_FORM_HAS_NO_PLACE: u32 = 5;
