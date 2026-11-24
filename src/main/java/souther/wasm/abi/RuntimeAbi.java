@@ -81,13 +81,22 @@ public final class RuntimeAbi {
      * reason it could not before, {@link WasmFault#INVALID_HOST_ANSWER} (issue #63), whose record
      * points at the behavior's name and at the issues, raised by {@link #READ_ANSWER}, which an
      * injected behavior's answer came to be read through, and {@link #LIFT_ENDED} came to write the
-     * two as the {@code invalid-answer} of a component's {@code ended}, beside the reason.
+     * two as the {@code invalid-answer} of a component's {@code ended}, beside the reason. Raised to
+     * 16 when the last of the sixteen bytes before a descriptor came to say where a value of its
+     * type lies when it crosses typed, and a typed component's lifted functions came to answer
+     * through {@link #TYPED_ANSWERED}, {@link #TYPED_REFUSED} and {@link #TYPED_ENDED} (issue #73).
+     * Raised to 17 when a set of alternatives came to end in the address of an index of its cases,
+     * so that which case a value is is read off the value once and not asked of each case in turn,
+     * and {@link #CLASSIFY} came to answer the same of a table a body carries, and the bytes before a
+     * descriptor came to be twenty-four, two more saying where the index of its names and the index
+     * of its cases are, so that a key's field, a tag's case and a value's case are found by one
+     * lookup, each only for a type the program asks that of (issue #77).
      */
-    public static final int VERSION = 15;
+    public static final int VERSION = 17;
 
     /**
      * What reads, writes and orders a value of each kind, which a descriptor names by the slot of
-     * each in the sixteen bytes before it: its reader at {@code -16}, its writer at {@code -12}
+     * each in the bytes before it: its reader at {@code -16}, its writer at {@code -12}
      * and its order at {@code -8}.
      *
      * <p>Named by the descriptor and not chosen by the runtime from the descriptor's kind, so that
@@ -224,6 +233,52 @@ public final class RuntimeAbi {
      * at. Writes the same static area, so it cannot itself run out of memory.
      */
     public static final String LIFT_ENDED = "__souther_lift_ended";
+
+    /**
+     * {@code (i32 count) -> i32}: room for that many core values a typed function was handed, one
+     * to an eight-byte slot, each nothing until it is put there.
+     */
+    public static final String TYPED_SLOTS = "__souther_typed_slots";
+
+    /**
+     * {@code (i32 at, i32 arguments) -> i32}: the arguments a typed function was handed, in the
+     * slots or the record at {@code at}, as the array of them a JSON call's arguments are read
+     * from. {@code arguments} is where the function's arguments record is ({@code runtime/src/typed.rs}).
+     */
+    public static final String TYPED_ARGUMENTS = "__souther_typed_arguments";
+
+    /**
+     * {@code (i32 values, i32 arguments, i32 at)}: writes the values at {@code values}, one cell to
+     * a word, as the arguments of a call to a typed function, flattened into the slots at
+     * {@code at} or laid out as the record of them there.
+     */
+    public static final String TYPED_LOWERED = "__souther_typed_lowered";
+
+    /**
+     * {@code (i32 cell, i32 descriptor, i32 result) -> i32}: writes what a typed function answers,
+     * the {@code ok} of its result, and answers where. {@code result} is where the function's
+     * result record is.
+     */
+    public static final String TYPED_ANSWERED = "__souther_typed_answered";
+
+    /**
+     * {@code (i32 result) -> i32}: writes the {@code err} of a typed function's result that the
+     * boundary refused, the issues found as records, and answers where.
+     */
+    public static final String TYPED_REFUSED = "__souther_typed_refused";
+
+    /**
+     * {@code (i32 result) -> i32}: writes the {@code err} of a typed function's result that the
+     * runtime ended, as {@link #LIFT_ENDED} writes a JSON one's, into a static area.
+     */
+    public static final String TYPED_ENDED = "__souther_typed_ended";
+
+    /**
+     * {@code (i32 at, i32 answer, i64 behavior) -> i32}: reads what a typed function the program
+     * reaches out to answered, at {@code at}, as {@link #READ_ANSWER} reads a JSON one.
+     * {@code answer} is where the behavior's answer record is.
+     */
+    public static final String TYPED_ANSWER = "__souther_typed_answer";
 
     /**
      * {@code () -> !}: leaves a call whose reason the failure record holds, carrying nothing. A
@@ -504,11 +559,21 @@ public final class RuntimeAbi {
      */
     public static final String CHECK_INVARIANTS = "__souther_check_invariants";
 
-    /** {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. */
+    /**
+     * {@code (i32 cell, i32 descriptor) -> i32}: whether a value was made as that type. No generated
+     * body asks it: it is the account {@link #CLASSIFY} is held to.
+     */
     public static final String IS = "__souther_is";
 
     /** {@code (i32 cell, i32 descriptor) -> i32}: a value's place among a set's alternatives. */
     public static final String CASE_OF = "__souther_case_of";
+
+    /**
+     * {@code (i32 cell, i32 table) -> i32}: what a table of leaves ({@code CaseIndex}) maps the
+     * descriptor a value was made as to, or minus one where it maps none, or the value is none of
+     * a set's alternatives.
+     */
+    public static final String CLASSIFY = "__souther_classify";
 
     /** {@code (i32 cell) -> i32}: whether an option holds something. */
     public static final String IS_SOME = "__souther_is_some";
@@ -839,6 +904,9 @@ public final class RuntimeAbi {
         /** A {@code String}: the second word is how many bytes, and the payload is the bytes. */
         public static final int TAG_STRING = 3;
 
+        /** A value of a product type. The second word is which type, as it is of a unit. */
+        public static final int TAG_RECORD = 4;
+
         /** A list: the payload is how many elements, and then where they are, which is read through
          *  {@link RuntimeAbi#LIST_ELEMENTS} and not off the cell. */
         public static final int TAG_LIST = 5;
@@ -848,6 +916,24 @@ public final class RuntimeAbi {
 
         /** A block as a value: the second word is its slot, and the payload what it captured. */
         public static final int TAG_CLOSURE = 9;
+
+        /** A {@code Decimal}. */
+        public static final int TAG_DECIMAL = 13;
+
+        /** A {@code Date}. */
+        public static final int TAG_DATE = 14;
+
+        /** A {@code Time}. */
+        public static final int TAG_TIME = 15;
+
+        /** A {@code DateTime}. */
+        public static final int TAG_DATE_TIME = 16;
+
+        /** An {@code Instant}. */
+        public static final int TAG_INSTANT = 17;
+
+        /** A {@code Rational}. */
+        public static final int TAG_RATIONAL = 19;
     }
 
     /** The name a generated start thunk is given. It takes and answers nothing, as a start must. */

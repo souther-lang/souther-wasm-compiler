@@ -48,7 +48,10 @@ public final class WasmFragment {
      */
     public WasmFragment(LinkPlan plan) {
         this.plan = plan;
-        this.staticTop = plan.staticBase();
+        // Everything placed begins at a multiple of eight, the first thing as well as the rest:
+        // some of it is read where an alignment is required of it, as the err of a typed call
+        // that ended is, which a caller lifting the result checks begins at the result's.
+        this.staticTop = align(plan.staticBase());
     }
 
     /** The runtime this fragment is written against. */

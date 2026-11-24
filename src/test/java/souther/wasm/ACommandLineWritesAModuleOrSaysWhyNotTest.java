@@ -10,6 +10,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -189,6 +190,76 @@ class ACommandLineWritesAModuleOrSaysWhyNotTest {
 
         // What a program offers is the program's, not the shape it was written in.
         assertThat(Files.readString(fromCore)).isEqualTo(Files.readString(fromComponent));
+    }
+
+    @Test
+    void writesATypedComponentAndWhatItOffersWhereOneIsAskedFor(@TempDir Path room)
+            throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+        Path component = room.resolve("component.wasm");
+        Path offers = room.resolve("counting.wit");
+
+        Ran ran = run(source.toString(), "-o", component.toString(), "--component",
+                "--component-abi", "typed", "--wit", offers.toString());
+
+        assertThat(ran.status()).isZero();
+        assertThat(Files.readAllBytes(component)[6]).isEqualTo((byte) 0x01);
+        assertThat(Files.readString(offers))
+                .contains("package souther:typed-program@0.1.0 {")
+                .contains("export souther:typed-program/%counting@0.1.0;")
+                .doesNotContain("souther:program");
+    }
+
+    @Test
+    void offersTheSameTypedThingWhetherAComponentIsWrittenOrNot(@TempDir Path room)
+            throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+        Path fromCore = room.resolve("core.wit");
+        Path fromComponent = room.resolve("component.wit");
+
+        run(source.toString(), "-o", room.resolve("a.wasm").toString(),
+                "--component-abi", "typed", "--wit", fromCore.toString());
+        run(source.toString(), "-o", room.resolve("b.wasm").toString(), "--component",
+                "--component-abi", "typed", "--wit", fromComponent.toString());
+
+        assertThat(Files.readString(fromCore)).isEqualTo(Files.readString(fromComponent));
+    }
+
+    @Test
+    void crossesInJsonWhereNoAbiIsNamed(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+        Path unnamed = room.resolve("a.wasm");
+        Path named = room.resolve("b.wasm");
+
+        run(source.toString(), "-o", unnamed.toString(), "--component");
+        run(source.toString(), "-o", named.toString(), "--component", "--component-abi", "json");
+
+        assertThat(Files.readAllBytes(named)).isEqualTo(Files.readAllBytes(unnamed));
+    }
+
+    @Test
+    void refusesAComponentAbiItHasNothingToSayOf(@TempDir Path room) throws IOException {
+        Path source = Files.writeString(room.resolve("counting.sou"), COUNTING);
+        Path into = room.resolve("out.wasm");
+
+        Map<String, String[]> lines = Map.of(
+                "nothing here writes one", new String[] {
+                    source.toString(), "-o", into.toString(), "--component-abi", "typed"},
+                "no such component ABI: binary", new String[] {
+                    source.toString(), "-o", into.toString(), "--component",
+                    "--component-abi", "binary"},
+                "--component-abi names no ABI", new String[] {
+                    source.toString(), "-o", into.toString(), "--component",
+                    "--component-abi"},
+                "--component-abi is given more than once", new String[] {
+                    source.toString(), "-o", into.toString(), "--component",
+                    "--component-abi", "typed", "--component-abi", "json"});
+        lines.forEach((said, arguments) -> {
+            Ran ran = run(arguments);
+            assertThat(ran.status()).describedAs(String.join(" ", arguments)).isEqualTo(2);
+            assertThat(ran.complained()).describedAs(String.join(" ", arguments)).contains(said);
+        });
+        assertThat(into).doesNotExist();
     }
 
     @Test

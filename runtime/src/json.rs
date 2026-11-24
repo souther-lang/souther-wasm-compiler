@@ -40,6 +40,10 @@ pub const TAG_STRING: u32 = 4;
 pub const TAG_ARRAY: u32 = 5;
 /// An object, whose payload is a key pointer and a value pointer per entry.
 pub const TAG_OBJECT: u32 = 6;
+/// An amount a typed caller handed over as text, whose payload is the text. Never parsed: it is
+/// what a document a typed value is made into holds where an amount is, so that the reader of an
+/// amount says whether the text is one, as the reader of a date says whether text is a date.
+pub const TAG_AMOUNT_TEXT: u32 = 7;
 
 const HEADER: usize = 8;
 
@@ -145,31 +149,39 @@ pub unsafe fn put_entries(cell: u32, entries: *const u32, held: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn __souther_json_write_int(value: i64) -> u64 {
     let mut digits = [0u8; 20];
-    let mut written = 0;
-    let negative = value < 0;
+    let written = int_digits(value, &mut digits);
+    let out = alloc(written.len() as u32);
+    core::ptr::copy_nonoverlapping(written.as_ptr(), out as usize as *mut u8, written.len());
+    packed(out, written.len() as u32)
+}
+
+/// A number cell of a whole number, its digits written straight into the cell as a parsed one's
+/// are: for a document made of a typed value, which is read as the number it holds.
+pub(crate) unsafe fn made_of_int(value: i64) -> u32 {
+    let mut digits = [0u8; 20];
+    let written = int_digits(value, &mut digits);
+    made_of_bytes(TAG_NUMBER, written.as_ptr() as u32, written.len() as u32)
+}
+
+/// A whole number's digits as JSON writes them, in the room handed over, answering the part of it
+/// they fill. The one account of how one is written.
+fn int_digits(value: i64, room: &mut [u8; 20]) -> &[u8] {
     // Negated as an i128 so that the most negative i64 has somewhere to go.
-    let mut rest = if negative { -(value as i128) } else { value as i128 };
-    if rest == 0 {
-        digits[written] = b'0';
-        written += 1;
-    }
-    while rest > 0 {
-        digits[written] = b'0' + (rest % 10) as u8;
-        written += 1;
+    let mut rest = (value as i128).unsigned_abs();
+    let mut at = room.len();
+    loop {
+        at -= 1;
+        room[at] = b'0' + (rest % 10) as u8;
         rest /= 10;
+        if rest == 0 {
+            break;
+        }
     }
-    let total = written + usize::from(negative);
-    let out = alloc(total as u32) as usize;
-    let mut at = out;
-    if negative {
-        core::ptr::write(at as *mut u8, b'-');
-        at += 1;
+    if value < 0 {
+        at -= 1;
+        room[at] = b'-';
     }
-    for i in (0..written).rev() {
-        core::ptr::write(at as *mut u8, digits[i]);
-        at += 1;
-    }
-    packed(out as u32, total as u32)
+    &room[at..]
 }
 
 /// `true` or `false`.
@@ -337,42 +349,18 @@ impl Reader {
 
     unsafe fn number(&mut self) -> u32 {
         let start = self.at;
-        if self.peek() == b'-' {
-            self.at += 1;
-        }
-        // A leading zero is not a way of writing a longer number, so `01` is two tokens rather
-        // than one and the document is not one value.
-        if self.peek() == b'0' {
-            self.at += 1;
-        } else {
-            self.digits();
-        }
-        if self.at < self.end && read_u8(self.at) == b'.' {
-            self.at += 1;
-            self.digits();
-        }
-        if self.at < self.end && (read_u8(self.at) | 0x20) == b'e' {
-            self.at += 1;
-            if self.at < self.end && (read_u8(self.at) == b'+' || read_u8(self.at) == b'-') {
-                self.at += 1;
+        match number_end(start, self.end) {
+            Ok(past) => self.at = past,
+            Err(stopped) => {
+                self.at = stopped;
+                self.malformed();
             }
-            self.digits();
         }
         let length = self.at - start;
         let out = cell(TAG_NUMBER, length as u32);
         let _ = alloc(length as u32);
         core::ptr::copy_nonoverlapping(start as *const u8, (out as usize + HEADER) as *mut u8, length);
         out
-    }
-
-    unsafe fn digits(&mut self) {
-        let start = self.at;
-        while self.at < self.end && read_u8(self.at).is_ascii_digit() {
-            self.at += 1;
-        }
-        if self.at == start {
-            self.malformed();
-        }
     }
 
     unsafe fn string(&mut self) -> u32 {
@@ -521,7 +509,7 @@ impl Reader {
         }
         self.expect(b']');
         let out = cell(TAG_ARRAY, count);
-        let _ = alloc(4 * count);
+        let _ = alloc(crate::room(0, count, 4));
         let mut node = first;
         for i in 0..count as usize {
             write_u32(out as usize + HEADER + 4 * i, read_u32(node as usize));
@@ -563,7 +551,7 @@ impl Reader {
         }
         self.expect(b'}');
         let out = cell(TAG_OBJECT, count);
-        let _ = alloc(8 * count);
+        let _ = alloc(crate::room(0, count, 8));
         let mut node = first;
         for i in 0..2 * count as usize {
             write_u32(out as usize + HEADER + 4 * i, read_u32(node as usize));
@@ -621,6 +609,89 @@ unsafe fn push(first: &mut u32, last: &mut u32, value: u32) {
         write_u32(*last as usize + 4, node);
     }
     *last = node;
+}
+
+/// A cell of a document nobody wrote as text: a typed value, made into the document the JSON
+/// boundary would have parsed, so that what reads a document reads it.
+///
+/// A keyword — `null`, `false`, `true` — carries nothing.
+pub(crate) unsafe fn made(tag: u32) -> u32 {
+    cell(tag, 0)
+}
+
+/// A string or a number of a document nobody wrote as text, its bytes copied after its header as a
+/// parsed one's are.
+pub(crate) unsafe fn made_of_bytes(tag: u32, at: u32, length: u32) -> u32 {
+    let out = cell(tag, length);
+    let bytes = alloc(length);
+    core::ptr::copy_nonoverlapping(at as usize as *const u8, bytes as usize as *mut u8, length as usize);
+    out
+}
+
+/// An array or an object of a document nobody wrote as text, with room for `count` elements or
+/// entries, each put in afterwards ([`put_element`], [`put_entry`]).
+pub(crate) unsafe fn made_holding(tag: u32, count: u32) -> u32 {
+    let out = cell(tag, count);
+    let _ = alloc(crate::room(0, count, if tag == TAG_OBJECT { 8 } else { 4 }));
+    out
+}
+
+/// Puts an element into an array [`made_holding`] made.
+pub(crate) unsafe fn put_element(array: u32, index: u32, value: u32) {
+    write_u32(array as usize + HEADER + 4 * index as usize, value);
+}
+
+/// Puts an entry into an object [`made_holding`] made.
+pub(crate) unsafe fn put_entry(object: u32, index: u32, key: u32, value: u32) {
+    write_u32(object as usize + HEADER + 8 * index as usize, key);
+    write_u32(object as usize + HEADER + 8 * index as usize + 4, value);
+}
+
+/// Says an object [`made_holding`] made holds fewer entries than it had room for.
+pub(crate) unsafe fn holds(object: u32, count: u32) {
+    write_u32(object as usize + 4, count);
+}
+
+/// Whether text is a number as JSON writes one, which is what a number cell holds and all that
+/// what reads one is ready for: the grammar the parser reads a number by, and no other.
+pub(crate) unsafe fn is_number(at: u32, length: u32) -> bool {
+    let end = (at + length) as usize;
+    number_end(at as usize, end) == Ok(end)
+}
+
+/// Where a number written from `at` on ends, as JSON writes one, or where it stopped being one.
+///
+/// The one account of the grammar. A leading zero is not a way of writing a longer number, so
+/// `01` ends after the `0`: as a document it is two tokens rather than one value, and as an amount
+/// it is text that is no amount.
+unsafe fn number_end(at: usize, end: usize) -> Result<usize, usize> {
+    let digits = |from: usize| -> Result<usize, usize> {
+        let mut i = from;
+        while i < end && read_u8(i).is_ascii_digit() {
+            i += 1;
+        }
+        if i == from { Err(from) } else { Ok(i) }
+    };
+    let mut i = at;
+    if i < end && read_u8(i) == b'-' {
+        i += 1;
+    }
+    if i < end && read_u8(i) == b'0' {
+        i += 1;
+    } else {
+        i = digits(i)?;
+    }
+    if i < end && read_u8(i) == b'.' {
+        i = digits(i + 1)?;
+    }
+    if i < end && (read_u8(i) | 0x20) == b'e' {
+        i += 1;
+        if i < end && (read_u8(i) == b'+' || read_u8(i) == b'-') {
+            i += 1;
+        }
+        i = digits(i)?;
+    }
+    Ok(i)
 }
 
 /// A header with room for nothing after it. Whoever wants a payload allocates it next, which the

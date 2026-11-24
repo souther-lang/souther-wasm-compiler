@@ -3,6 +3,9 @@ package souther.wasm.link;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.UnaryOperator;
+import souther.compiler.abort.AbortKind;
+import souther.wasm.abi.WasmAbortMapping;
+import souther.wasm.abi.WasmFault;
 
 /**
  * What a component offers, written out as a reader of interfaces reads it.
@@ -92,7 +95,7 @@ public final class WitText {
      * {@code func} — and WIT reads an escaped name as a name, a word of its own included. Every one
      * is escaped and not only those that are words today, since which are is WIT's to add to.
      */
-    private static String named(String name) {
+    static String named(String name) {
         return "%" + name;
     }
 
@@ -126,7 +129,10 @@ public final class WitText {
     /** What a type is read from. */
     private static final String GIVEN = "value";
 
-    /** What every function crosses as, and what a caller does with it. */
+    /**
+     * What every function crosses as, and what a caller does with it. The reasons a call ends for
+     * are the runtime's numbers, put in from where they are numbered rather than written again.
+     */
     public static final String PREAMBLE = """
             // What a Souther program offers. A behavior takes the arguments of one call as a JSON
             // array and answers a JSON object: either {"value": ...} or {"issues": [...]}, where an
@@ -136,14 +142,16 @@ public final class WitText {
             // is the model's, and it is written in Souther, not here.
             //
             // Either answer is the ok of a result. Its err is a call the runtime ended, with the
-            // reason a core module's abort record holds: 3 for arguments that are not JSON, 6 for
-            // a division by zero, and the rest as the runtime's ABI lists them. 13 is a function
+            // reason a core module's abort record holds: %d for arguments that are not JSON, %d for
+            // a division by zero, and the rest as the runtime's ABI lists them. %d is a function
             // this component imports answering something other than its behavior's type; then
             // invalid-answer names the behavior and says what is wrong with the answer, as issues
             // naming where in it each is. The instance can be called again after one. A trap is a
             // failure the runtime gave no reason for, or arguments too large for the instance's
             // memory, which fail before the call begins.
-            """;
+            """.formatted(WasmFault.MALFORMED_JSON.code(),
+                    WasmAbortMapping.representationOf(AbortKind.DIVISION_BY_ZERO),
+                    WasmFault.INVALID_HOST_ANSWER.code());
 
     /**
      * The whole file: what a caller has to know, then the interfaces.

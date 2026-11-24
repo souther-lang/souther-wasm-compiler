@@ -3,46 +3,39 @@ package souther.wasm;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Properties;
 import org.junit.jupiter.api.Test;
 
 /**
- * The runtime reads a pattern's image with the version of notation-199x that wrote it.
+ * The runtime is built with one release of notation-199x's crate.
  *
- * <p>The image is written on the JVM by the library's Java implementation, which this build takes
- * from souther-compiler rather than naming a version of its own, and read in the runtime by its
- * Rust implementation, which {@code runtime/Cargo.toml} names. Two files in two languages say one
- * thing, so this reads what each resolved — the Java artifact on the classpath and the crate in
- * {@code runtime/Cargo.lock} — and holds them to the same release of the same library. A Souther
- * that moves the library, or renames its artifact, fails here until the runtime moves with it.
+ * <p>A pattern's image is written on the JVM by the library's Java implementation, which this
+ * build takes from souther-compiler, and read in the runtime by its Rust implementation, which
+ * {@code runtime/Cargo.toml} names. Each implementation of the library is released on its own and
+ * numbered on its own, so the two numbers are not held to each other: a Java release that adds to
+ * its API has no crate of its number. That the runtime reads what the Java half writes is held by
+ * running it ({@code APatternIsRecognisedWhereTheJvmRecognisesItTest}). What is held here is that
+ * the runtime answers from one account of the rules, and one anybody can get: a single crate in
+ * {@code runtime/Cargo.lock}, a release, from crates.io.
  */
-class TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest {
-
-    private static final String JAVA = "/META-INF/maven/net.unit8.199x/notation-199x/pom.properties";
+class TheRuntimeIsBuiltWithOneReleaseOfNotationTest {
 
     private static final String CRATE = "notation199x";
 
     private static final String CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index";
 
     @Test
-    void theCrateIsTheReleaseTheJavaArtifactIs() throws IOException {
-        Properties java = new Properties();
-        try (InputStream in = getClass().getResourceAsStream(JAVA)) {
-            assertThat(in).as("notation-199x on the classpath, which souther-compiler takes").isNotNull();
-            java.load(in);
-        }
-
+    void theCrateIsOneReleaseFromCratesIo() throws IOException {
         List<Package> crates = packages(Path.of("runtime/Cargo.lock")).stream()
                 .filter(each -> each.name().equals(CRATE)).toList();
 
         assertThat(crates).as("the " + CRATE + " the runtime is built with").hasSize(1);
         assertThat(crates.get(0).source()).as("where the crate comes from").isEqualTo(CRATES_IO);
-        assertThat(crates.get(0).version()).isEqualTo(java.getProperty("version"));
+        assertThat(crates.get(0).version()).as("a release, which a development version is not")
+                .matches("[0-9]+\\.[0-9]+\\.[0-9]+");
     }
 
     private record Package(String name, String version, String source) {}

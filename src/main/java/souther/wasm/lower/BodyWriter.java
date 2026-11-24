@@ -26,6 +26,7 @@ final class BodyWriter {
     private static final int OPCODE_LOOP = 0x03;
     private static final int OPCODE_BR = 0x0c;
     private static final int OPCODE_BR_IF = 0x0d;
+    private static final int OPCODE_BR_TABLE = 0x0e;
     private static final int OPCODE_LOCAL_GET = 0x20;
     private static final int OPCODE_LOCAL_SET = 0x21;
     private static final int OPCODE_I32_CONST = 0x41;
@@ -42,6 +43,8 @@ final class BodyWriter {
     private static final int OPCODE_I32_ADD = 0x6a;
     private static final int OPCODE_I32_WRAP_I64 = 0xa7;
     private static final int OPCODE_I64_EXTEND_I32_S = 0xac;
+    private static final int OPCODE_I64_EXTEND_I32_U = 0xad;
+    private static final int OPCODE_I64_STORE = 0x37;
     private static final int OPCODE_I64_SHR_U = 0x88;
     private static final int OPCODE_I64_SUB = 0x7d;
     private static final int OPCODE_I64_EQ = 0x51;
@@ -124,6 +127,20 @@ final class BodyWriter {
     /** Widens the number on the stack to sixty-four bits, keeping its sign. */
     BodyWriter extendToWide() {
         writer.write((byte) OPCODE_I64_EXTEND_I32_S);
+        return this;
+    }
+
+    /** Widens the number on the stack to sixty-four bits, as the bits it is rather than a sign. */
+    BodyWriter extendToWideUnsigned() {
+        writer.write((byte) OPCODE_I64_EXTEND_I32_U);
+        return this;
+    }
+
+    /**
+     * Writes the sixty-four bit number on the stack that many bytes past the address under it.
+     */
+    BodyWriter storeWide(int offset) {
+        writer.write((byte) OPCODE_I64_STORE).writeUnsignedLeb128(0).writeUnsignedLeb128(offset);
         return this;
     }
 
@@ -273,6 +290,20 @@ final class BodyWriter {
     /** Goes to the edge of the block that many out, whatever is on the stack. */
     BodyWriter leave(int depth) {
         writer.write((byte) OPCODE_BR).writeUnsignedLeb128(depth);
+        return this;
+    }
+
+    /**
+     * Goes to the edge of the block that many out as the number on the stack says, read as an
+     * unsigned one: {@code depths[n]} for an {@code n} among them, and {@code otherwise} for any
+     * other, minus one included.
+     */
+    BodyWriter leaveBy(int[] depths, int otherwise) {
+        writer.write((byte) OPCODE_BR_TABLE).writeUnsignedLeb128(depths.length);
+        for (int depth : depths) {
+            writer.writeUnsignedLeb128(depth);
+        }
+        writer.writeUnsignedLeb128(otherwise);
         return this;
     }
 

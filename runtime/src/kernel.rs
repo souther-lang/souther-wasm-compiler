@@ -740,7 +740,7 @@ unsafe fn merge_sorted(list: u32, by: u32, element: u32) {
     if held < 2 {
         return;
     }
-    let room = alloc(8 * held);
+    let room = alloc(crate::room(0, held, 8));
     let elements = __souther_list_elements(list);
     let ranks = __souther_list_elements(by);
     let mut width = 1;
@@ -1051,7 +1051,7 @@ unsafe fn merged(left: u32, right: u32, descriptor: u32, keep: Keep) -> u32 {
     let (a, b) = (__souther_list_length(left), __souther_list_length(right));
     let lefts = __souther_list_elements(left);
     let rights = __souther_list_elements(right);
-    let room = alloc(4 * (a + b));
+    let room = alloc(crate::room(0, crate::together(a, b), 4));
     let (mut i, mut j, mut kept) = (0, 0, 0);
     let mut take = |member: u32| {
         core::ptr::write_unaligned((room + 4 * kept) as *mut u32, member);
@@ -1297,7 +1297,7 @@ unsafe fn set_entry_word(cell: u32, entry: u32, word: u32, held: u32) {
 /// the entries it has and placing each again by the hash it carries.
 unsafe fn with_places(cell: u32, places: u32) {
     let held = builder_get(cell, B_HELD);
-    let entries = alloc(ENTRY * (places / 4 * 3));
+    let entries = alloc(crate::room(0, places / 4 * 3, ENTRY));
     if held > 0 {
         core::ptr::copy_nonoverlapping(
             builder_get(cell, B_ENTRIES) as usize as *const u8,
@@ -1307,7 +1307,7 @@ unsafe fn with_places(cell: u32, places: u32) {
     }
     builder_set(cell, B_ENTRIES, entries);
     builder_set(cell, B_PLACES, places);
-    builder_set(cell, B_TABLE, alloc(4 * places));
+    builder_set(cell, B_TABLE, alloc(crate::room(0, places, 4)));
     for entry in 0..held {
         let at = free_place(cell, entry_word(cell, entry, 2));
         core::ptr::write_unaligned(at as usize as *mut u32, entry + 1);

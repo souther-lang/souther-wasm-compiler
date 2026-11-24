@@ -31,6 +31,13 @@ with its module's name before it where two modules declare one by that name; a n
 reserves, or that the binding declares itself (`Bound`, `Supplied`, `load`, `FINGERPRINT`), is
 given a number after it.
 
+A name is written as the model wrote it, in whatever script, where TypeScript reads it as an
+identifier, so a model written in Japanese has a binding written in Japanese. Any other name is
+written under a `_` of its own, with a `_` in it doubled and a character TypeScript does not read
+there written as its code point: `a࢏` is `_a_u088f_`, and `a_u088f_`, which is written as it is, is
+another name. So two names are never one, and what a declaration is called does not depend on the
+order the model declares them in.
+
 So a case or a field renamed in the model is a type renamed in the binding, and a page still
 reading the old one stops compiling. A product is an object type, a newtype the type it is written
 as, a sum the union of its cases discriminated by `type`, an enumeration the union of its names, an
@@ -153,6 +160,14 @@ What is installed is JavaScript and its declarations, built from `src` into `dis
 TypeScript under `node_modules`. It needs Node 22 or later, or a browser with ES2024: what crosses is
 read and written by raoh-ts, number by number as the surface says each is, and nothing of the
 engine's own reading of a number is asked.
+
+A binding is read by TypeScript 5.7 or later, with its declarations checked, which is what
+`Uint8Array<ArrayBuffer>` in this package's own needs. The names it writes are those TypeScript's
+scanner reads as identifiers, and that table is the same from 5.5 on and shorter before it. The
+table the generator carries holds what 5.7 and the TypeScript the package is built with both read;
+`npm run generate:identifiers` writes it again, and needs the network to fetch 5.7. The tests hold
+it to the TypeScript installed, and CI compiles a binding under 5.7 itself
+(`scripts/check-oldest-typescript.mjs`).
 
 ## Developing
 

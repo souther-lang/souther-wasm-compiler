@@ -7,9 +7,10 @@ publish = false
 [dependencies]
 # The rules for reading text Souther shares with Raoh: case conversion, normalization, White_Space,
 # order and length in scalar values, temporal text, and the image a pattern's machine is written as.
-# Exactly the version whose Java implementation souther-compiler takes, which writes the image of a
-# pattern this reads: TheRuntimeReadsWithTheNotationTheCompilerWritesWithTest holds Cargo.lock to the
-# one Maven resolves, so a Souther that moves the library stops the build until this moves too.
+# An exact release, so that moving it is a change of what text means that a commit says. Its number
+# is the crate's own and not the one of the Java implementation souther-compiler takes, which writes
+# the image of a pattern this reads: TheRuntimeIsBuiltWithOneReleaseOfNotationTest holds Cargo.lock
+# to one release from crates.io, and the tests that run a pattern hold the reading to the writing.
 notation199x = "=0.2.0"
 # Exact arithmetic: what a `Decimal` and a `Rational` are and what each operation on one answers,
 # the native runtime's answers from the same source, with neither backend depending on the other.

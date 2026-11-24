@@ -43,6 +43,7 @@ mod rational;
 mod temporal;
 mod text;
 mod tree;
+mod typed;
 mod value;
 
 use core::panic::PanicInfo;
@@ -108,7 +109,19 @@ const PAGE: usize = 65536;
 /// (issue #63), whose record points at the behavior's name and at the issues, raised by
 /// `__souther_read_answer`, which an injected behavior's answer came to be read through, and a
 /// component's `ended` came to carry the two as its `invalid-answer` beside the reason.
-const ABI_VERSION: u32 = 15;
+///
+/// Raised to 16 when the word before a descriptor's operations came to say where a value of its
+/// type lies when it crosses typed (`typed`), and a typed component's lifted functions came to be
+/// handed core values and to answer through `__souther_typed_answered`, `__souther_typed_refused`
+/// and `__souther_typed_ended` (issue #73).
+///
+/// Raised to 17 when a set of alternatives came to point at an index of its cases, so that which
+/// case a value is is read off the value once and not asked of each case in turn (issue #77), and
+/// `__souther_classify` came to answer the same of any table of leaves a program writes. The bytes
+/// before a descriptor came to be twenty-four, two more saying where the index of its names and the
+/// index of its cases are, so a key's field, a tag's case and a value's case are found by one
+/// lookup, and an index is carried only by a type the program asks that of.
+const ABI_VERSION: u32 = 17;
 
 /// The address the failure record lives at, filled in by `__souther_runtime_init` — it sits
 /// between the appended static data and the arena, so it is not known until link time.
@@ -447,8 +460,10 @@ const OFF_AUX1: usize = 20;
 // this backend's own machinery reaching a state the checker settled it never would — and are this
 // crate's to name (`souther.wasm.abi.WasmFault`'s siblings, never `AbortKind`'s).
 
-/// The arena asked for more than the engine would map. `aux0` is the size that did not fit. A
-/// platform failure, not a Souther program ending without a value: `WasmFault::OUT_OF_MEMORY`.
+/// The arena asked for more than the engine would map, where `aux0` is the size that did not fit,
+/// or a `Decimal` or a `Rational` an operation always has an answer of had no place to be written
+/// or no room to be worked out. A platform failure, not a Souther program ending without a value:
+/// `WasmFault::OUT_OF_MEMORY`.
 pub const REASON_OUT_OF_MEMORY: u32 = 1;
 /// A reset was handed a mark the arena never issued. `aux0` is the mark, `aux1` the top. An ABI
 /// failure by whoever calls this module, not a Souther program's own: `WasmFault::BAD_MARK`.
@@ -462,10 +477,11 @@ pub const REASON_MALFORMED_JSON: u32 = 3;
 pub const REASON_NOT_A_VALUE: u32 = 4;
 /// The value an operation would answer with, or a form its own semantics needs on the way there,
 /// has no place in the type it is declared to be (spec
-/// `an-operation-refuses-only-what-its-own-answer-has-no-place-for`): an `Int` or `Decimal` sum,
-/// difference, product or arithmetic result outside what its type holds, a `Decimal` scale outside
-/// what the runtime takes, a temporal shift off the end of what it holds, or `String.repeat`'s,
-/// the padding operations' and `List.rangeInclusive`'s count or span no answer could hold.
+/// `an-operation-refuses-only-what-its-own-answer-has-no-place-for`): an `Int` sum, difference,
+/// product or narrowing outside what an `Int` holds, a text longer than a `String` holds, a
+/// temporal shift off the end of what it holds, or `String.repeat`'s, the padding operations' and
+/// `List.rangeInclusive`'s count or span no answer could hold. Not a `Decimal` or a `Rational` the
+/// runtime has no place to write, which every operation over them has an answer of.
 /// `aux0`/`aux1` are what of, where the site has them.
 /// Represents `AbortKind::REQUIRED_FORM_HAS_NO_PLACE`.
 pub const REASON_REQUIRED_FORM_HAS_NO_PLACE: u32 = 5;
@@ -556,6 +572,26 @@ pub(crate) unsafe fn alloc(size: u32) -> u32 {
     __ronto_alloc(size)
 }
 
+/// How many bytes an allocation of `count` things `width` bytes each takes, after `header` bytes.
+///
+/// The one place a size is worked out from how many of something there are. Worked out in the
+/// thirty-two bits an address is, a size past what one can say wrapped round to a small one, and
+/// the room asked for was then less than what was written into it: a list of half a billion
+/// eight-byte values asked for nothing at all. A size that cannot be said is more room than there
+/// can ever be, so the call ends as one that ran out of it, as the arena ends one asking for
+/// more than memory can grow to.
+pub(crate) unsafe fn room(header: u32, count: u32, width: u32) -> u32 {
+    match count.checked_mul(width).and_then(|bytes| bytes.checked_add(header)) {
+        Some(bytes) => bytes,
+        None => abort(REASON_OUT_OF_MEMORY, 0, count as u64, width as u64),
+    }
+}
+
+/// Two sizes together, ending the call as [`room`] does where they cannot be said.
+pub(crate) unsafe fn together(first: u32, second: u32) -> u32 {
+    room(first, second, 1)
+}
+
 /// A run of `size` bytes beginning at a multiple of `align`, which is a power of two.
 ///
 /// The one place an alignment is taken, by padding the arena up to it first. Every caller that
@@ -572,7 +608,7 @@ pub(crate) unsafe fn alloc_aligned(size: u32, align: u32) -> u32 {
 /// `count` words from the arena, as a slice: a slice of `u32` has to begin at a multiple of four,
 /// which [`alloc`] does not.
 pub(crate) unsafe fn alloc_words(count: usize) -> &'static mut [u32] {
-    core::slice::from_raw_parts_mut(alloc_aligned(4 * count as u32, 4) as usize as *mut u32, count)
+    core::slice::from_raw_parts_mut(alloc_aligned(room(0, count as u32, 4), 4) as usize as *mut u32, count)
 }
 
 /// Ending the call, for this crate's own modules.

@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 import souther.wasm.abi.RuntimeAbi;
 import souther.wasm.emit.ComponentWriter;
 import souther.wasm.emit.WasmWriter;
@@ -190,18 +191,8 @@ public final class Component {
         }
 
         ComponentWriter out = new ComponentWriter();
-        out.rawSection(ComponentWriter.SEC_CORE_MODULE, core);
-        out.rawSection(ComponentWriter.SEC_CORE_MODULE, reaches.isEmpty()
-                ? unreachedHost()
-                : ReachingOut.answeringThroughATable(reaches.size()));
-        if (!reaches.isEmpty()) {
-            out.rawSection(ComponentWriter.SEC_CORE_MODULE,
-                    ReachingOut.fillingTheTable(reaches.size()));
-        }
-        out.rawSection(ComponentWriter.SEC_CORE_INSTANCE, ComponentWriter.vec(List.of(
-                ComponentWriter.coreInstanceInstantiate(1, List.of(), List.of()),
-                ComponentWriter.coreInstanceInstantiate(
-                        0, List.of(RuntimeAbi.IMPORT_MODULE), List.of(0)))));
+        instantiated(out, core, reaches.size(),
+                reaches.isEmpty() ? null : ReachingOut.fillingTheTable(reaches.size()));
         List<byte[]> taken = new ArrayList<>(aliases.written());
         if (!reaches.isEmpty()) {
             taken.add(ComponentWriter.aliasCoreTable(HOST, ReachingOut.TABLE));
@@ -338,15 +329,49 @@ public final class Component {
         }
         out.rawSection(ComponentWriter.SEC_ALIAS, ComponentWriter.vec(taken));
         out.rawSection(ComponentWriter.SEC_CANON, ComponentWriter.vec(lowers));
+        List<Integer> lowered = new ArrayList<>();
+        for (int i = 0; i < reaches.size(); i++) {
+            lowered.add(coreFuncs + i);
+        }
+        fillTheTable(out, memory, realloc, lowered);
+    }
 
+    /**
+     * The core modules a component is built around and the two instances made first: what stands
+     * where the crossing out of the program is, and the program instantiated against it. The same
+     * whichever way the component's functions cross, which is the reason it is written once.
+     *
+     * @param reaches how many behaviors the program reaches out for
+     * @param filling the module that fills the table, where the program reaches out for any
+     */
+    static void instantiated(ComponentWriter out, byte[] core, int reaches,
+            byte @Nullable [] filling) {
+        out.rawSection(ComponentWriter.SEC_CORE_MODULE, core);
+        out.rawSection(ComponentWriter.SEC_CORE_MODULE, reaches == 0
+                ? unreachedHost()
+                : ReachingOut.answeringThroughATable(reaches));
+        if (filling != null) {
+            out.rawSection(ComponentWriter.SEC_CORE_MODULE, filling);
+        }
+        out.rawSection(ComponentWriter.SEC_CORE_INSTANCE, ComponentWriter.vec(List.of(
+                ComponentWriter.coreInstanceInstantiate(1, List.of(), List.of()),
+                ComponentWriter.coreInstanceInstantiate(
+                        0, List.of(RuntimeAbi.IMPORT_MODULE), List.of(HOST)))));
+    }
+
+    /**
+     * Instantiates the module that fills the table, handed the program's memory, the table, the
+     * arena and each behavior's lowering, by its number.
+     */
+    static void fillTheTable(ComponentWriter out, int memory, int realloc, List<Integer> lowered) {
         List<String> names = new ArrayList<>(List.of(
                 RuntimeAbi.MEMORY, ReachingOut.TABLE, RuntimeAbi.CANONICAL_REALLOC));
         List<Integer> sorts = new ArrayList<>(List.of(SORT_MEMORY, SORT_TABLE, SORT_FUNC));
         List<Integer> held = new ArrayList<>(List.of(memory, 0, realloc));
-        for (int i = 0; i < reaches.size(); i++) {
+        for (int i = 0; i < lowered.size(); i++) {
             names.add(ReachingOut.lowered(i));
             sorts.add(SORT_FUNC);
-            held.add(coreFuncs + i);
+            held.add(lowered.get(i));
         }
         out.rawSection(ComponentWriter.SEC_CORE_INSTANCE, ComponentWriter.vec(List.of(
                 ComponentWriter.coreInstanceFromExports(names, sorts, held),
@@ -358,7 +383,7 @@ public final class Component {
     private static final int FIXUP_ARGS = 2;
 
     /** Which core instance answers what the program reaches out for. */
-    private static final int HOST = 0;
+    static final int HOST = 0;
 
     private static final int SORT_FUNC = 0x00;
     private static final int SORT_TABLE = 0x01;
@@ -373,7 +398,7 @@ public final class Component {
      * with an injected behavior is refused before it gets here, and what stands here is reached by
      * nothing.
      */
-    private static byte[] unreachedHost() {
+    static byte[] unreachedHost() {
         return ComponentWriter.enc(w -> {
             w.write(new byte[] {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00});
             section(w, 1, ComponentWriter.enc(t -> t.writeUnsignedLeb128(1)
@@ -400,7 +425,7 @@ public final class Component {
     private static final int ACROSS = 3;
 
     /** Which core instance the program is: the one after what stands in for the crossing. */
-    private static final int PROGRAM = 1;
+    static final int PROGRAM = 1;
 
     private static void section(WasmWriter out, int id, byte[] payload) {
         out.write(id).writeUnsignedLeb128(payload.length).write(payload);
@@ -449,7 +474,7 @@ public final class Component {
         return READ_UNDER + writable(module);
     }
 
-    private static String writable(String module) {
+    static String writable(String module) {
         String held = interfaceName(module.replace('.', '-'));
         if (!WRITABLE.matcher(held).matches()) {
             throw new IllegalArgumentException(module + " comes to " + held
@@ -553,6 +578,20 @@ public final class Component {
          */
         public static String reading(String type) {
             return "decode:" + type + "#lifted";
+        }
+
+        /** The name the function a typed behavior is lifted from is exported under. */
+        public static String typed(String export) {
+            return export + "#typed";
+        }
+
+        /**
+         * The name the function a value of one type is read through, typed, is exported under.
+         *
+         * @param type the type, as its module and its name
+         */
+        public static String typedReading(String type) {
+            return "decode:" + type + "#typed";
         }
     }
 

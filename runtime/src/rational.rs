@@ -17,10 +17,12 @@
 //! The value is `numerator × 2^twos × 5^fives / denominator` in the one form each value has, so two
 //! cells holding one value hold the same parts and a collection can tell them for one.
 //!
-//! A failure is one of two, and they end a call two ways. An answer with no place is the language's
-//! `REQUIRED_FORM_HAS_NO_PLACE`, as an `Int` that overflows is. The run having no room for what an
-//! order or a rounding needed to know is no answer at all: it is the platform failing, as an arena
-//! that cannot grow is, and ends the call as one.
+//! A `Rational` is any rational, so a sum, a difference, a product, a quotient past a zero divisor
+//! and a narrowing to a `Decimal` always have an answer. One there is no place to write, and an
+//! order or a rounding the run had no room to work out, are the platform failing, as an arena that
+//! cannot grow is, and end the call as one ([`settled`]). The language refuses one thing here, a
+//! whole number no `Int` holds, and that ends the call as `REQUIRED_FORM_HAS_NO_PLACE`
+//! ([`held_by_an_int`]), as an `Int` that overflows does.
 
 use crate::decimal;
 use crate::value::{
@@ -56,8 +58,18 @@ unsafe fn write_i64(at: u32, word: i64) {
     core::ptr::write_unaligned(at as usize as *mut i64, word);
 }
 
-/// The answer, or the end of the call for the reason it has none.
+/// The answer of an operation that always has one, or the end of the call as the platform failing:
+/// where there was no place to write it, and where the run had no room to work it out.
 unsafe fn settled<T>(answer: Exact<T>) -> T {
+    match answer {
+        Ok(answer) => answer,
+        Err(Failure::NoPlace | Failure::NoRoom) => abort(REASON_OUT_OF_MEMORY, 0, 0, 0),
+    }
+}
+
+/// The `Int` a narrowing answers, or the end of the call: for the language's reason where no `Int`
+/// holds the whole number, and as the platform failing where the run had no room to work it out.
+unsafe fn held_by_an_int(answer: Exact<i64>) -> i64 {
     match answer {
         Ok(answer) => answer,
         Err(Failure::NoPlace) => abort(REASON_REQUIRED_FORM_HAS_NO_PLACE, 0, 0, 0),
@@ -71,7 +83,7 @@ unsafe fn cell_of(ratio: &Ratio) -> u32 {
     numerator.with_le_bytes(|numerator| {
         denominator.with_le_bytes(|denominator| {
             let (above, below) = (numerator.len() as u32, denominator.len() as u32);
-            let cell = alloc(HEADER + above + below);
+            let cell = alloc(crate::room(HEADER, crate::together(above, below), 1));
             write_u32(cell, TAG_RATIONAL);
             write_i64(cell + OFF_TWOS, twos);
             write_i64(cell + OFF_FIVES, fives);
@@ -222,7 +234,7 @@ pub unsafe extern "C" fn __souther_rational_to_whole_number(cell: u32, not_whole
     if !value.is_whole() {
         return __souther_unit(not_whole);
     }
-    __souther_int(settled(value.to_whole()))
+    __souther_int(held_by_an_int(value.to_whole()))
 }
 
 /// `Rational.toFiniteDecimal`: the `Decimal` it is, or `NotAFiniteDecimal` where it repeats.
@@ -238,7 +250,7 @@ pub unsafe extern "C" fn __souther_rational_to_finite_decimal(cell: u32, repeati
 /// `Rational.toInt(mode, r)`: the whole number it rounds to by the mode.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_rational_to_int(mode: u32, cell: u32) -> u32 {
-    __souther_int(settled(ratio(cell).to_int(decimal::rounding(mode))))
+    __souther_int(held_by_an_int(ratio(cell).to_int(decimal::rounding(mode))))
 }
 
 /// `Rational.toDecimal(scale, mode, r)`: the value at that many places, rounded by the mode.

@@ -12,16 +12,20 @@ import souther.wasm.Compiled;
 import souther.wasm.Running;
 import souther.wasm.abi.FailureCause;
 import souther.wasm.abi.RuntimeAbi;
+import souther.wasm.abi.WasmFault;
 
 /**
- * An amount an operation would answer with, where that amount has no place in a {@code Decimal}.
+ * An amount an operation would answer with, where the runtime has no place to write that amount.
  *
- * <p>A {@code Decimal}'s whole number is held to the width the JVM's {@code BigInteger} stops at,
- * and an operation whose answer is wider ends the call as {@code REQUIRED_FORM_HAS_NO_PLACE}, on
- * every carrier (spec §an-operation-refuses-only-what-its-own-answer-has-no-place-for). Each one
- * here would be a number of some two billion bits, or a string of hundreds of millions of
- * characters, so it is refused before any of it is built: built first, it runs the arena out, and
- * that is the platform failing and not the language's answer.
+ * <p>A {@code Decimal} is any finite decimal, so a rounding, a quotient and a sum always have an
+ * answer, and the runtime keeps one in a whole number held to the width the JVM's
+ * {@code BigInteger} stops at. An answer wider than that is the platform failing and not the
+ * language refusing a value, and the call ends as one out of room. A text longer than a
+ * {@code String} holds is the language's refusal, and ends the call as
+ * {@code REQUIRED_FORM_HAS_NO_PLACE} (spec
+ * §an-operation-refuses-only-what-its-own-answer-has-no-place-for). Each one here would be a number
+ * of some two billion bits, or a string of hundreds of millions of characters, and the call ends
+ * before any of it is built.
  */
 class AnAmountWithNoPlaceEndsTheCallBeforeItIsBuiltTest {
 
@@ -48,23 +52,23 @@ class AnAmountWithNoPlaceEndsTheCallBeforeItIsBuiltTest {
             """;
 
     @Test
-    void roundingOrDividingToAScaleNoDecimalHasRoomForEndsTheCall() {
+    void roundingOrDividingToAScaleTheRuntimeHasNoRoomForEndsTheCallAsThePlatformFailing() {
         Running module = compiled();
 
         assertThat(abortOf(module, "amounts.rounded", "[1,2000000000]"))
-                .contains(new FailureCause.Language(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+                .contains(new FailureCause.Wasm(WasmFault.OUT_OF_MEMORY));
         assertThat(abortOf(module, "amounts.shared", "[1,1,2000000000]"))
-                .contains(new FailureCause.Language(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+                .contains(new FailureCause.Wasm(WasmFault.OUT_OF_MEMORY));
         assertThat(answerOf(module, "amounts.rounded", "[1,3]")).isEqualTo("{\"value\":1}");
     }
 
     @Test
-    void aSumAcrossScalesTooFarApartForOneDecimalEndsTheCall() {
+    void aSumAcrossScalesTooFarApartToWriteEndsTheCallAsThePlatformFailing() {
         Running module = compiled();
 
         // The sum is at the larger scale, so the one is spelt out seven hundred million places.
         assertThat(abortOf(module, "amounts.sum", "[1e-700000000,1]"))
-                .contains(new FailureCause.Language(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+                .contains(new FailureCause.Wasm(WasmFault.OUT_OF_MEMORY));
         assertThat(answerOf(module, "amounts.sum", "[1e-3,1]")).isEqualTo("{\"value\":1.001}");
     }
 

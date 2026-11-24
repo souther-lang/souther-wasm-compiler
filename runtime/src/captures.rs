@@ -11,7 +11,7 @@ use crate::alloc;
 /// A capture environment holding that many cells, none put in yet.
 #[no_mangle]
 pub unsafe extern "C" fn __souther_captures(count: u32) -> u32 {
-    let captures = alloc(4 + 4 * count);
+    let captures = alloc(crate::room(4, count, 4));
     core::ptr::write_unaligned(captures as usize as *mut u32, count);
     captures
 }

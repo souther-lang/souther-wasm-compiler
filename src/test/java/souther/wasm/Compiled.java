@@ -5,6 +5,7 @@ import java.util.Map;
 import souther.compiler.Compiler;
 import souther.compiler.jvm.ClassFileImage;
 import souther.compiler.program.CheckedProgram;
+import souther.wasm.lower.LeafTelling;
 import souther.wasm.lower.WasmCompiler;
 
 /**
@@ -39,6 +40,7 @@ public final class Compiled {
     private static final Recent<CheckedProgram, byte[]> MODULES = new Recent<>(KEPT);
     private static final Recent<CheckedProgram, byte[]> COMPONENTS = new Recent<>(KEPT);
     private static final Recent<CheckedProgram, byte[]> UNSHAKEN = new Recent<>(KEPT);
+    private static final Recent<CheckedProgram, byte[]> TYPED_CORES = new Recent<>(KEPT);
 
     private Compiled() {
     }
@@ -65,6 +67,20 @@ public final class Compiled {
         return MODULES.of(program, kept -> kept, WasmCompiler::compile).clone();
     }
 
+    private record Told(CheckedProgram program, LeafTelling telling) {
+    }
+
+    private static final Recent<Told, byte[]> TOLD = new Recent<>(KEPT);
+
+    /**
+     * {@code WasmCompiler.compile(program, telling)}, written once for each program and way of
+     * telling a leaf.
+     */
+    public static byte[] module(CheckedProgram program, LeafTelling telling) {
+        return TOLD.of(new Told(program, telling), kept -> kept,
+                each -> WasmCompiler.compile(each.program(), each.telling())).clone();
+    }
+
     /** {@code WasmCompiler.unshaken(program)}, written once for each program. */
     public static byte[] unshaken(CheckedProgram program) {
         return UNSHAKEN.of(program, kept -> kept, WasmCompiler::unshaken).clone();
@@ -73,6 +89,11 @@ public final class Compiled {
     /** {@code WasmCompiler.compileAsComponent(program)}, written once for each program. */
     public static byte[] component(CheckedProgram program) {
         return COMPONENTS.of(program, kept -> kept, WasmCompiler::compileAsComponent).clone();
+    }
+
+    /** {@code WasmCompiler.typedCore(program)}, written once for each program. */
+    public static byte[] typedCore(CheckedProgram program) {
+        return TYPED_CORES.of(program, kept -> kept, WasmCompiler::typedCore).clone();
     }
 
     /** Classes the JVM wrote, defined as they are asked for. */

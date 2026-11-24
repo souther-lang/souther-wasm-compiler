@@ -74,6 +74,20 @@ class ACellWrittenDownIsTheCellTheRuntimeMakesTest {
         assertThat(word(runtime.call(RuntimeAbi.LIST_ELEMENTS, list) + 4)).isEqualTo(99);
     }
 
+    @Test
+    void tagsAUnitAndARecordAsTheRuntimeDoesAndKeepsTheDescriptorAfterTheTag() {
+        // A descriptor with no fields: its word for how many there are is zero.
+        int descriptor = runtime.staged("\0".repeat(16));
+
+        int unit = runtime.call(RuntimeAbi.UNIT, descriptor);
+        assertThat(word(unit)).isEqualTo(Cell.TAG_UNIT);
+        assertThat(word(unit + Cell.SECOND)).isEqualTo(descriptor);
+
+        int record = runtime.call(RuntimeAbi.RECORD, descriptor);
+        assertThat(word(record)).isEqualTo(Cell.TAG_RECORD);
+        assertThat(word(record + Cell.SECOND)).isEqualTo(descriptor);
+    }
+
     private int word(int address) {
         return ByteBuffer.wrap(runtime.read(address, 4)).order(ByteOrder.LITTLE_ENDIAN).getInt();
     }

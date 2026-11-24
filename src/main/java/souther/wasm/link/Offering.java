@@ -41,7 +41,12 @@ public record Offering(Map<String, Map<String, String>> behaviors,
         apart(asking, Component::askedUnder);
     }
 
-    private static void apart(Collection<String> modules, UnaryOperator<String> named) {
+    /**
+     * Refuses two modules whose interfaces in one package would have one name: a component cannot
+     * export or import two interfaces under it, and its text could not tell them apart. Asked of
+     * the JSON interfaces and of the typed ones alike.
+     */
+    static void apart(Collection<String> modules, UnaryOperator<String> named) {
         Map<String, String> already = new LinkedHashMap<>();
         for (String module : modules) {
             String interfaceName = named.apply(module);
